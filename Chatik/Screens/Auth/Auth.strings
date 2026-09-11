@@ -1,0 +1,25 @@
+/*
+  Auth.strings
+  Chatik
+
+  Строки экрана регистрации / входа.
+*/
+
+"auth.title.signup" = "Регистрация";
+"auth.title.login" = "Вход";
+
+"auth.field.name" = "Имя";
+"auth.field.login" = "Логин";
+"auth.field.password" = "Пароль";
+
+"auth.password.show" = "Показать пароль";
+"auth.password.hide" = "Скрыть пароль";
+
+"auth.button.signup" = "Регистрация";
+"auth.button.login" = "Вход";
+
+"auth.agreement" = "Регистрируясь, вы принимаете [лицензионное соглашение](%@) и [политику конфиденциальности](%@)";
+
+/* %@ — служебный URL переключения режима, ссылка должна остаться в тексте */
+"auth.switch.to_login" = "Уже зарегистрированы? **[Войти](%@)**";
+"auth.switch.to_signup" = "Нет аккаунта? **[Зарегистрироваться](%@)**";

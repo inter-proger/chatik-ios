@@ -1,0 +1,8 @@
+# Секреты
+Chatik/PrivateConfig.swift
+
+# Xcode
+xcuserdata/
+*.xcuserstate
+DerivedData/
+.DS_Store

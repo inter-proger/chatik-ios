@@ -12,6 +12,8 @@ final class AuthViewModelTests: XCTestCase {
         AuthViewModel(mode: mode, authService: AuthService(networkService: NetworkServiceMock()), router: AuthRouter())
     }
 
+    /// Кейс: ViewModel создана без явного режима.
+    /// Ожидание: режим — регистрация; заголовок, кнопка и текст переключения — для регистрации.
     func test_initialMode_isSignupByDefault() {
         let sut = makeSUT()
 
@@ -21,6 +23,8 @@ final class AuthViewModelTests: XCTestCase {
         XCTAssertEqual(String(sut.switchModeText.characters), "Уже зарегистрированы? Войти")
     }
 
+    /// Кейс: ViewModel создана в режиме входа.
+    /// Ожидание: заголовок, кнопка и текст переключения — для входа.
     func test_loginMode_exposesLoginTexts() {
         let sut = makeSUT(mode: .login)
 
@@ -30,6 +34,8 @@ final class AuthViewModelTests: XCTestCase {
         XCTAssertEqual(String(sut.switchModeText.characters), "Нет аккаунта? Зарегистрироваться")
     }
 
+    /// Кейс: пользователь дважды нажимает ссылку переключения режима.
+    /// Ожидание: регистрация → вход → регистрация.
     func test_switchMode_togglesBetweenSignupAndLogin() {
         let sut = makeSUT()
 
@@ -40,6 +46,8 @@ final class AuthViewModelTests: XCTestCase {
         XCTAssertTrue(sut.isSignup)
     }
 
+    /// Кейс: пользователь дважды нажимает «глаз» у поля пароля.
+    /// Ожидание: скрыт → показан → скрыт.
     func test_togglePasswordVisibility_flipsFlag() {
         let sut = makeSUT()
         XCTAssertFalse(sut.isPasswordVisible)
@@ -51,6 +59,8 @@ final class AuthViewModelTests: XCTestCase {
         XCTAssertFalse(sut.isPasswordVisible)
     }
 
+    /// Кейс: текст переключения режима собран из markdown-шаблона.
+    /// Ожидание: в тексте ровно одна ссылка — служебный URL переключения режима.
     func test_switchModeText_containsSwitchModeLink() {
         let sut = makeSUT()
 
@@ -59,6 +69,8 @@ final class AuthViewModelTests: XCTestCase {
         XCTAssertEqual(links, [AuthViewModel.switchModeURL])
     }
 
+    /// Кейс: текст соглашения собран из markdown-шаблона.
+    /// Ожидание: ссылки в порядке следования — лицензионное соглашение, политика конфиденциальности.
     func test_agreementText_containsLicenseAndPrivacyLinks() {
         let sut = makeSUT()
 

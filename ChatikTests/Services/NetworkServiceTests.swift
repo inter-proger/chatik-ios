@@ -27,6 +27,8 @@ final class NetworkServiceTests: XCTestCase {
 
     // MARK: - Request building
 
+    /// Кейс: POST-запрос с параметрами, содержащими пробел и `&`.
+    /// Ожидание: путь собран от baseURL, Content-Type — form-urlencoded, тело закодировано и экранировано.
     func test_post_sendsFormURLEncodedBodyToCorrectPath() async throws {
         let captured = stub(status: 200, json: #"{"status":1,"response":{"userId":1,"name":"Ivan"}}"#)
 
@@ -39,6 +41,8 @@ final class NetworkServiceTests: XCTestCase {
         XCTAssertEqual(request.bodyString, "login=ivan_1&password=Pass+word%261")
     }
 
+    /// Кейс: GET-запрос с параметрами и кастомным заголовком.
+    /// Ожидание: параметры в query string с экранированием, заголовок применён, тело отсутствует.
     func test_get_putsParametersIntoQueryAndAppliesHeaders() async throws {
         let captured = stub(status: 200, json: #"{"status":1,"response":{}}"#)
         let endpoint = TestEndpoint(path: "/items", method: .get, parameters: ["page": "2", "q": "a b"], headers: ["X-Test": "1"])
@@ -54,6 +58,8 @@ final class NetworkServiceTests: XCTestCase {
 
     // MARK: - Response handling
 
+    /// Кейс: ответ со `status: 1` и заполненным `response`.
+    /// Ожидание: `response` декодирован в запрошенный тип.
     func test_successResponse_returnsDecodedPayload() async throws {
         _ = stub(status: 200, json: #"{"status":1,"response":{"userId":42,"name":"Ivan Petrov"}}"#)
 
@@ -62,6 +68,8 @@ final class NetworkServiceTests: XCTestCase {
         XCTAssertEqual(user, AuthUser(userId: 42, name: "Ivan Petrov"))
     }
 
+    /// Кейс: ответ со `status: 0` и `errorCode`.
+    /// Ожидание: выброшена `NetworkError.api` с этим кодом.
     func test_errorStatus_throwsApiErrorWithCode() async {
         _ = stub(status: 200, json: #"{"status":0,"errorCode":2002}"#)
 
@@ -70,6 +78,8 @@ final class NetworkServiceTests: XCTestCase {
         }
     }
 
+    /// Кейс: ответ со `status: 1`, но без поля `response`.
+    /// Ожидание: выброшена `NetworkError.missingResponse`.
     func test_successStatusWithoutResponse_throwsMissingResponse() async {
         _ = stub(status: 200, json: #"{"status":1}"#)
 
@@ -78,6 +88,8 @@ final class NetworkServiceTests: XCTestCase {
         }
     }
 
+    /// Кейс: HTTP-статус вне диапазона 2xx (500).
+    /// Ожидание: выброшена `NetworkError.invalidResponse` с этим статусом, тело не разбирается.
     func test_non2xxHttpStatus_throwsInvalidResponse() async {
         _ = stub(status: 500, json: "")
 
@@ -86,6 +98,8 @@ final class NetworkServiceTests: XCTestCase {
         }
     }
 
+    /// Кейс: тело ответа — не JSON.
+    /// Ожидание: выброшена `NetworkError.decoding`.
     func test_malformedJson_throwsDecodingError() async {
         _ = stub(status: 200, json: "not json")
 
@@ -99,6 +113,8 @@ final class NetworkServiceTests: XCTestCase {
         }
     }
 
+    /// Кейс: URLSession завершился ошибкой (нет сети).
+    /// Ожидание: выброшена `NetworkError.transport`.
     func test_transportFailure_throwsTransportError() async {
         URLProtocolStub.requestHandler = { _ in throw URLError(.notConnectedToInternet) }
 
@@ -114,6 +130,8 @@ final class NetworkServiceTests: XCTestCase {
 
     // MARK: - Cookies
 
+    /// Кейс: в хранилище есть cookie для домена baseURL.
+    /// Ожидание: после `clearSessionCookies()` cookie для baseURL удалены.
     func test_clearSessionCookies_removesCookiesForBaseURL() throws {
         let cookie = try XCTUnwrap(HTTPCookie(properties: [
             .name: "PHPSESSID", .value: "abc", .domain: "localhost", .path: "/"

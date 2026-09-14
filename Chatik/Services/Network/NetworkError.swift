@@ -5,7 +5,7 @@
 
 import Foundation
 
-enum NetworkError: Error, Equatable {
+enum NetworkError: Error {
     /// Не удалось собрать URL запроса.
     case invalidURL
     /// Ответ не является HTTP-ответом либо код вне диапазона 2xx.
@@ -16,8 +16,28 @@ enum NetworkError: Error, Equatable {
     case missingResponse
     /// Не удалось разобрать JSON ответа.
     case decoding(String)
-    /// Ошибка транспортного уровня (нет сети, таймаут и т.п.).
-    case transport(String)
+    /// Ошибка транспортного уровня (нет сети, таймаут, отмена и т.п.) — исходная `URLError` сохраняется целиком.
+    case transport(URLError)
+}
+
+extension NetworkError: Equatable {
+    /// Транспортные ошибки равны при одинаковом `URLError.Code`: `userInfo` (задача, URL) для сравнения не важен.
+    static func == (lhs: NetworkError, rhs: NetworkError) -> Bool {
+        switch (lhs, rhs) {
+        case (.invalidURL, .invalidURL), (.missingResponse, .missingResponse):
+            return true
+        case let (.invalidResponse(lhsCode), .invalidResponse(rhsCode)):
+            return lhsCode == rhsCode
+        case let (.api(lhsCode), .api(rhsCode)):
+            return lhsCode == rhsCode
+        case let (.decoding(lhsMessage), .decoding(rhsMessage)):
+            return lhsMessage == rhsMessage
+        case let (.transport(lhsError), .transport(rhsError)):
+            return lhsError.code == rhsError.code
+        default:
+            return false
+        }
+    }
 }
 
 extension NetworkError {

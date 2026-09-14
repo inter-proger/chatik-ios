@@ -94,6 +94,23 @@ final class SessionServiceTests: XCTestCase {
         XCTAssertFalse(sut.isExpired)
     }
 
+    /// Кейс: сервер вернул 2003 при активной сессии; наблюдаем момент сброса `currentUser`.
+    /// Ожидание: в момент сброса `currentUser` флаг `isExpired` уже поднят — экран авторизации,
+    /// появившийся по этому изменению, увидит флаг в `onAppear`.
+    func test_expire_raisesFlagBeforeClearingUser() async {
+        let (sut, _) = await makeRestoredSUT(storedUser: user)
+        let observed = ObservedFlag()
+        withObservationTracking {
+            _ = sut.currentUser
+        } onChange: {
+            MainActor.assumeIsolated { observed.value = sut.isExpired }
+        }
+
+        await sut.expire()
+
+        XCTAssertEqual(observed.value, true)
+    }
+
     /// Кейс: сервер вернул 2003, когда сессии уже нет (например, после явного выхода).
     /// Ожидание: ничего не происходит, флаг истечения не поднимается.
     func test_expire_whileLoggedOut_isNoop() async {
@@ -104,4 +121,9 @@ final class SessionServiceTests: XCTestCase {
         XCTAssertFalse(sut.isExpired)
         XCTAssertFalse(sut.isLoggedIn)
     }
+}
+
+/// Значение, снятое из `@Sendable`-замыкания `withObservationTracking`.
+private final class ObservedFlag: @unchecked Sendable {
+    var value: Bool?
 }

@@ -37,10 +37,10 @@ struct AuthView: View {
             }
         }
         .onAppear(perform: viewModel.handleAppear)
-        .alert(CommonStrings.errorTitle, isPresented: $viewModel.errorMessage.isPresent()) {
+        .alert(CommonStrings.errorTitle, isPresented: $viewModel.errorMessage.isPresent(), presenting: viewModel.errorMessage) { _ in
             Button(CommonStrings.ok, role: .cancel) {}
-        } message: {
-            Text(viewModel.errorMessage ?? "")
+        } message: { message in
+            Text(message)
         }
     }
 
@@ -79,26 +79,25 @@ struct AuthView: View {
     }
 }
 
+#if DEBUG
 #Preview("Регистрация") {
-    AuthView(viewModel: AuthViewModel(
-        mode: .signup,
-        authService: DIContainer.shared.authService,
-        sessionService: DIContainer.shared.sessionService,
-        localizationService: DIContainer.shared.localizationService,
-        signupValidator: DIContainer.shared.signupValidator,
-        loginValidator: DIContainer.shared.loginValidator,
-        router: AuthRouter()
-    ))
+    NavigationStack {
+        AuthView(viewModel: PreviewDependencies.authViewModel(mode: .signup))
+    }
 }
 
 #Preview("Вход") {
-    AuthView(viewModel: AuthViewModel(
-        mode: .login,
-        authService: DIContainer.shared.authService,
-        sessionService: DIContainer.shared.sessionService,
-        localizationService: DIContainer.shared.localizationService,
-        signupValidator: DIContainer.shared.signupValidator,
-        loginValidator: DIContainer.shared.loginValidator,
-        router: AuthRouter()
-    ))
+    NavigationStack {
+        AuthView(viewModel: PreviewDependencies.authViewModel(mode: .login))
+    }
 }
+
+#Preview("Ошибка сервера") {
+    NavigationStack {
+        AuthView(viewModel: PreviewDependencies.authViewModel(
+            mode: .login,
+            authResult: .failure(NetworkError.api(code: NetworkError.Code.wrongCredentials))
+        ))
+    }
+}
+#endif

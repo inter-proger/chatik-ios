@@ -16,7 +16,7 @@ final class NetworkService: NetworkServiceProtocol {
     private let session: URLSession
     private let baseURL: URL
     private let cookieStorage: HTTPCookieStorage
-    private let onUnauthorized: (@Sendable () -> Void)?
+    private let onUnauthorized: (@Sendable () async -> Void)?
     private let decoder = JSONDecoder()
 
     /// - Parameters:
@@ -24,13 +24,14 @@ final class NetworkService: NetworkServiceProtocol {
     ///     сохраняет и подставляет cookie `PHPSESSID` через `HTTPCookieStorage.shared`.
     ///   - baseURL: базовый адрес API.
     ///   - cookieStorage: хранилище cookie, которое использует `session`.
-    ///   - onUnauthorized: вызывается, когда любой запрос вернул код 2003 (сессия недействительна).
-    ///     Cookie сессии к этому моменту уже очищены; ошибка после вызова пробрасывается вызывающему.
+    ///   - onUnauthorized: вызывается, когда запрос (кроме `Endpoint.terminatesSession`) вернул код 2003 —
+    ///     сессия недействительна. Cookie сессии к этому моменту уже очищены; ошибка пробрасывается
+    ///     вызывающему только после завершения обработчика, чтобы к её обработке сессия уже была закрыта.
     init(
         session: URLSession = .shared,
         baseURL: URL = AppConfig.baseURL,
         cookieStorage: HTTPCookieStorage = .shared,
-        onUnauthorized: (@Sendable () -> Void)? = nil
+        onUnauthorized: (@Sendable () async -> Void)? = nil
     ) {
         self.session = session
         self.baseURL = baseURL
@@ -48,7 +49,7 @@ final class NetworkService: NetworkServiceProtocol {
         let (data, response) = try await perform(request)
         try validate(response)
         let apiResponse: APIResponse<T> = try decode(data)
-        handleUnauthorizedIfNeeded(apiResponse)
+        await handleUnauthorizedIfNeeded(apiResponse, for: endpoint)
         return try unwrap(apiResponse)
     }
 
@@ -59,12 +60,12 @@ final class NetworkService: NetworkServiceProtocol {
 
     // MARK: - Private
 
-    /// Выполняет запрос, оборачивая транспортные ошибки в `NetworkError.transport`.
+    /// Выполняет запрос, оборачивая `URLError` в `NetworkError.transport`; прочие ошибки пробрасываются как есть.
     private func perform(_ request: URLRequest) async throws -> (Data, URLResponse) {
         do {
             return try await session.data(for: request)
-        } catch {
-            throw NetworkError.transport(error.localizedDescription)
+        } catch let error as URLError {
+            throw NetworkError.transport(error)
         }
     }
 
@@ -130,10 +131,12 @@ final class NetworkService: NetworkServiceProtocol {
 
     /// Глобальная обработка кода 2003: сессия на сервере недействительна —
     /// очищает cookie и уведомляет обработчик, чтобы приложение завершило сессию локально.
-    private func handleUnauthorizedIfNeeded<T: Decodable>(_ apiResponse: APIResponse<T>) {
+    /// Для запросов, которые сами завершают сессию (`terminatesSession`), 2003 — штатный ответ, обработчик не вызывается.
+    private func handleUnauthorizedIfNeeded<T: Decodable>(_ apiResponse: APIResponse<T>, for endpoint: Endpoint) async {
+        guard !endpoint.terminatesSession else { return }
         guard !apiResponse.isSuccess, apiResponse.errorCode == NetworkError.Code.unauthorized else { return }
         clearSessionCookies()
-        onUnauthorized?()
+        await onUnauthorized?()
     }
 
     /// Разбирает общую обёртку: при `status = 0` бросает `NetworkError.api`, иначе возвращает `response`.

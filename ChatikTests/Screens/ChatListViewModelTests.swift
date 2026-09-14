@@ -55,7 +55,7 @@ final class ChatListViewModelTests: XCTestCase {
     /// Кейс: транспортная ошибка при выходе.
     /// Ожидание: сессия сохраняется, показано сообщение об ошибке.
     func test_logout_transportError_showsErrorAndKeepsSession() async {
-        networkService.stubbedResult = .failure(NetworkError.transport("offline"))
+        networkService.stubbedResult = .failure(NetworkError.transport(URLError(.notConnectedToInternet)))
 
         await sut.logout()
 

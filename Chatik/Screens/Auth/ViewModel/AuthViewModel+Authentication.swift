@@ -36,10 +36,15 @@ extension AuthViewModel {
     }
 
     /// Вызывает метод сервиса авторизации, соответствующий текущему режиму.
+    /// Логин и имя отправляются без краевых пробелов — валидация их допускает, сервер нет; пароль уходит как есть.
     private func authenticate() async throws -> AuthUser {
+        let login = login.trimmingCharacters(in: .whitespacesAndNewlines)
         switch mode {
-        case .signup: return try await authService.signup(login: login, password: password, name: name)
-        case .login: return try await authService.login(login: login, password: password)
+        case .signup:
+            let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            return try await authService.signup(login: login, password: password, name: name)
+        case .login:
+            return try await authService.login(login: login, password: password)
         }
     }
 }

@@ -33,11 +33,15 @@ extension AuthViewModel {
     }
 
     /// Собирает атрибутированный текст из локализованного markdown-шаблона, подставляя URL ссылок.
+    /// Подстановка текстовая, а не через `String(format:)`: ошибка в переводе (потерянный или лишний
+    /// плейсхолдер) не должна ронять приложение — она видна в UI и ловится тестом на `.strings`.
     /// - Parameters:
-    ///   - format: шаблон с `%@` на месте адресов ссылок.
-    ///   - urls: адреса в порядке следования плейсхолдеров.
+    ///   - format: шаблон с позиционными плейсхолдерами `%1$@`, `%2$@`, … на месте адресов ссылок.
+    ///   - urls: адреса; `urls[i]` подставляется вместо `%<i+1>$@`.
     private static func makeMarkdownText(format: String, urls: [URL]) -> AttributedString {
-        let markdown = String(format: format, arguments: urls.map(\.absoluteString))
+        let markdown = urls.enumerated().reduce(into: format) { markdown, item in
+            markdown = markdown.replacingOccurrences(of: "%\(item.offset + 1)$@", with: item.element.absoluteString)
+        }
         return (try? AttributedString(markdown: markdown)) ?? AttributedString(markdown)
     }
 }

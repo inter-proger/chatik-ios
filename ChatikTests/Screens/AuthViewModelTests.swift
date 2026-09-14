@@ -228,6 +228,21 @@ final class AuthViewModelTests: XCTestCase {
         XCTAssertEqual(sessionService.currentUser, user)
     }
 
+    /// Кейс: логин и имя введены с краевыми пробелами, пароль — с пробелом в начале.
+    /// Ожидание: в запрос уходят логин и имя без краевых пробелов, пароль — без изменений.
+    func test_submit_trimsLoginAndName_keepsPassword() async throws {
+        networkService.stubbedResult = .success(AuthUser(userId: 7, name: "Иван"))
+        let sut = makeSUT(mode: .signup)
+        sut.name = " Иван "
+        sut.login = " ivan "
+        sut.password = " Password1"
+
+        await sut.performAuthentication()
+
+        let endpoint = try XCTUnwrap(networkService.requestedEndpoints.first)
+        XCTAssertEqual(endpoint.parameters, ["login": "ivan", "password": " Password1", "name": "Иван"])
+    }
+
     /// Кейс: сервер ответил ошибкой API (неверные учётные данные).
     /// Ожидание: показано соответствующее сообщение, сессия не открыта.
     func test_submit_apiError_showsMessageAndKeepsSessionClosed() async {

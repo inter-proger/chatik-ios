@@ -114,62 +114,66 @@ final class NetworkServiceTests: XCTestCase {
     }
 
     /// Кейс: URLSession завершился ошибкой (нет сети).
-    /// Ожидание: выброшена `NetworkError.transport`.
+    /// Ожидание: выброшена `NetworkError.transport` с исходной `URLError`, код ошибки сохранён.
     func test_transportFailure_throwsTransportError() async {
         URLProtocolStub.requestHandler = { _ in throw URLError(.notConnectedToInternet) }
 
-        do {
+        await assertThrows(NetworkError.transport(URLError(.notConnectedToInternet))) {
             let _: AuthUser = try await sut.request(AuthEndpoint.logout)
-            XCTFail("Expected transport error")
-        } catch NetworkError.transport {
-            // ok
-        } catch {
-            XCTFail("Unexpected error: \(error)")
         }
     }
 
     // MARK: - Глобальная обработка 2003
 
-    /// Кейс: любой запрос вернул `status: 0, errorCode: 2003` при наличии cookie сессии.
-    /// Ожидание: cookie очищены, обработчик `onUnauthorized` вызван, ошибка `api(2003)` проброшена.
+    /// Кейс: обычный запрос вернул `status: 0, errorCode: 2003` при наличии cookie сессии.
+    /// Ожидание: cookie очищены, обработчик `onUnauthorized` вызван и завершён до проброса ошибки `api(2003)`.
     func test_unauthorizedCode_clearsCookiesAndNotifiesHandler() async throws {
         let flag = UnauthorizedFlag()
-        sut = NetworkService(
-            session: URLProtocolStub.makeSession(),
-            baseURL: baseURL,
-            cookieStorage: cookieStorage,
-            onUnauthorized: { flag.isCalled = true }
-        )
+        sut = makeSUT(onUnauthorized: {
+            try? await Task.sleep(for: .milliseconds(50))
+            flag.isCalled = true
+        })
         cookieStorage.setCookie(try makeSessionCookie())
         _ = stub(status: 200, json: #"{"status":0,"errorCode":2003}"#)
 
         await assertThrows(NetworkError.api(code: 2003)) {
-            let _: AuthUser = try await sut.request(AuthEndpoint.logout)
+            let _: AuthUser = try await sut.request(AuthEndpoint.login(login: "ivan", password: "x"))
         }
 
         XCTAssertTrue(flag.isCalled)
         XCTAssertEqual(cookieStorage.cookies(for: baseURL)?.count ?? 0, 0)
     }
 
+    /// Кейс: запрос, который сам завершает сессию (`/auth/logout`), вернул 2003.
+    /// Ожидание: это штатный ответ — обработчик не вызывается, cookie не трогаются, ошибка `api(2003)` проброшена.
+    func test_unauthorizedCode_onSessionTerminatingEndpoint_doesNotNotifyHandler() async throws {
+        let flag = UnauthorizedFlag()
+        sut = makeSUT(onUnauthorized: { flag.isCalled = true })
+        cookieStorage.setCookie(try makeSessionCookie())
+        _ = stub(status: 200, json: #"{"status":0,"errorCode":2003}"#)
+
+        await assertThrows(NetworkError.api(code: 2003)) {
+            let _: EmptyResponse = try await sut.request(AuthEndpoint.logout)
+        }
+
+        XCTAssertFalse(flag.isCalled)
+        XCTAssertEqual(cookieStorage.cookies(for: baseURL)?.count, 1)
+    }
+
     /// Кейс: запрос вернул другую ошибку API (2002) или успех.
     /// Ожидание: обработчик `onUnauthorized` не вызывается, cookie сохраняются.
     func test_otherResponses_doNotNotifyHandler() async throws {
         let flag = UnauthorizedFlag()
-        sut = NetworkService(
-            session: URLProtocolStub.makeSession(),
-            baseURL: baseURL,
-            cookieStorage: cookieStorage,
-            onUnauthorized: { flag.isCalled = true }
-        )
+        sut = makeSUT(onUnauthorized: { flag.isCalled = true })
         cookieStorage.setCookie(try makeSessionCookie())
 
         _ = stub(status: 200, json: #"{"status":0,"errorCode":2002}"#)
         await assertThrows(NetworkError.api(code: 2002)) {
-            let _: AuthUser = try await sut.request(AuthEndpoint.logout)
+            let _: AuthUser = try await sut.request(AuthEndpoint.login(login: "ivan", password: "x"))
         }
 
         _ = stub(status: 200, json: #"{"status":1,"response":{"userId":1,"name":"Ivan"}}"#)
-        let _: AuthUser = try await sut.request(AuthEndpoint.logout)
+        let _: AuthUser = try await sut.request(AuthEndpoint.login(login: "ivan", password: "x"))
 
         XCTAssertFalse(flag.isCalled)
         XCTAssertEqual(cookieStorage.cookies(for: baseURL)?.count, 1)
@@ -189,6 +193,16 @@ final class NetworkServiceTests: XCTestCase {
     }
 
     // MARK: - Helpers
+
+    /// Создаёт сервис над стабом `URLSession` с обработчиком 2003.
+    private func makeSUT(onUnauthorized: @escaping @Sendable () async -> Void) -> NetworkService {
+        NetworkService(
+            session: URLProtocolStub.makeSession(),
+            baseURL: baseURL,
+            cookieStorage: cookieStorage,
+            onUnauthorized: onUnauthorized
+        )
+    }
 
     /// Создаёт cookie сессии `PHPSESSID` для домена baseURL.
     private func makeSessionCookie() throws -> HTTPCookie {

@@ -22,9 +22,7 @@ final class DIContainer {
         let userDefaultsService = UserDefaultsService()
         let sessionService = SessionService(userDefaultsService: userDefaultsService)
         // Код 2003 от любого запроса завершает сессию — приложение само переключится на экран авторизации.
-        let networkService = NetworkService(onUnauthorized: {
-            Task { @MainActor in await sessionService.expire() }
-        })
+        let networkService = NetworkService(onUnauthorized: { await sessionService.expire() })
         self.userDefaultsService = userDefaultsService
         self.sessionService = sessionService
         self.localizationService = LocalizationService(userDefaultsService: userDefaultsService)

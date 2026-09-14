@@ -18,11 +18,12 @@
 "auth.button.signup" = "Sign Up";
 "auth.button.login" = "Log In";
 
-"auth.agreement" = "By signing up, you accept the [License Agreement](%@) and [Privacy Policy](%@)";
+/* %1$@ — license agreement URL, %2$@ — privacy policy URL (positional, any order in the text) */
+"auth.agreement" = "By signing up, you accept the [License Agreement](%1$@) and [Privacy Policy](%2$@)";
 
-/* %@ — internal mode-switch URL, the link must stay in the text */
-"auth.switch.to_login" = "Already have an account? **[Log in](%@)**";
-"auth.switch.to_signup" = "No account? **[Sign up](%@)**";
+/* %1$@ — internal mode-switch URL, the link must stay in the text */
+"auth.switch.to_login" = "Already have an account? **[Log in](%1$@)**";
+"auth.switch.to_signup" = "No account? **[Sign up](%1$@)**";
 
 /* Hints shown while a field is focused (sign-up mode) */
 "auth.hint.name" = "Letters, digits, space, “-” and “_”";

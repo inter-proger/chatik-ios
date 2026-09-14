@@ -87,13 +87,13 @@ final class AuthServiceTests: XCTestCase {
     /// Кейс: сетевая ошибка при выходе (нет соединения).
     /// Ожидание: cookie сессии не тронуты, чтобы повторить выход позже; ошибка проброшена.
     func test_logout_transportError_keepsCookies() async {
-        networkService.stubbedResult = .failure(NetworkError.transport("offline"))
+        networkService.stubbedResult = .failure(NetworkError.transport(URLError(.notConnectedToInternet)))
 
         do {
             try await sut.logout()
             XCTFail("Expected error")
         } catch {
-            XCTAssertEqual(error as? NetworkError, .transport("offline"))
+            XCTAssertEqual(error as? NetworkError, .transport(URLError(.notConnectedToInternet)))
         }
         XCTAssertEqual(networkService.clearSessionCookiesCallCount, 0)
     }

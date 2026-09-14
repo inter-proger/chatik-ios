@@ -22,10 +22,10 @@ struct ChatListView: View {
                     logoutButton
                 }
             }
-            .alert(CommonStrings.errorTitle, isPresented: $viewModel.errorMessage.isPresent()) {
+            .alert(CommonStrings.errorTitle, isPresented: $viewModel.errorMessage.isPresent(), presenting: viewModel.errorMessage) { _ in
                 Button(CommonStrings.ok, role: .cancel) {}
-            } message: {
-                Text(viewModel.errorMessage ?? "")
+            } message: { message in
+                Text(message)
             }
     }
 
@@ -39,3 +39,11 @@ struct ChatListView: View {
         }
     }
 }
+
+#if DEBUG
+#Preview {
+    NavigationStack {
+        ChatListView(viewModel: PreviewDependencies.chatListViewModel())
+    }
+}
+#endif

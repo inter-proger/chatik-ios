@@ -66,10 +66,12 @@ final class SessionService: SessionServiceProtocol {
     }
 
     /// Завершает сессию и поднимает флаг `isExpired`, чтобы экран авторизации объяснил причину.
+    /// Флаг поднимается до сброса `currentUser`: сброс переключает корневой экран на авторизацию,
+    /// а `end()` содержит точку прерывания, за время которой экран уже может появиться и прочитать флаг.
     func expire() async {
         guard isLoggedIn else { return }
-        await end()
         isExpired = true
+        await end()
     }
 
     func acknowledgeExpiration() {

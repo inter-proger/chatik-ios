@@ -37,4 +37,10 @@ enum AuthEndpoint: Endpoint {
     }
 
     var headers: [String: String]? { nil }
+
+    /// Только `/auth/logout` завершает сессию: 2003 в его ответе — «сессии уже нет», а не её истечение.
+    var terminatesSession: Bool {
+        guard case .logout = self else { return false }
+        return true
+    }
 }

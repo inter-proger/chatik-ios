@@ -28,7 +28,7 @@ final class ErrorMessagesTests: XCTestCase {
     /// Кейс: транспортная ошибка.
     /// Ожидание: текст про отсутствие соединения.
     func test_message_transportError_returnsNoConnection() {
-        XCTAssertEqual(ErrorMessages.message(for: NetworkError.transport("offline")), CommonStrings.errorNoConnection)
+        XCTAssertEqual(ErrorMessages.message(for: NetworkError.transport(URLError(.notConnectedToInternet))), CommonStrings.errorNoConnection)
     }
 
     /// Кейс: неизвестный код API, ошибки разбора / формата ответа, не-`NetworkError`.

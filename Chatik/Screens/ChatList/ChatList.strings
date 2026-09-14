@@ -1,0 +1,10 @@
+/*
+  ChatList.strings
+  Chatik
+
+  Строки экрана списка чатов.
+*/
+
+"chat_list.title" = "Чаты";
+"chat_list.logout" = "Выйти";
+"chat_list.empty" = "Чатов пока нет";

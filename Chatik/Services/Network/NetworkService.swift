@@ -16,6 +16,7 @@ final class NetworkService: NetworkServiceProtocol {
     private let session: URLSession
     private let baseURL: URL
     private let cookieStorage: HTTPCookieStorage
+    private let onUnauthorized: (@Sendable () -> Void)?
     private let decoder = JSONDecoder()
 
     /// - Parameters:
@@ -23,14 +24,18 @@ final class NetworkService: NetworkServiceProtocol {
     ///     сохраняет и подставляет cookie `PHPSESSID` через `HTTPCookieStorage.shared`.
     ///   - baseURL: базовый адрес API.
     ///   - cookieStorage: хранилище cookie, которое использует `session`.
+    ///   - onUnauthorized: вызывается, когда любой запрос вернул код 2003 (сессия недействительна).
+    ///     Cookie сессии к этому моменту уже очищены; ошибка после вызова пробрасывается вызывающему.
     init(
         session: URLSession = .shared,
         baseURL: URL = AppConfig.baseURL,
-        cookieStorage: HTTPCookieStorage = .shared
+        cookieStorage: HTTPCookieStorage = .shared,
+        onUnauthorized: (@Sendable () -> Void)? = nil
     ) {
         self.session = session
         self.baseURL = baseURL
         self.cookieStorage = cookieStorage
+        self.onUnauthorized = onUnauthorized
     }
 
     /// Выполняет запрос к API, проверяет HTTP-статус и общую обёртку `{status, response, errorCode}`.
@@ -43,6 +48,7 @@ final class NetworkService: NetworkServiceProtocol {
         let (data, response) = try await perform(request)
         try validate(response)
         let apiResponse: APIResponse<T> = try decode(data)
+        handleUnauthorizedIfNeeded(apiResponse)
         return try unwrap(apiResponse)
     }
 
@@ -120,6 +126,14 @@ final class NetworkService: NetworkServiceProtocol {
         } catch {
             throw NetworkError.decoding(String(describing: error))
         }
+    }
+
+    /// Глобальная обработка кода 2003: сессия на сервере недействительна —
+    /// очищает cookie и уведомляет обработчик, чтобы приложение завершило сессию локально.
+    private func handleUnauthorizedIfNeeded<T: Decodable>(_ apiResponse: APIResponse<T>) {
+        guard !apiResponse.isSuccess, apiResponse.errorCode == NetworkError.Code.unauthorized else { return }
+        clearSessionCookies()
+        onUnauthorized?()
     }
 
     /// Разбирает общую обёртку: при `status = 0` бросает `NetworkError.api`, иначе возвращает `response`.

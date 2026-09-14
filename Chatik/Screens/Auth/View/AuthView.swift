@@ -31,6 +31,12 @@ struct AuthView: View {
         }
         .scrollDismissesKeyboard(.interactively)
         .animation(.default, value: viewModel.isSignup)
+        .onAppear(perform: viewModel.handleAppear)
+        .alert(CommonStrings.errorTitle, isPresented: $viewModel.errorMessage.isPresent()) {
+            Button(CommonStrings.ok, role: .cancel) {}
+        } message: {
+            Text(viewModel.errorMessage ?? "")
+        }
     }
 
     private var header: some View {
@@ -49,10 +55,17 @@ struct AuthView: View {
         }
     }
 
+    /// Кнопка действия. Во время запроса текст скрывается (сохраняя размер кнопки), поверх — прелоадер.
     private var primaryButton: some View {
         Button(action: viewModel.didTapPrimaryButton) {
             Text(viewModel.primaryButtonTitle)
                 .font(.headline)
+                .opacity(viewModel.isLoading ? 0 : 1)
+                .overlay {
+                    if viewModel.isLoading {
+                        ProgressView()
+                    }
+                }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 6)
         }
@@ -65,6 +78,7 @@ struct AuthView: View {
     AuthView(viewModel: AuthViewModel(
         mode: .signup,
         authService: DIContainer.shared.authService,
+        sessionService: DIContainer.shared.sessionService,
         signupValidator: DIContainer.shared.signupValidator,
         loginValidator: DIContainer.shared.loginValidator,
         router: AuthRouter()
@@ -75,6 +89,7 @@ struct AuthView: View {
     AuthView(viewModel: AuthViewModel(
         mode: .login,
         authService: DIContainer.shared.authService,
+        sessionService: DIContainer.shared.sessionService,
         signupValidator: DIContainer.shared.signupValidator,
         loginValidator: DIContainer.shared.loginValidator,
         router: AuthRouter()

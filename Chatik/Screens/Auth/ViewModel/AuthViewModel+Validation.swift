@@ -8,7 +8,9 @@ import Foundation
 /// Валидация формы: активность кнопки и состояние подсказок / ошибок у полей.
 extension AuthViewModel {
     /// Кнопка «Регистрация» активна при полностью валидной форме, «Вход» — при непустых логине и пароле.
+    /// На время выполнения запроса кнопка неактивна.
     var isPrimaryButtonEnabled: Bool {
+        guard !isLoading else { return false }
         switch mode {
         case .signup: return signupValidator.isFormValid(name: name, login: login, password: password)
         case .login: return loginValidator.isFormValid(login: login, password: password)

@@ -1,0 +1,9 @@
+/*
+  Splash.strings
+  Chatik
+
+  Строки экрана загрузки.
+*/
+
+"splash.title" = "Chatik";
+"splash.subtitle" = "Загрузка…";

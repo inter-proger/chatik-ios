@@ -128,15 +128,59 @@ final class NetworkServiceTests: XCTestCase {
         }
     }
 
+    // MARK: - Глобальная обработка 2003
+
+    /// Кейс: любой запрос вернул `status: 0, errorCode: 2003` при наличии cookie сессии.
+    /// Ожидание: cookie очищены, обработчик `onUnauthorized` вызван, ошибка `api(2003)` проброшена.
+    func test_unauthorizedCode_clearsCookiesAndNotifiesHandler() async throws {
+        let flag = UnauthorizedFlag()
+        sut = NetworkService(
+            session: URLProtocolStub.makeSession(),
+            baseURL: baseURL,
+            cookieStorage: cookieStorage,
+            onUnauthorized: { flag.isCalled = true }
+        )
+        cookieStorage.setCookie(try makeSessionCookie())
+        _ = stub(status: 200, json: #"{"status":0,"errorCode":2003}"#)
+
+        await assertThrows(NetworkError.api(code: 2003)) {
+            let _: AuthUser = try await sut.request(AuthEndpoint.logout)
+        }
+
+        XCTAssertTrue(flag.isCalled)
+        XCTAssertEqual(cookieStorage.cookies(for: baseURL)?.count ?? 0, 0)
+    }
+
+    /// Кейс: запрос вернул другую ошибку API (2002) или успех.
+    /// Ожидание: обработчик `onUnauthorized` не вызывается, cookie сохраняются.
+    func test_otherResponses_doNotNotifyHandler() async throws {
+        let flag = UnauthorizedFlag()
+        sut = NetworkService(
+            session: URLProtocolStub.makeSession(),
+            baseURL: baseURL,
+            cookieStorage: cookieStorage,
+            onUnauthorized: { flag.isCalled = true }
+        )
+        cookieStorage.setCookie(try makeSessionCookie())
+
+        _ = stub(status: 200, json: #"{"status":0,"errorCode":2002}"#)
+        await assertThrows(NetworkError.api(code: 2002)) {
+            let _: AuthUser = try await sut.request(AuthEndpoint.logout)
+        }
+
+        _ = stub(status: 200, json: #"{"status":1,"response":{"userId":1,"name":"Ivan"}}"#)
+        let _: AuthUser = try await sut.request(AuthEndpoint.logout)
+
+        XCTAssertFalse(flag.isCalled)
+        XCTAssertEqual(cookieStorage.cookies(for: baseURL)?.count, 1)
+    }
+
     // MARK: - Cookies
 
     /// Кейс: в хранилище есть cookie для домена baseURL.
     /// Ожидание: после `clearSessionCookies()` cookie для baseURL удалены.
     func test_clearSessionCookies_removesCookiesForBaseURL() throws {
-        let cookie = try XCTUnwrap(HTTPCookie(properties: [
-            .name: "PHPSESSID", .value: "abc", .domain: "localhost", .path: "/"
-        ]))
-        cookieStorage.setCookie(cookie)
+        cookieStorage.setCookie(try makeSessionCookie())
         XCTAssertEqual(cookieStorage.cookies(for: baseURL)?.count, 1)
 
         sut.clearSessionCookies()
@@ -145,6 +189,13 @@ final class NetworkServiceTests: XCTestCase {
     }
 
     // MARK: - Helpers
+
+    /// Создаёт cookie сессии `PHPSESSID` для домена baseURL.
+    private func makeSessionCookie() throws -> HTTPCookie {
+        try XCTUnwrap(HTTPCookie(properties: [
+            .name: "PHPSESSID", .value: "abc", .domain: "localhost", .path: "/"
+        ]))
+    }
 
     /// Подставляет ответ сервера и возвращает контейнер с перехваченным запросом.
     private func stub(status: Int, json: String) -> CapturedRequest {
@@ -177,6 +228,11 @@ final class NetworkServiceTests: XCTestCase {
 
 private final class CapturedRequest: @unchecked Sendable {
     var request: URLRequest?
+}
+
+/// Флаг вызова обработчика `onUnauthorized` из `@Sendable`-замыкания.
+private final class UnauthorizedFlag: @unchecked Sendable {
+    var isCalled = false
 }
 
 private struct TestEndpoint: Endpoint {

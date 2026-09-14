@@ -8,10 +8,22 @@ import XCTest
 
 @MainActor
 final class AuthViewModelTests: XCTestCase {
-    private func makeSUT(mode: AuthMode = .signup) -> AuthViewModel {
+    private var networkService: NetworkServiceMock!
+    private var userDefaultsService: UserDefaultsServiceMock!
+    private var sessionService: SessionService!
+
+    override func setUp() {
+        super.setUp()
+        networkService = NetworkServiceMock()
+        userDefaultsService = UserDefaultsServiceMock()
+        sessionService = SessionService(userDefaultsService: userDefaultsService)
+    }
+
+    private func makeSUT(mode: AuthMode = .signup, authService: AuthServiceProtocol? = nil) -> AuthViewModel {
         AuthViewModel(
             mode: mode,
-            authService: AuthService(networkService: NetworkServiceMock()),
+            authService: authService ?? AuthService(networkService: networkService),
+            sessionService: sessionService,
             signupValidator: SignupValidator(),
             loginValidator: LoginValidator(),
             router: AuthRouter()
@@ -170,5 +182,99 @@ final class AuthViewModelTests: XCTestCase {
         sut.focusedField = nil
         XCTAssertEqual(sut.loginFieldState, .empty)
         XCTAssertEqual(sut.passwordFieldState, .empty)
+    }
+
+    // MARK: - Отправка формы
+
+    /// Кейс: режим регистрации, сервер вернул пользователя.
+    /// Ожидание: отправлен запрос на /auth/signup, сессия открыта, пользователь сохранён в `UserDefaults`.
+    func test_submit_signupSuccess_startsSession() async {
+        let user = AuthUser(userId: 7, name: "Иван")
+        networkService.stubbedResult = .success(user)
+        let sut = makeSUT(mode: .signup)
+        fillValidSignupForm(sut)
+
+        await sut.performAuthentication()
+
+        let stored = await userDefaultsService.currentUser()
+        XCTAssertEqual(networkService.requestedEndpoints.first?.path, "/auth/signup")
+        XCTAssertEqual(sessionService.currentUser, user)
+        XCTAssertEqual(stored, user)
+        XCTAssertNil(sut.errorMessage)
+        XCTAssertFalse(sut.isLoading)
+    }
+
+    /// Кейс: режим входа, сервер вернул пользователя.
+    /// Ожидание: отправлен запрос на /auth/login, сессия открыта.
+    func test_submit_loginSuccess_startsSession() async {
+        let user = AuthUser(userId: 7, name: "Иван")
+        networkService.stubbedResult = .success(user)
+        let sut = makeSUT(mode: .login)
+        sut.login = "ivan"
+        sut.password = "secret"
+
+        await sut.performAuthentication()
+
+        XCTAssertEqual(networkService.requestedEndpoints.first?.path, "/auth/login")
+        XCTAssertEqual(sessionService.currentUser, user)
+    }
+
+    /// Кейс: сервер ответил ошибкой API (неверные учётные данные).
+    /// Ожидание: показано соответствующее сообщение, сессия не открыта.
+    func test_submit_apiError_showsMessageAndKeepsSessionClosed() async {
+        networkService.stubbedResult = .failure(NetworkError.api(code: NetworkError.Code.wrongCredentials))
+        let sut = makeSUT(mode: .login)
+        sut.login = "ivan"
+        sut.password = "wrong"
+
+        await sut.performAuthentication()
+
+        XCTAssertEqual(sut.errorMessage, CommonStrings.errorWrongCredentials)
+        XCTAssertFalse(sessionService.isLoggedIn)
+        XCTAssertFalse(sut.isLoading)
+    }
+
+    /// Кейс: запрос выполняется (`isLoading == true`) при валидной форме.
+    /// Ожидание: во время запроса `isLoading == true` и кнопка неактивна; после — `isLoading == false`.
+    func test_isPrimaryButtonEnabled_whileLoading_isFalse() async {
+        let authService = AuthServiceMock()
+        authService.stubbedUser = .success(AuthUser(userId: 1, name: "Иван"))
+        let sut = makeSUT(mode: .signup, authService: authService)
+        fillValidSignupForm(sut)
+        XCTAssertTrue(sut.isPrimaryButtonEnabled)
+
+        var stateDuringRequest: (isLoading: Bool, isEnabled: Bool)?
+        authService.onRequest = { stateDuringRequest = (sut.isLoading, sut.isPrimaryButtonEnabled) }
+
+        await sut.performAuthentication()
+
+        XCTAssertEqual(stateDuringRequest?.isLoading, true)
+        XCTAssertEqual(stateDuringRequest?.isEnabled, false)
+        XCTAssertFalse(sut.isLoading)
+    }
+
+    // MARK: - Истечение сессии
+
+    /// Кейс: экран появился после того, как сервер завершил сессию (код 2003).
+    /// Ожидание: показано сообщение «сессия истекла», флаг в сессии сброшен.
+    func test_handleAppear_afterExpiration_showsMessageOnce() async {
+        await sessionService.start(user: AuthUser(userId: 1, name: "Иван"))
+        await sessionService.expire()
+        let sut = makeSUT(mode: .login)
+
+        sut.handleAppear()
+
+        XCTAssertEqual(sut.errorMessage, CommonStrings.errorUnauthorized)
+        XCTAssertFalse(sessionService.isExpired)
+    }
+
+    /// Кейс: экран появился при обычном старте или после явного выхода.
+    /// Ожидание: сообщений нет.
+    func test_handleAppear_withoutExpiration_showsNothing() {
+        let sut = makeSUT(mode: .login)
+
+        sut.handleAppear()
+
+        XCTAssertNil(sut.errorMessage)
     }
 }

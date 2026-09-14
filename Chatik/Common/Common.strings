@@ -1,0 +1,19 @@
+/*
+  Common.strings
+  Chatik
+
+  Общие строки: заголовок ошибки, кнопки диалогов, тексты ошибок сети и API.
+*/
+
+"common.error.title" = "Ошибка";
+"common.ok" = "ОК";
+
+"common.error.unknown" = "Что-то пошло не так. Попробуйте ещё раз";
+"common.error.no_connection" = "Нет соединения с сервером. Проверьте подключение к интернету";
+
+"common.error.api.invalid_login" = "Некорректный логин";
+"common.error.api.invalid_password" = "Некорректный пароль";
+"common.error.api.invalid_name" = "Некорректное имя";
+"common.error.api.login_already_taken" = "Этот логин уже занят";
+"common.error.api.wrong_credentials" = "Неверный логин или пароль";
+"common.error.api.unauthorized" = "Сессия истекла. Войдите снова";

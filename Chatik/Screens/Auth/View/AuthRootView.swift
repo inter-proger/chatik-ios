@@ -13,6 +13,8 @@ struct AuthRootView: View {
         NavigationStack(path: $router.path) {
             AuthView(viewModel: AuthViewModel(
                 authService: DIContainer.shared.authService,
+                signupValidator: DIContainer.shared.signupValidator,
+                loginValidator: DIContainer.shared.loginValidator,
                 router: router
             ))
         }

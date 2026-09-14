@@ -57,6 +57,7 @@ struct AuthView: View {
                 .padding(.vertical, 6)
         }
         .buttonStyle(.borderedProminent)
+        .disabled(!viewModel.isPrimaryButtonEnabled)
     }
 }
 
@@ -64,6 +65,8 @@ struct AuthView: View {
     AuthView(viewModel: AuthViewModel(
         mode: .signup,
         authService: DIContainer.shared.authService,
+        signupValidator: DIContainer.shared.signupValidator,
+        loginValidator: DIContainer.shared.loginValidator,
         router: AuthRouter()
     ))
 }
@@ -72,6 +75,8 @@ struct AuthView: View {
     AuthView(viewModel: AuthViewModel(
         mode: .login,
         authService: DIContainer.shared.authService,
+        signupValidator: DIContainer.shared.signupValidator,
+        loginValidator: DIContainer.shared.loginValidator,
         router: AuthRouter()
     ))
 }

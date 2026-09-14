@@ -1,0 +1,26 @@
+//
+//  ValidationErrors.swift
+//  Chatik
+//
+
+import Foundation
+
+/// Ошибка валидации имени при регистрации.
+enum NameValidationError: Equatable {
+    case empty
+    case invalidCharacters
+}
+
+/// Ошибка валидации логина при регистрации.
+enum LoginValidationError: Equatable {
+    case empty
+    case invalidCharacters
+}
+
+/// Ошибка валидации пароля при регистрации. Возвращается первая по порядку нарушенная проверка.
+enum PasswordValidationError: Equatable {
+    case tooShort
+    case missingUppercase
+    case missingLowercase
+    case missingDigit
+}

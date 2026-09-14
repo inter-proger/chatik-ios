@@ -1,31 +1,14 @@
 //
-//  AuthViewModel.swift
+//  AuthViewModel+Texts.swift
 //  Chatik
 //
 
 import Foundation
 
-/// Состояние экрана регистрации / входа. Сетевая логика будет добавлена отдельно.
-@MainActor
-@Observable
-final class AuthViewModel {
-    private(set) var mode: AuthMode
-
-    var name = ""
-    var login = ""
-    var password = ""
-    var isPasswordVisible = false
-
-    private let authService: AuthServiceProtocol
-    private let router: AuthRouter
-
-    init(mode: AuthMode = .signup, authService: AuthServiceProtocol, router: AuthRouter) {
-        self.mode = mode
-        self.authService = authService
-        self.router = router
-    }
-
-    var isSignup: Bool { mode == .signup }
+/// Тексты экрана, зависящие от режима: заголовок, кнопка, ссылки.
+extension AuthViewModel {
+    /// Служебный URL, по которому в тексте `switchModeText` распознаётся ссылка переключения режима.
+    static let switchModeURL = URL(string: "chatik://auth/switch-mode")!
 
     var title: String {
         isSignup ? AuthStrings.titleSignup : AuthStrings.titleLogin
@@ -34,9 +17,6 @@ final class AuthViewModel {
     var primaryButtonTitle: String {
         isSignup ? AuthStrings.buttonSignup : AuthStrings.buttonLogin
     }
-
-    /// Служебный URL, по которому в тексте `switchModeText` распознаётся ссылка переключения режима.
-    static let switchModeURL = URL(string: "chatik://auth/switch-mode")!
 
     /// Текст вида «Уже зарегистрированы? Войти», где действие — inline-ссылка на `switchModeURL`.
     var switchModeText: AttributedString {
@@ -50,21 +30,6 @@ final class AuthViewModel {
             format: AuthStrings.agreementFormat,
             urls: [AppConfig.licenseAgreementURL, AppConfig.privacyPolicyURL]
         )
-    }
-
-    /// Переключает экран между режимами регистрации и входа.
-    func switchMode() {
-        mode = mode.toggled
-    }
-
-    /// Переключает отображение пароля между секьюрным и открытым текстом.
-    func togglePasswordVisibility() {
-        isPasswordVisible.toggle()
-    }
-
-    /// Обработчик кнопки «Регистрация» / «Вход». Логика будет добавлена отдельно.
-    func didTapPrimaryButton() {
-        // TODO: вызов authService.signup / authService.login и переход через router.
     }
 
     /// Собирает атрибутированный текст из локализованного markdown-шаблона, подставляя URL ссылок.

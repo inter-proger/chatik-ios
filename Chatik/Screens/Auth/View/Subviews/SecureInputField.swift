@@ -15,6 +15,8 @@ struct SecureInputField: View {
     @Binding var text: String
     let isVisible: Bool
     let onToggleVisibility: () -> Void
+    /// Вызывается при получении (`true`) и потере (`false`) фокуса любым из внутренних полей.
+    var onFocusChange: (Bool) -> Void = { _ in }
 
     @FocusState private var focusedField: Field?
 
@@ -46,6 +48,9 @@ struct SecureInputField: View {
         }
         .onChange(of: isVisible) { _, isVisible in
             moveFocusIfNeeded(toPlain: isVisible)
+        }
+        .onChange(of: focusedField != nil) { _, isFocused in
+            onFocusChange(isFocused)
         }
     }
 

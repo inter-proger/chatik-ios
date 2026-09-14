@@ -9,7 +9,20 @@ import XCTest
 @MainActor
 final class AuthViewModelTests: XCTestCase {
     private func makeSUT(mode: AuthMode = .signup) -> AuthViewModel {
-        AuthViewModel(mode: mode, authService: AuthService(networkService: NetworkServiceMock()), router: AuthRouter())
+        AuthViewModel(
+            mode: mode,
+            authService: AuthService(networkService: NetworkServiceMock()),
+            signupValidator: SignupValidator(),
+            loginValidator: LoginValidator(),
+            router: AuthRouter()
+        )
+    }
+
+    /// Заполняет форму валидными для регистрации данными.
+    private func fillValidSignupForm(_ sut: AuthViewModel) {
+        sut.name = "Иван"
+        sut.login = "ivan"
+        sut.password = "Password1"
     }
 
     /// Кейс: ViewModel создана без явного режима.
@@ -77,5 +90,85 @@ final class AuthViewModelTests: XCTestCase {
         let links = sut.agreementText.runs.compactMap(\.link)
 
         XCTAssertEqual(links, [AppConfig.licenseAgreementURL, AppConfig.privacyPolicyURL])
+    }
+
+    // MARK: - Кнопка
+
+    /// Кейс: режим регистрации, форма пустая → заполнена валидно → одно поле испорчено.
+    /// Ожидание: кнопка неактивна → активна → снова неактивна.
+    func test_isPrimaryButtonEnabled_signup_followsFormValidity() {
+        let sut = makeSUT(mode: .signup)
+        XCTAssertFalse(sut.isPrimaryButtonEnabled)
+
+        fillValidSignupForm(sut)
+        XCTAssertTrue(sut.isPrimaryButtonEnabled)
+
+        sut.login = "иван"
+        XCTAssertFalse(sut.isPrimaryButtonEnabled)
+    }
+
+    /// Кейс: режим входа; логин / пароль пустые, из пробелов, произвольные непустые.
+    /// Ожидание: кнопка активна только при обоих непустых полях; формат не проверяется.
+    func test_isPrimaryButtonEnabled_login_requiresNonBlankLoginAndPassword() {
+        let sut = makeSUT(mode: .login)
+        XCTAssertFalse(sut.isPrimaryButtonEnabled)
+
+        sut.login = "иван"
+        sut.password = "   "
+        XCTAssertFalse(sut.isPrimaryButtonEnabled)
+
+        sut.password = "1"
+        XCTAssertTrue(sut.isPrimaryButtonEnabled)
+    }
+
+    // MARK: - Состояние полей
+
+    /// Кейс: режим регистрации, поле логина получило фокус (содержимое любое).
+    /// Ожидание: под полем подсказка о требованиях, без подсветки ошибки.
+    func test_fieldState_focused_showsHintWithoutError() {
+        let sut = makeSUT(mode: .signup)
+        sut.login = "иван"
+        sut.focusedField = .login
+
+        XCTAssertEqual(sut.loginFieldState, AuthFieldState(message: AuthStrings.hintLogin, isError: false))
+    }
+
+    /// Кейс: режим регистрации, фокус ушёл с поля с непустым невалидным значением.
+    /// Ожидание: подсветка ошибки и текст, что нужно исправить.
+    func test_fieldState_unfocusedInvalid_showsError() {
+        let sut = makeSUT(mode: .signup)
+        sut.password = "password"
+        sut.focusedField = nil
+
+        XCTAssertEqual(
+            sut.passwordFieldState,
+            AuthFieldState(message: AuthStrings.errorPasswordMissingUppercase, isError: true)
+        )
+    }
+
+    /// Кейс: режим регистрации, поле без фокуса пустое (ещё не заполняли) или валидное.
+    /// Ожидание: ни подсказки, ни ошибки.
+    func test_fieldState_unfocusedEmptyOrValid_isEmpty() {
+        let sut = makeSUT(mode: .signup)
+
+        XCTAssertEqual(sut.nameFieldState, .empty)
+
+        sut.name = "Иван"
+        XCTAssertEqual(sut.nameFieldState, .empty)
+    }
+
+    /// Кейс: режим входа, поле в фокусе или содержит невалидные для регистрации данные.
+    /// Ожидание: подсказки и ошибки не показываются — в режиме входа валидации нет.
+    func test_fieldState_loginMode_neverShowsHintsOrErrors() {
+        let sut = makeSUT(mode: .login)
+        sut.login = "иван!"
+        sut.password = "x"
+
+        sut.focusedField = .login
+        XCTAssertEqual(sut.loginFieldState, .empty)
+
+        sut.focusedField = nil
+        XCTAssertEqual(sut.loginFieldState, .empty)
+        XCTAssertEqual(sut.passwordFieldState, .empty)
     }
 }

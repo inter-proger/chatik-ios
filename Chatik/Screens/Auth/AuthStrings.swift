@@ -27,6 +27,19 @@ enum AuthStrings {
     static var switchToLoginFormat: String { localized("auth.switch.to_login") }
     static var switchToSignupFormat: String { localized("auth.switch.to_signup") }
 
+    static var hintName: String { localized("auth.hint.name") }
+    static var hintLogin: String { localized("auth.hint.login") }
+    static var hintPassword: String { localized("auth.hint.password") }
+
+    static var errorNameEmpty: String { localized("auth.error.name.empty") }
+    static var errorNameInvalidCharacters: String { localized("auth.error.name.invalid_characters") }
+    static var errorLoginEmpty: String { localized("auth.error.login.empty") }
+    static var errorLoginInvalidCharacters: String { localized("auth.error.login.invalid_characters") }
+    static var errorPasswordTooShort: String { localized("auth.error.password.too_short") }
+    static var errorPasswordMissingUppercase: String { localized("auth.error.password.missing_uppercase") }
+    static var errorPasswordMissingLowercase: String { localized("auth.error.password.missing_lowercase") }
+    static var errorPasswordMissingDigit: String { localized("auth.error.password.missing_digit") }
+
     /// Возвращает локализованную строку по ключу из таблицы `Auth`.
     /// - Parameter key: ключ в `Auth.strings`.
     private static func localized(_ key: String) -> String {

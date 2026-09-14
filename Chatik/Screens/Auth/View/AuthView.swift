@@ -31,6 +31,11 @@ struct AuthView: View {
         }
         .scrollDismissesKeyboard(.interactively)
         .animation(.default, value: viewModel.isSignup)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                AuthLanguageMenu(selected: viewModel.language, onSelect: viewModel.selectLanguage)
+            }
+        }
         .onAppear(perform: viewModel.handleAppear)
         .alert(CommonStrings.errorTitle, isPresented: $viewModel.errorMessage.isPresent()) {
             Button(CommonStrings.ok, role: .cancel) {}
@@ -79,6 +84,7 @@ struct AuthView: View {
         mode: .signup,
         authService: DIContainer.shared.authService,
         sessionService: DIContainer.shared.sessionService,
+        localizationService: DIContainer.shared.localizationService,
         signupValidator: DIContainer.shared.signupValidator,
         loginValidator: DIContainer.shared.loginValidator,
         router: AuthRouter()
@@ -90,6 +96,7 @@ struct AuthView: View {
         mode: .login,
         authService: DIContainer.shared.authService,
         sessionService: DIContainer.shared.sessionService,
+        localizationService: DIContainer.shared.localizationService,
         signupValidator: DIContainer.shared.signupValidator,
         loginValidator: DIContainer.shared.loginValidator,
         router: AuthRouter()

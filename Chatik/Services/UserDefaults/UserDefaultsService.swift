@@ -10,6 +10,10 @@ protocol UserDefaultsServiceProtocol: Actor {
     func currentUser() -> AuthUser?
     /// Сохраняет пользователя; `nil` — удаляет запись.
     func setCurrentUser(_ user: AuthUser?)
+    /// Выбранный пользователем язык интерфейса. `nil` — не выбирал, используется системный.
+    func language() -> AppLanguage?
+    /// Сохраняет выбранный язык интерфейса.
+    func setLanguage(_ language: AppLanguage)
 }
 
 /// Единственная точка доступа к `UserDefaults`. Прямое обращение к `UserDefaults` из остального кода запрещено.
@@ -23,9 +27,12 @@ actor UserDefaultsService: UserDefaultsServiceProtocol {
     /// Кэш пользователя: читается из `UserDefaults` один раз при первом обращении,
     /// дальше меняется только через `setCurrentUser`, чтобы не декодировать JSON при каждом чтении.
     private lazy var cachedUser: AuthUser? = readUser()
+    /// Кэш языка: читается из `UserDefaults` один раз при первом обращении, дальше меняется только через `setLanguage`.
+    private lazy var cachedLanguage: AppLanguage? = readLanguage()
 
     private enum Keys {
         static let currentUser = "currentUser"
+        static let language = "language"
     }
 
     init(defaults: UserDefaults = .standard) {
@@ -41,6 +48,22 @@ actor UserDefaultsService: UserDefaultsServiceProtocol {
     func setCurrentUser(_ user: AuthUser?) {
         cachedUser = user
         writeUser(user)
+    }
+
+    func language() -> AppLanguage? {
+        cachedLanguage
+    }
+
+    /// Обновляет кэш и запись в `UserDefaults`.
+    /// - Parameter language: язык для сохранения.
+    func setLanguage(_ language: AppLanguage) {
+        cachedLanguage = language
+        defaults.set(language.rawValue, forKey: Keys.language)
+    }
+
+    /// Читает язык из `UserDefaults`.
+    private func readLanguage() -> AppLanguage? {
+        defaults.string(forKey: Keys.language).flatMap(AppLanguage.init(rawValue:))
     }
 
     /// Читает и декодирует пользователя из `UserDefaults`.

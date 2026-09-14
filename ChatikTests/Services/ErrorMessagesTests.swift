@@ -6,6 +6,7 @@
 import XCTest
 @testable import Chatik
 
+@MainActor
 final class ErrorMessagesTests: XCTestCase {
     /// Кейс: известные коды ошибок API.
     /// Ожидание: каждому коду соответствует свой локализованный текст.

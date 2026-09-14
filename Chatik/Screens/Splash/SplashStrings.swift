@@ -6,6 +6,7 @@
 import Foundation
 
 /// Локализованные строки экрана загрузки (таблица `Splash.strings`).
+@MainActor
 enum SplashStrings {
     private static let table = "Splash"
 
@@ -15,6 +16,6 @@ enum SplashStrings {
     /// Возвращает локализованную строку по ключу из таблицы `Splash`.
     /// - Parameter key: ключ в `Splash.strings`.
     private static func localized(_ key: String) -> String {
-        String(localized: String.LocalizationValue(key), table: table)
+        Localized.string(key, table: table)
     }
 }

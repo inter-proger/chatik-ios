@@ -1,0 +1,9 @@
+/*
+  Splash.strings
+  Chatik
+
+  Splash screen strings.
+*/
+
+"splash.title" = "Chatik";
+"splash.subtitle" = "Loading…";

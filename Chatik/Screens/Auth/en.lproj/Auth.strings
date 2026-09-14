@@ -1,0 +1,43 @@
+/*
+  Auth.strings
+  Chatik
+
+  Sign up / log in screen strings.
+*/
+
+"auth.title.signup" = "Sign Up";
+"auth.title.login" = "Log In";
+
+"auth.field.name" = "Name";
+"auth.field.login" = "Username";
+"auth.field.password" = "Password";
+
+"auth.password.show" = "Show password";
+"auth.password.hide" = "Hide password";
+
+"auth.button.signup" = "Sign Up";
+"auth.button.login" = "Log In";
+
+"auth.agreement" = "By signing up, you accept the [License Agreement](%@) and [Privacy Policy](%@)";
+
+/* %@ — internal mode-switch URL, the link must stay in the text */
+"auth.switch.to_login" = "Already have an account? **[Log in](%@)**";
+"auth.switch.to_signup" = "No account? **[Sign up](%@)**";
+
+/* Hints shown while a field is focused (sign-up mode) */
+"auth.hint.name" = "Letters, digits, space, “-” and “_”";
+"auth.hint.login" = "Latin letters, digits and “_”";
+"auth.hint.password" = "At least 8 characters, an uppercase and a lowercase Latin letter, a digit";
+
+/* Validation errors (sign-up mode) */
+"auth.error.name.empty" = "Enter your name";
+"auth.error.name.invalid_characters" = "Only letters, digits, space, “-” and “_” are allowed";
+"auth.error.login.empty" = "Enter your username";
+"auth.error.login.invalid_characters" = "Only Latin letters, digits and “_” are allowed";
+"auth.error.password.too_short" = "Password must be at least 8 characters";
+"auth.error.password.missing_uppercase" = "Add at least one uppercase Latin letter";
+"auth.error.password.missing_lowercase" = "Add at least one lowercase Latin letter";
+"auth.error.password.missing_digit" = "Add at least one digit";
+
+/* Language menu */
+"auth.language" = "Language";

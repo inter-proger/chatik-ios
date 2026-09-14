@@ -106,4 +106,41 @@ final class UserDefaultsServiceTests: XCTestCase {
         XCTAssertTrue(final.map { $0.userId.isMultiple(of: 2) && $0.userId < iterations } ?? false)
         XCTAssertEqual(persisted, final)
     }
+
+    /// Кейс: язык ещё не выбирался / выбран и сохранён; сервис пересоздан над тем же `UserDefaults`.
+    /// Ожидание: до выбора — `nil`, после — сохранённый язык читается обратно.
+    func test_language_persists() async {
+        let initial = await sut.language()
+        XCTAssertNil(initial)
+
+        await sut.setLanguage(.en)
+
+        let reloaded = await UserDefaultsService(defaults: defaults).language()
+        XCTAssertEqual(reloaded, .en)
+    }
+
+    /// Кейс: язык прочитан один раз, затем запись в `UserDefaults` изменена извне (минуя сервис).
+    /// Ожидание: сервис продолжает отдавать закэшированное значение — из `defaults` он читает только при первом обращении.
+    func test_language_isReadFromDefaultsOnlyOnce() async {
+        await sut.setLanguage(.ru)
+        let cached = await sut.language()
+        XCTAssertEqual(cached, .ru)
+
+        defaults.set(AppLanguage.en.rawValue, forKey: "language")
+
+        let stillCached = await sut.language()
+        let freshInstance = await UserDefaultsService(defaults: defaults).language()
+        XCTAssertEqual(stillCached, .ru)
+        XCTAssertEqual(freshInstance, .en)
+    }
+
+    /// Кейс: первое обращение к языку происходит после того, как значение уже лежит в `UserDefaults`.
+    /// Ожидание: при первом чтении кэш инициализируется из `defaults`.
+    func test_language_firstAccess_loadsFromDefaults() async {
+        defaults.set(AppLanguage.en.rawValue, forKey: "language")
+
+        let language = await sut.language()
+
+        XCTAssertEqual(language, .en)
+    }
 }

@@ -11,9 +11,15 @@ final class AppRouterTests: XCTestCase {
     private let user = AuthUser(userId: 1, name: "Ivan")
 
     /// Создаёт роутер над сессией с заданным сохранённым пользователем и без задержки splash.
-    private func makeSUT(storedUser: AuthUser? = nil, minimumSplashDuration: Duration = .zero) -> AppRouter {
-        AppRouter(
-            sessionService: SessionService(userDefaultsService: UserDefaultsServiceMock(currentUser: storedUser)),
+    private func makeSUT(
+        storedUser: AuthUser? = nil,
+        storedLanguage: AppLanguage? = nil,
+        minimumSplashDuration: Duration = .zero
+    ) -> AppRouter {
+        let defaults = UserDefaultsServiceMock(currentUser: storedUser, language: storedLanguage)
+        return AppRouter(
+            sessionService: SessionService(userDefaultsService: defaults),
+            localizationService: LocalizationService(userDefaultsService: defaults, systemLanguage: .ru),
             minimumSplashDuration: minimumSplashDuration
         )
     }
@@ -54,8 +60,13 @@ final class AppRouterTests: XCTestCase {
     /// Кейс: сессия открывается, завершается пользователем, открывается и истекает по 2003.
     /// Ожидание: корень следует за состоянием сессии: auth → chats → auth → chats → auth.
     func test_root_followsSessionChanges() async {
-        let session = SessionService(userDefaultsService: UserDefaultsServiceMock())
-        let sut = AppRouter(sessionService: session, minimumSplashDuration: .zero)
+        let defaults = UserDefaultsServiceMock()
+        let session = SessionService(userDefaultsService: defaults)
+        let sut = AppRouter(
+            sessionService: session,
+            localizationService: LocalizationService(userDefaultsService: defaults, systemLanguage: .ru),
+            minimumSplashDuration: .zero
+        )
         await sut.restoreSession()
 
         await session.start(user: user)
@@ -69,5 +80,16 @@ final class AppRouterTests: XCTestCase {
 
         await session.expire()
         XCTAssertEqual(sut.root, .auth)
+    }
+
+    /// Кейс: пользователь ранее выбрал английский; системный язык — русский.
+    /// Ожидание: после `restoreSession()` локаль приложения — английская.
+    func test_restoreSession_restoresSavedLanguage() async {
+        let sut = makeSUT(storedLanguage: .en)
+        XCTAssertEqual(sut.locale.identifier, "ru")
+
+        await sut.restoreSession()
+
+        XCTAssertEqual(sut.locale.identifier, "en")
     }
 }

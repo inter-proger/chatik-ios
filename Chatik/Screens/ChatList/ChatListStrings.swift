@@ -6,6 +6,7 @@
 import Foundation
 
 /// Локализованные строки экрана списка чатов (таблица `ChatList.strings`).
+@MainActor
 enum ChatListStrings {
     private static let table = "ChatList"
 
@@ -16,6 +17,6 @@ enum ChatListStrings {
     /// Возвращает локализованную строку по ключу из таблицы `ChatList`.
     /// - Parameter key: ключ в `ChatList.strings`.
     private static func localized(_ key: String) -> String {
-        String(localized: String.LocalizationValue(key), table: table)
+        Localized.string(key, table: table)
     }
 }

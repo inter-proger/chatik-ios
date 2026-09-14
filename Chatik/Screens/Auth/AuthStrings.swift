@@ -6,6 +6,7 @@
 import Foundation
 
 /// Локализованные строки экрана авторизации (таблица `Auth.strings`).
+@MainActor
 enum AuthStrings {
     private static let table = "Auth"
 
@@ -40,9 +41,11 @@ enum AuthStrings {
     static var errorPasswordMissingLowercase: String { localized("auth.error.password.missing_lowercase") }
     static var errorPasswordMissingDigit: String { localized("auth.error.password.missing_digit") }
 
+    static var language: String { localized("auth.language") }
+
     /// Возвращает локализованную строку по ключу из таблицы `Auth`.
     /// - Parameter key: ключ в `Auth.strings`.
     private static func localized(_ key: String) -> String {
-        String(localized: String.LocalizationValue(key), table: table)
+        Localized.string(key, table: table)
     }
 }

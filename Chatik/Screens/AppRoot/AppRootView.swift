@@ -11,7 +11,10 @@ struct AppRootView: View {
 
     /// - Parameter router: роутер приложения; по умолчанию создаётся над сессией из `DIContainer`.
     init(router: AppRouter? = nil) {
-        _router = State(initialValue: router ?? AppRouter(sessionService: DIContainer.shared.sessionService))
+        _router = State(initialValue: router ?? AppRouter(
+            sessionService: DIContainer.shared.sessionService,
+            localizationService: DIContainer.shared.localizationService
+        ))
     }
 
     var body: some View {
@@ -26,6 +29,7 @@ struct AppRootView: View {
             }
         }
         .animation(.default, value: router.root)
+        .environment(\.locale, router.locale)
         .task { await router.restoreSession() }
     }
 }

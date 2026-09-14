@@ -6,6 +6,7 @@
 import Foundation
 
 /// Локализованные общие строки (таблица `Common.strings`).
+@MainActor
 enum CommonStrings {
     private static let table = "Common"
 
@@ -25,6 +26,6 @@ enum CommonStrings {
     /// Возвращает локализованную строку по ключу из таблицы `Common`.
     /// - Parameter key: ключ в `Common.strings`.
     private static func localized(_ key: String) -> String {
-        String(localized: String.LocalizationValue(key), table: table)
+        Localized.string(key, table: table)
     }
 }

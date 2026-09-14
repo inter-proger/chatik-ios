@@ -14,6 +14,7 @@ struct AuthRootView: View {
             AuthView(viewModel: AuthViewModel(
                 authService: DIContainer.shared.authService,
                 sessionService: DIContainer.shared.sessionService,
+                localizationService: DIContainer.shared.localizationService,
                 signupValidator: DIContainer.shared.signupValidator,
                 loginValidator: DIContainer.shared.loginValidator,
                 router: router

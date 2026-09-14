@@ -38,3 +38,6 @@
 "auth.error.password.missing_uppercase" = "Добавьте хотя бы одну заглавную латинскую букву";
 "auth.error.password.missing_lowercase" = "Добавьте хотя бы одну строчную латинскую букву";
 "auth.error.password.missing_digit" = "Добавьте хотя бы одну цифру";
+
+/* Меню выбора языка */
+"auth.language" = "Язык";

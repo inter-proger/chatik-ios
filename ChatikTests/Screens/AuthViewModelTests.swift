@@ -11,12 +11,14 @@ final class AuthViewModelTests: XCTestCase {
     private var networkService: NetworkServiceMock!
     private var userDefaultsService: UserDefaultsServiceMock!
     private var sessionService: SessionService!
+    private var localizationService: LocalizationService!
 
     override func setUp() {
         super.setUp()
         networkService = NetworkServiceMock()
         userDefaultsService = UserDefaultsServiceMock()
         sessionService = SessionService(userDefaultsService: userDefaultsService)
+        localizationService = LocalizationService(userDefaultsService: userDefaultsService, systemLanguage: .ru)
     }
 
     private func makeSUT(mode: AuthMode = .signup, authService: AuthServiceProtocol? = nil) -> AuthViewModel {
@@ -24,10 +26,17 @@ final class AuthViewModelTests: XCTestCase {
             mode: mode,
             authService: authService ?? AuthService(networkService: networkService),
             sessionService: sessionService,
+            localizationService: localizationService,
             signupValidator: SignupValidator(),
             loginValidator: LoginValidator(),
             router: AuthRouter()
         )
+    }
+
+    /// Текст markdown-шаблона без разметки и с подставленным служебным URL — то, что увидит пользователь.
+    private func plainText(of format: String) -> String {
+        let markdown = String(format: format, AuthViewModel.switchModeURL.absoluteString)
+        return String((try? AttributedString(markdown: markdown))?.characters ?? AttributedString(markdown).characters)
     }
 
     /// Заполняет форму валидными для регистрации данными.
@@ -45,7 +54,7 @@ final class AuthViewModelTests: XCTestCase {
         XCTAssertTrue(sut.isSignup)
         XCTAssertEqual(sut.title, AuthStrings.titleSignup)
         XCTAssertEqual(sut.primaryButtonTitle, AuthStrings.buttonSignup)
-        XCTAssertEqual(String(sut.switchModeText.characters), "Уже зарегистрированы? Войти")
+        XCTAssertEqual(String(sut.switchModeText.characters), plainText(of: AuthStrings.switchToLoginFormat))
     }
 
     /// Кейс: ViewModel создана в режиме входа.
@@ -56,7 +65,7 @@ final class AuthViewModelTests: XCTestCase {
         XCTAssertFalse(sut.isSignup)
         XCTAssertEqual(sut.title, AuthStrings.titleLogin)
         XCTAssertEqual(sut.primaryButtonTitle, AuthStrings.buttonLogin)
-        XCTAssertEqual(String(sut.switchModeText.characters), "Нет аккаунта? Зарегистрироваться")
+        XCTAssertEqual(String(sut.switchModeText.characters), plainText(of: AuthStrings.switchToSignupFormat))
     }
 
     /// Кейс: пользователь дважды нажимает ссылку переключения режима.
@@ -276,5 +285,30 @@ final class AuthViewModelTests: XCTestCase {
         sut.handleAppear()
 
         XCTAssertNil(sut.errorMessage)
+    }
+
+    // MARK: - Язык
+
+    /// Кейс: пользователь выбрал английский в меню языков.
+    /// Ожидание: язык сервиса переключён, выбор сохранён в `UserDefaults`, тексты экрана — на английском.
+    func test_selectLanguage_appliesAndPersistsLanguage() async {
+        let sut = makeSUT(mode: .login)
+        XCTAssertEqual(sut.language, .ru)
+
+        sut.selectLanguage(.en)
+        await Task.yield()
+        await waitUntil { self.localizationService.language == .en }
+
+        let stored = await userDefaultsService.language()
+        XCTAssertEqual(sut.language, .en)
+        XCTAssertEqual(stored, .en)
+    }
+
+    /// Ждёт выполнения условия, давая отработать задачам, запущенным через `Task {}`.
+    private func waitUntil(timeout: Duration = .seconds(1), _ condition: @MainActor () -> Bool) async {
+        let deadline = ContinuousClock.now + timeout
+        while !condition(), ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
     }
 }

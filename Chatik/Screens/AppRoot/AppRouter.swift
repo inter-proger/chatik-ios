@@ -22,14 +22,21 @@ final class AppRouter {
     private(set) var isSplashFinished = false
 
     private let sessionService: SessionServiceProtocol
+    private let localizationService: LocalizationServiceProtocol
     private let minimumSplashDuration: Duration
 
     /// - Parameters:
     ///   - sessionService: сервис сессии, по которому выбирается корневой экран.
+    ///   - localizationService: сервис языка интерфейса; его состояние восстанавливается вместе с сессией.
     ///   - minimumSplashDuration: минимальное время показа splash — чтобы он не мелькал на один кадр,
     ///     когда сессия восстанавливается мгновенно.
-    init(sessionService: SessionServiceProtocol, minimumSplashDuration: Duration = .milliseconds(600)) {
+    init(
+        sessionService: SessionServiceProtocol,
+        localizationService: LocalizationServiceProtocol,
+        minimumSplashDuration: Duration = .milliseconds(600)
+    ) {
         self.sessionService = sessionService
+        self.localizationService = localizationService
         self.minimumSplashDuration = minimumSplashDuration
     }
 
@@ -38,9 +45,15 @@ final class AppRouter {
         return sessionService.isLoggedIn ? .chats : .auth
     }
 
-    /// Восстанавливает сохранённую сессию при старте, удерживая splash не меньше `minimumSplashDuration`.
+    /// Локаль текущего языка интерфейса — для форматирования дат, чисел и системных элементов.
+    var locale: Locale {
+        localizationService.language.locale
+    }
+
+    /// Восстанавливает сохранённые язык и сессию при старте, удерживая splash не меньше `minimumSplashDuration`.
     func restoreSession() async {
         let splashHold = Task { try? await Task.sleep(for: minimumSplashDuration) }
+        await localizationService.restore()
         await sessionService.restore()
         await splashHold.value
         isSplashFinished = true

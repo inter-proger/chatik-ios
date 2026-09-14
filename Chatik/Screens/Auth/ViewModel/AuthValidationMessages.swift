@@ -6,6 +6,7 @@
 import Foundation
 
 /// Сопоставление ошибок валидации с локализованными текстами подсказок экрана авторизации.
+@MainActor
 extension NameValidationError {
     var message: String {
         switch self {
@@ -15,6 +16,7 @@ extension NameValidationError {
     }
 }
 
+@MainActor
 extension LoginValidationError {
     var message: String {
         switch self {
@@ -24,6 +26,7 @@ extension LoginValidationError {
     }
 }
 
+@MainActor
 extension PasswordValidationError {
     var message: String {
         switch self {

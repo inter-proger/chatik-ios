@@ -12,6 +12,8 @@ final class DIContainer {
 
     let networkService: NetworkServiceProtocol
     let authService: AuthServiceProtocol
+    let profileService: ProfileServiceProtocol
+    let filesService: FilesServiceProtocol
     let userDefaultsService: UserDefaultsServiceProtocol
     let sessionService: SessionServiceProtocol
     let localizationService: LocalizationServiceProtocol
@@ -28,6 +30,8 @@ final class DIContainer {
         self.localizationService = LocalizationService(userDefaultsService: userDefaultsService)
         self.networkService = networkService
         self.authService = AuthService(networkService: networkService)
+        self.profileService = ProfileService(networkService: networkService)
+        self.filesService = FilesService(networkService: networkService)
         self.signupValidator = SignupValidator()
         self.loginValidator = LoginValidator()
     }

@@ -29,6 +29,11 @@ enum ErrorMessages {
         case NetworkError.Code.loginAlreadyTaken: return CommonStrings.errorLoginAlreadyTaken
         case NetworkError.Code.wrongCredentials: return CommonStrings.errorWrongCredentials
         case NetworkError.Code.unauthorized: return CommonStrings.errorUnauthorized
+        case NetworkError.Code.fileMissing: return CommonStrings.errorFileMissing
+        case NetworkError.Code.fileTooLarge: return CommonStrings.errorFileTooLarge
+        case NetworkError.Code.fileNotImage: return CommonStrings.errorFileNotImage
+        case NetworkError.Code.fileNotFound: return CommonStrings.errorFileNotFound
+        case NetworkError.Code.fileSaveFailed: return CommonStrings.errorFileSaveFailed
         default: return CommonStrings.errorUnknown
         }
     }

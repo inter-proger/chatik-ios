@@ -18,6 +18,11 @@ final class ErrorMessagesTests: XCTestCase {
             (NetworkError.Code.loginAlreadyTaken, CommonStrings.errorLoginAlreadyTaken),
             (NetworkError.Code.wrongCredentials, CommonStrings.errorWrongCredentials),
             (NetworkError.Code.unauthorized, CommonStrings.errorUnauthorized),
+            (NetworkError.Code.fileMissing, CommonStrings.errorFileMissing),
+            (NetworkError.Code.fileTooLarge, CommonStrings.errorFileTooLarge),
+            (NetworkError.Code.fileNotImage, CommonStrings.errorFileNotImage),
+            (NetworkError.Code.fileNotFound, CommonStrings.errorFileNotFound),
+            (NetworkError.Code.fileSaveFailed, CommonStrings.errorFileSaveFailed),
         ]
 
         for testCase in cases {

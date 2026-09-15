@@ -22,6 +22,11 @@ enum CommonStrings {
     static var errorLoginAlreadyTaken: String { localized("common.error.api.login_already_taken") }
     static var errorWrongCredentials: String { localized("common.error.api.wrong_credentials") }
     static var errorUnauthorized: String { localized("common.error.api.unauthorized") }
+    static var errorFileMissing: String { localized("common.error.api.file_missing") }
+    static var errorFileTooLarge: String { localized("common.error.api.file_too_large") }
+    static var errorFileNotImage: String { localized("common.error.api.file_not_image") }
+    static var errorFileNotFound: String { localized("common.error.api.file_not_found") }
+    static var errorFileSaveFailed: String { localized("common.error.api.file_save_failed") }
 
     /// Возвращает локализованную строку по ключу из таблицы `Common`.
     /// - Parameter key: ключ в `Common.strings`.

@@ -8,6 +8,9 @@ import Foundation
 protocol NetworkServiceProtocol {
     /// Выполняет запрос и возвращает содержимое поля `response` успешного ответа.
     func request<T: Decodable>(_ endpoint: Endpoint) async throws -> T
+    /// Загружает файл POST-запросом с телом `multipart/form-data`: параметры эндпоинта уходят текстовыми полями,
+    /// `file` — файловой частью. Возвращает содержимое поля `response` успешного ответа.
+    func upload<T: Decodable>(_ endpoint: Endpoint, file: MultipartFile) async throws -> T
     /// Очищает cookie сессии (`PHPSESSID`) для базового URL.
     func clearSessionCookies()
 }
@@ -45,12 +48,16 @@ final class NetworkService: NetworkServiceProtocol {
     /// - Throws: `NetworkError` при транспортной ошибке, неверном HTTP-статусе,
     ///   `status = 0` от сервера или ошибке декодирования.
     func request<T: Decodable>(_ endpoint: Endpoint) async throws -> T {
-        let request = try makeURLRequest(for: endpoint)
-        let (data, response) = try await perform(request)
-        try validate(response)
-        let apiResponse: APIResponse<T> = try decode(data)
-        await handleUnauthorizedIfNeeded(apiResponse, for: endpoint)
-        return try unwrap(apiResponse)
+        try await send(makeURLRequest(for: endpoint), for: endpoint)
+    }
+
+    /// Загружает файл через `multipart/form-data`; обработка ответа такая же, как у `request(_:)`.
+    /// - Parameters:
+    ///   - endpoint: описание запроса; `parameters` уходят текстовыми полями формы, `method` должен быть `.post`.
+    ///   - file: файл, который уходит файловой частью формы.
+    /// - Returns: декодированное поле `response`.
+    func upload<T: Decodable>(_ endpoint: Endpoint, file: MultipartFile) async throws -> T {
+        try await send(makeMultipartRequest(for: endpoint, file: file), for: endpoint)
     }
 
     /// Удаляет все cookie, относящиеся к базовому URL API.
@@ -59,6 +66,15 @@ final class NetworkService: NetworkServiceProtocol {
     }
 
     // MARK: - Private
+
+    /// Выполняет собранный запрос, проверяет HTTP-статус и общую обёртку `{status, response, errorCode}`.
+    private func send<T: Decodable>(_ request: URLRequest, for endpoint: Endpoint) async throws -> T {
+        let (data, response) = try await perform(request)
+        try validate(response)
+        let apiResponse: APIResponse<T> = try decode(data)
+        await handleUnauthorizedIfNeeded(apiResponse, for: endpoint)
+        return try unwrap(apiResponse)
+    }
 
     /// Выполняет запрос, оборачивая `URLError` в `NetworkError.transport`; прочие ошибки пробрасываются как есть.
     private func perform(_ request: URLRequest) async throws -> (Data, URLResponse) {
@@ -101,6 +117,17 @@ final class NetworkService: NetworkServiceProtocol {
         request.httpMethod = HTTPMethod.post.rawValue
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         request.httpBody = FormURLEncoder.encode(endpoint.parameters).data(using: .utf8)
+        applyHeaders(endpoint.headers, to: &request)
+        return request
+    }
+
+    /// Собирает POST-запрос с телом `multipart/form-data`: параметры эндпоинта — текстовые поля, `file` — файл.
+    private func makeMultipartRequest(for endpoint: Endpoint, file: MultipartFile) -> URLRequest {
+        let boundary = "Boundary-\(UUID().uuidString)"
+        var request = URLRequest(url: baseURL.appendingPathComponent(endpoint.path))
+        request.httpMethod = HTTPMethod.post.rawValue
+        request.setValue(MultipartFormEncoder.contentType(boundary: boundary), forHTTPHeaderField: "Content-Type")
+        request.httpBody = MultipartFormEncoder.encode(parameters: endpoint.parameters, file: file, boundary: boundary)
         applyHeaders(endpoint.headers, to: &request)
         return request
     }

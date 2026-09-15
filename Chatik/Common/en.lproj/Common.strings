@@ -17,3 +17,8 @@
 "common.error.api.login_already_taken" = "This username is already taken";
 "common.error.api.wrong_credentials" = "Wrong username or password";
 "common.error.api.unauthorized" = "Session expired. Please log in again";
+"common.error.api.file_missing" = "No file was sent";
+"common.error.api.file_too_large" = "The file is too large. Maximum size is 10 MB";
+"common.error.api.file_not_image" = "The file is not an image";
+"common.error.api.file_not_found" = "File not found";
+"common.error.api.file_save_failed" = "Failed to save the file. Please try again";

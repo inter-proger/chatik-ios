@@ -56,6 +56,40 @@ final class NetworkServiceTests: XCTestCase {
         XCTAssertNil(request.bodyString)
     }
 
+    /// Кейс: multipart-загрузка файла с текстовым параметром эндпоинта.
+    /// Ожидание: POST на path эндпоинта, `Content-Type: multipart/form-data` с boundary, тело собрано
+    /// энкодером с этим же boundary (параметр — текстовое поле, файл — файловая часть), ответ разобран.
+    func test_upload_sendsMultipartBodyAndDecodesResponse() async throws {
+        let captured = stub(status: 200, json: #"{"status":1,"response":{"userId":1,"name":"Ivan"}}"#)
+        let endpoint = TestEndpoint(path: "/files/uploadImage", method: .post, parameters: ["filename": "a.jpg"], headers: ["X-Test": "1"])
+        let file = MultipartFile(fieldName: "file", filename: "a.jpg", mimeType: "image/jpeg", data: Data("JPEG".utf8))
+
+        let user: AuthUser = try await sut.upload(endpoint, file: file)
+
+        XCTAssertEqual(user, AuthUser(userId: 1, name: "Ivan"))
+        let request = try XCTUnwrap(captured.request)
+        XCTAssertEqual(request.httpMethod, "POST")
+        XCTAssertEqual(request.url?.absoluteString, "http://localhost:8080/files/uploadImage")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "X-Test"), "1")
+        let contentType = try XCTUnwrap(request.value(forHTTPHeaderField: "Content-Type"))
+        let boundary = try XCTUnwrap(contentType.split(separator: "=").last.map(String.init))
+        XCTAssertEqual(contentType, "multipart/form-data; boundary=\(boundary)")
+        let expectedBody = MultipartFormEncoder.encode(parameters: ["filename": "a.jpg"], file: file, boundary: boundary)
+        XCTAssertEqual(request.bodyString, String(data: expectedBody, encoding: .utf8))
+    }
+
+    /// Кейс: multipart-загрузка вернула `status: 0` с кодом 3002.
+    /// Ожидание: выброшена `NetworkError.api(3002)` — обработка ответа общая с `request(_:)`.
+    func test_upload_errorStatus_throwsApiError() async {
+        _ = stub(status: 200, json: #"{"status":0,"errorCode":3002}"#)
+        let endpoint = TestEndpoint(path: "/files/uploadImage", method: .post, parameters: [:], headers: nil)
+        let file = MultipartFile(fieldName: "file", filename: "a.jpg", mimeType: "image/jpeg", data: Data())
+
+        await assertThrows(NetworkError.api(code: 3002)) {
+            let _: EmptyResponse = try await sut.upload(endpoint, file: file)
+        }
+    }
+
     // MARK: - Response handling
 
     /// Кейс: ответ со `status: 1` и заполненным `response`.

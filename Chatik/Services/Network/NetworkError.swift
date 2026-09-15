@@ -49,5 +49,10 @@ extension NetworkError {
         static let loginAlreadyTaken = 2001
         static let wrongCredentials = 2002
         static let unauthorized = 2003
+        static let fileMissing = 3001
+        static let fileTooLarge = 3002
+        static let fileNotImage = 3003
+        static let fileNotFound = 3004
+        static let fileSaveFailed = 3005
     }
 }

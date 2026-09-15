@@ -10,6 +10,7 @@ import Foundation
 final class NetworkServiceMock: NetworkServiceProtocol {
     var stubbedResult: Result<Any, Error> = .failure(NetworkError.missingResponse)
     private(set) var requestedEndpoints: [Endpoint] = []
+    private(set) var uploadedFiles: [MultipartFile] = []
     private(set) var clearSessionCookiesCallCount = 0
 
     func request<T: Decodable>(_ endpoint: Endpoint) async throws -> T {
@@ -19,6 +20,11 @@ final class NetworkServiceMock: NetworkServiceProtocol {
             throw NetworkError.decoding("NetworkServiceMock: stubbed \(type(of: value)), expected \(T.self)")
         }
         return typed
+    }
+
+    func upload<T: Decodable>(_ endpoint: Endpoint, file: MultipartFile) async throws -> T {
+        uploadedFiles.append(file)
+        return try await request(endpoint)
     }
 
     func clearSessionCookies() {

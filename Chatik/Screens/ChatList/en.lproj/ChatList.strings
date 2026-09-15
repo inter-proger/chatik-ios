@@ -6,5 +6,6 @@
 */
 
 "chat_list.title" = "Chats";
+"chat_list.profile" = "Profile";
 "chat_list.logout" = "Log Out";
 "chat_list.empty" = "No chats yet";

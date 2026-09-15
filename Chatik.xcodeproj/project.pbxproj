@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		F7A1C0030000000000000003 /* Kingfisher in Frameworks */ = {isa = PBXBuildFile; productRef = F7A1C0020000000000000002 /* Kingfisher */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		F7003C0830515A0000245676 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -39,6 +43,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				F7A1C0030000000000000003 /* Kingfisher in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -90,6 +95,7 @@
 			);
 			name = Chatik;
 			packageProductDependencies = (
+				F7A1C0020000000000000002 /* Kingfisher */,
 			);
 			productName = Chatik;
 			productReference = F7003B7C305159F200245676 /* Chatik.app */;
@@ -147,6 +153,9 @@
 			);
 			mainGroup = F7003B73305159F200245676;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				F7A1C0010000000000000001 /* XCRemoteSwiftPackageReference "Kingfisher" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = F7003B7D305159F200245676 /* Products */;
 			projectDirPath = "";
@@ -453,6 +462,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		F7A1C0010000000000000001 /* XCRemoteSwiftPackageReference "Kingfisher" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/onevcat/Kingfisher.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 8.0.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		F7A1C0020000000000000002 /* Kingfisher */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = F7A1C0010000000000000001 /* XCRemoteSwiftPackageReference "Kingfisher" */;
+			productName = Kingfisher;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = F7003B74305159F200245676 /* Project object */;
 }

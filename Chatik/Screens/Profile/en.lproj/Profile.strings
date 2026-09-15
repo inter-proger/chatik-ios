@@ -1,0 +1,11 @@
+/*
+  Profile.strings
+  Chatik
+
+  Profile screen strings.
+*/
+
+"profile.title" = "Profile";
+"profile.name" = "Name";
+"profile.login" = "Login";
+"profile.user_id" = "User ID";

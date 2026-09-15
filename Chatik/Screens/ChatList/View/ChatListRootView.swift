@@ -16,6 +16,15 @@ struct ChatListRootView: View {
                 sessionService: DIContainer.shared.sessionService,
                 router: router
             ))
+            .navigationDestination(for: ChatListRoute.self) { route in
+                switch route {
+                case .profile:
+                    ProfileView(viewModel: ProfileViewModel(
+                        profileService: DIContainer.shared.profileService,
+                        sessionService: DIContainer.shared.sessionService
+                    ))
+                }
+            }
         }
     }
 }

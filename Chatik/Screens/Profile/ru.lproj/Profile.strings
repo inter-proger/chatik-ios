@@ -1,0 +1,11 @@
+/*
+  Profile.strings
+  Chatik
+
+  Строки экрана профиля.
+*/
+
+"profile.title" = "Профиль";
+"profile.name" = "Имя";
+"profile.login" = "Логин";
+"profile.user_id" = "ID пользователя";

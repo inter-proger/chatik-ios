@@ -5,7 +5,7 @@
 
 import Foundation
 
-/// Состояние экрана списка чатов. Пока содержит только выход из аккаунта.
+/// Состояние экрана списка чатов. Пока содержит переход в профиль и выход из аккаунта.
 @MainActor
 @Observable
 final class ChatListViewModel {
@@ -26,6 +26,18 @@ final class ChatListViewModel {
         self.authService = authService
         self.sessionService = sessionService
         self.router = router
+    }
+
+    /// URL аватара текущего пользователя для кнопки профиля: уменьшенная копия, если она есть.
+    /// `nil` — аватар не установлен, кнопка показывает изображение по умолчанию.
+    var avatarURL: URL? {
+        guard let avatar = sessionService.currentUser?.avatar else { return nil }
+        return avatar.smallURL ?? avatar.url
+    }
+
+    /// Обработчик кнопки-аватара: открывает экран профиля.
+    func didTapProfile() {
+        router.showProfile()
     }
 
     /// Обработчик кнопки «Выйти»: запускает выход, если он ещё не выполняется.

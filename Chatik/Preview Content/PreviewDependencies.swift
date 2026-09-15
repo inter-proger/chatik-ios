@@ -42,6 +42,49 @@ enum PreviewDependencies {
             router: ChatListRouter()
         )
     }
+
+    /// ViewModel профиля над моками. У превью собственная сессия, восстановленная из хранилища с пользователем `user`, —
+    /// общий `sessionService` не трогается, и превью не зависят друг от друга.
+    /// - Parameters:
+    ///   - user: пользователь сессии; экрану есть что показать сразу, до ответа сервиса.
+    ///   - profileResult: чем отвечает сервис профиля на запрос; по умолчанию — тем же `user`.
+    static func profileViewModel(
+        user: User = User(userId: 1, login: "ivan", name: "Иван", avatar: nil),
+        profileResult: Result<User, Error>? = nil
+    ) -> ProfileViewModel {
+        let sessionService = SessionService(userDefaultsService: UserDefaultsServicePreviewMock(currentUser: user))
+        Task { await sessionService.restore() }
+        return ProfileViewModel(
+            profileService: ProfileServicePreviewMock(profileResult: profileResult ?? .success(user)),
+            sessionService: sessionService
+        )
+    }
+}
+
+/// Мок сервиса профиля для превью: отвечает заданным результатом с задержкой, чтобы было видно состояние загрузки.
+final class ProfileServicePreviewMock: ProfileServiceProtocol {
+    private let profileResult: Result<User, Error>
+    private let delay: Duration
+
+    init(profileResult: Result<User, Error>, delay: Duration = .seconds(1.5)) {
+        self.profileResult = profileResult
+        self.delay = delay
+    }
+
+    func fetchProfile() async throws -> User {
+        try await Task.sleep(for: delay)
+        return try profileResult.get()
+    }
+
+    func setAvatar(fileId: Int) async throws -> User {
+        try await Task.sleep(for: delay)
+        return try profileResult.get()
+    }
+
+    func removeAvatar() async throws -> User {
+        try await Task.sleep(for: delay)
+        return try profileResult.get()
+    }
 }
 
 /// Мок сервиса авторизации для превью: отвечает заданным результатом с задержкой, чтобы было видно состояние загрузки.
@@ -80,6 +123,11 @@ final class AuthServicePreviewMock: AuthServiceProtocol {
 actor UserDefaultsServicePreviewMock: UserDefaultsServiceProtocol {
     private var storedUser: User?
     private var storedLanguage: AppLanguage?
+
+    /// - Parameter currentUser: пользователь, который «уже сохранён» к моменту старта превью.
+    init(currentUser: User? = nil) {
+        storedUser = currentUser
+    }
 
     func currentUser() -> User? { storedUser }
 

@@ -3,6 +3,7 @@
 //  ChatikTests
 //
 
+import SwiftUI
 import XCTest
 @testable import Chatik
 
@@ -11,6 +12,7 @@ final class ChatListViewModelTests: XCTestCase {
     private var networkService: NetworkServiceMock!
     private var userDefaultsService: UserDefaultsServiceMock!
     private var sessionService: SessionService!
+    private var router: ChatListRouter!
     private var sut: ChatListViewModel!
 
     override func setUp() async throws {
@@ -19,11 +21,43 @@ final class ChatListViewModelTests: XCTestCase {
         userDefaultsService = UserDefaultsServiceMock(currentUser: User(userId: 1, login: "ivan", name: "Ivan", avatar: nil))
         sessionService = SessionService(userDefaultsService: userDefaultsService)
         await sessionService.restore()
+        router = ChatListRouter()
         sut = ChatListViewModel(
             authService: AuthService(networkService: networkService),
             sessionService: sessionService,
-            router: ChatListRouter()
+            router: router
         )
+    }
+
+    /// Кейс: у пользователя сессии нет аватара.
+    /// Ожидание: URL аватара `nil` — кнопка профиля показывает изображение по умолчанию.
+    func test_avatarURL_withoutAvatar_isNil() {
+        XCTAssertNil(sut.avatarURL)
+    }
+
+    /// Кейс: у аватара есть уменьшенная копия.
+    /// Ожидание: для кнопки профиля берётся URL уменьшенной копии.
+    func test_avatarURL_withSmallCopy_returnsSmallURL() async {
+        await sessionService.update(user: User(userId: 1, login: "ivan", name: "Ivan", avatar: .stub))
+
+        XCTAssertEqual(sut.avatarURL, RemoteFile.stub.smallURL)
+    }
+
+    /// Кейс: у аватара нет уменьшенной копии.
+    /// Ожидание: для кнопки профиля берётся полноразмерный URL.
+    func test_avatarURL_withoutSmallCopy_returnsFullURL() async {
+        let avatar = RemoteFile(fileId: 1, type: .image, url: RemoteFile.stub.url, size: 1, filename: "a.jpg", fileExtension: "jpg", smallURL: nil)
+        await sessionService.update(user: User(userId: 1, login: "ivan", name: "Ivan", avatar: avatar))
+
+        XCTAssertEqual(sut.avatarURL, RemoteFile.stub.url)
+    }
+
+    /// Кейс: нажатие на кнопку-аватар.
+    /// Ожидание: в путь навигации добавлен экран профиля.
+    func test_didTapProfile_pushesProfileRoute() {
+        sut.didTapProfile()
+
+        XCTAssertEqual(router.path.count, 1)
     }
 
     /// Кейс: сервер успешно завершил сессию.

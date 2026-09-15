@@ -5,7 +5,7 @@
 
 import SwiftUI
 
-/// Экран списка чатов. Пока — заглушка с кнопкой выхода.
+/// Экран списка чатов. Пока — заглушка с кнопками профиля и выхода.
 struct ChatListView: View {
     @State private var viewModel: ChatListViewModel
 
@@ -18,6 +18,9 @@ struct ChatListView: View {
             .foregroundStyle(.secondary)
             .navigationTitle(ChatListStrings.title)
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    profileButton
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     logoutButton
                 }
@@ -27,6 +30,15 @@ struct ChatListView: View {
             } message: { message in
                 Text(message)
             }
+    }
+
+    /// Кнопка открытия профиля в виде аватарки текущего пользователя.
+    private var profileButton: some View {
+        Button(action: viewModel.didTapProfile) {
+            AvatarView(url: viewModel.avatarURL)
+                .frame(width: 32, height: 32)
+        }
+        .accessibilityLabel(ChatListStrings.profile)
     }
 
     /// Кнопка выхода; во время запроса заменяется прелоадером.

@@ -10,21 +10,22 @@ import Foundation
 final class AuthServiceMock: AuthServiceProtocol {
     var stubbedUser: Result<User, Error> = .failure(NetworkError.missingResponse)
     var stubbedLogout: Result<Void, Error> = .success(())
-    /// Вызывается внутри каждого метода — до возврата результата, пока ViewModel в состоянии загрузки.
-    var onRequest: (() -> Void)?
+    /// Вызывается внутри каждого метода и ожидается до возврата результата — пока ViewModel гарантированно
+    /// в состоянии загрузки. `@MainActor`, чтобы из хука можно было читать состояние ViewModel и вызывать её методы.
+    var onRequest: (@MainActor () async -> Void)?
 
     func signup(login: String, password: String, name: String) async throws -> User {
-        onRequest?()
+        await onRequest?()
         return try stubbedUser.get()
     }
 
     func login(login: String, password: String) async throws -> User {
-        onRequest?()
+        await onRequest?()
         return try stubbedUser.get()
     }
 
     func logout() async throws {
-        onRequest?()
+        await onRequest?()
         try stubbedLogout.get()
     }
 }

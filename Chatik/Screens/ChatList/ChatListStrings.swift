@@ -11,6 +11,7 @@ enum ChatListStrings {
     private static let table = "ChatList"
 
     static var title: String { localized("chat_list.title") }
+    static var profile: String { localized("chat_list.profile") }
     static var logout: String { localized("chat_list.logout") }
     static var empty: String { localized("chat_list.empty") }
 

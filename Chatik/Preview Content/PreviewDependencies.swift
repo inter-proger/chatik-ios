@@ -4,7 +4,7 @@
 //
 
 #if DEBUG
-import Foundation
+import UIKit
 
 /// Зависимости для `#Preview` экранов: моки вместо сети и `UserDefaults`, чтобы превью не ходили
 /// на сервер и не трогали настройки приложения, а состояния (загрузка, ошибка) были воспроизводимы.
@@ -56,8 +56,32 @@ enum PreviewDependencies {
         Task { await sessionService.restore() }
         return ProfileViewModel(
             profileService: ProfileServicePreviewMock(profileResult: profileResult ?? .success(user)),
-            sessionService: sessionService
+            filesService: FilesServicePreviewMock(),
+            imageEncoder: ImageEncoder(),
+            sessionService: sessionService,
+            // Как в приложении: на симуляторе камеры нет, и «Сделать фото» предлагаться не должно —
+            // `UIImagePickerController` с `.camera` без камеры падает.
+            isCameraAvailable: UIImagePickerController.isSourceTypeAvailable(.camera)
         )
+    }
+}
+
+/// Мок сервиса файлов для превью: «загружает» любое изображение с задержкой и возвращает файл-заглушку.
+final class FilesServicePreviewMock: FilesServiceProtocol {
+    private let delay: Duration
+
+    init(delay: Duration = .seconds(1.5)) {
+        self.delay = delay
+    }
+
+    func uploadImage(data: Data, filename: String, type: ImageMIMEType) async throws -> RemoteFile {
+        try await Task.sleep(for: delay)
+        return RemoteFile(fileId: 1, type: .image, url: URL(string: "http://localhost:8080/static/uploads/avatar.jpg")!, size: data.count, filename: filename, fileExtension: type.fileExtension, smallURL: nil)
+    }
+
+    func fetchFile(id: Int) async throws -> RemoteFile {
+        try await Task.sleep(for: delay)
+        return RemoteFile(fileId: id, type: .image, url: URL(string: "http://localhost:8080/static/uploads/avatar.jpg")!, size: 0, filename: "avatar.jpg", fileExtension: "jpg", smallURL: nil)
     }
 }
 

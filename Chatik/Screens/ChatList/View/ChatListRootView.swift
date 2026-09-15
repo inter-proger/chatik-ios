@@ -21,7 +21,10 @@ struct ChatListRootView: View {
                 case .profile:
                     ProfileView(viewModel: ProfileViewModel(
                         profileService: DIContainer.shared.profileService,
-                        sessionService: DIContainer.shared.sessionService
+                        filesService: DIContainer.shared.filesService,
+                        imageEncoder: DIContainer.shared.imageEncoder,
+                        sessionService: DIContainer.shared.sessionService,
+                        isCameraAvailable: UIImagePickerController.isSourceTypeAvailable(.camera)
                     ))
                 }
             }

@@ -9,3 +9,8 @@
 "profile.name" = "Name";
 "profile.login" = "Login";
 "profile.user_id" = "User ID";
+
+"profile.avatar.title" = "Profile Photo";
+"profile.avatar.choose_from_gallery" = "Choose from Gallery";
+"profile.avatar.take_photo" = "Take Photo";
+"profile.avatar.load_failed" = "Couldn't open the selected image. Try another one";

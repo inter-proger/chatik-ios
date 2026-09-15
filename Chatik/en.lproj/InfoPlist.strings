@@ -1,0 +1,9 @@
+/*
+  InfoPlist.strings
+  Chatik
+
+  Texts of system permission dialogs.
+  Localized by the system language, not by the in-app language switch — these are system dialogs.
+*/
+
+"NSCameraUsageDescription" = "Chatik uses the camera to take a profile photo.";

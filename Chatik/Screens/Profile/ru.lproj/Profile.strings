@@ -9,3 +9,8 @@
 "profile.name" = "Имя";
 "profile.login" = "Логин";
 "profile.user_id" = "ID пользователя";
+
+"profile.avatar.title" = "Фото профиля";
+"profile.avatar.choose_from_gallery" = "Выбрать из галереи";
+"profile.avatar.take_photo" = "Сделать фото";
+"profile.avatar.load_failed" = "Не удалось открыть выбранное изображение. Попробуйте другое";

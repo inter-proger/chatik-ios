@@ -10,6 +10,8 @@ import XCTest
 final class ProfileViewModelTests: XCTestCase {
     private let storedUser = User(userId: 1, login: "ivan", name: "Ivan", avatar: nil)
     private var profileService: ProfileServiceMock!
+    private var filesService: FilesServiceMock!
+    private var imageEncoder: ImageEncoderMock!
     private var userDefaultsService: UserDefaultsServiceMock!
     private var sessionService: SessionService!
     private var sut: ProfileViewModel!
@@ -17,10 +19,22 @@ final class ProfileViewModelTests: XCTestCase {
     override func setUp() async throws {
         try await super.setUp()
         profileService = ProfileServiceMock()
+        filesService = FilesServiceMock()
+        imageEncoder = ImageEncoderMock()
         userDefaultsService = UserDefaultsServiceMock(currentUser: storedUser)
         sessionService = SessionService(userDefaultsService: userDefaultsService)
         await sessionService.restore()
-        sut = ProfileViewModel(profileService: profileService, sessionService: sessionService)
+        sut = makeSUT(isCameraAvailable: true)
+    }
+
+    private func makeSUT(isCameraAvailable: Bool) -> ProfileViewModel {
+        ProfileViewModel(
+            profileService: profileService,
+            filesService: filesService,
+            imageEncoder: imageEncoder,
+            sessionService: sessionService,
+            isCameraAvailable: isCameraAvailable
+        )
     }
 
     /// Кейс: сессия открыта, запрос профиля ещё не выполнялся.
@@ -93,5 +107,161 @@ final class ProfileViewModelTests: XCTestCase {
         await sut.loadProfile()
 
         XCTAssertEqual(profileService.fetchProfileCallCount, 1)
+    }
+
+    // MARK: - Аватар
+
+    /// Кейс: на устройстве есть камера.
+    /// Ожидание: предлагаются оба источника — галерея и камера.
+    func test_avatarSources_withCamera_offersGalleryAndCamera() {
+        XCTAssertEqual(sut.avatarSources, [.gallery, .camera])
+    }
+
+    /// Кейс: камеры нет (симулятор, iPad без камеры).
+    /// Ожидание: предлагается только галерея.
+    func test_avatarSources_withoutCamera_offersGalleryOnly() {
+        let sut = makeSUT(isCameraAvailable: false)
+
+        XCTAssertEqual(sut.avatarSources, [.gallery])
+    }
+
+    /// Кейс: аватара нет, нажатие на аватар.
+    /// Ожидание: показан выбор источника.
+    func test_didTapAvatar_withoutAvatar_presentsSources() {
+        sut.didTapAvatar()
+
+        XCTAssertTrue(sut.isAvatarSourcesPresented)
+    }
+
+    /// Кейс: аватар установлен, нажатие на аватар.
+    /// Ожидание: выбор источника не показывается.
+    func test_didTapAvatar_withAvatar_doesNothing() async {
+        await sessionService.update(user: User(userId: 1, login: "ivan", name: "Ivan", avatar: .stub))
+
+        sut.didTapAvatar()
+
+        XCTAssertFalse(sut.isAvatarSourcesPresented)
+    }
+
+    /// Кейс: выбор источника в диалоге.
+    /// Ожидание: открыт пикер этого источника.
+    func test_didSelectAvatarSource_presentsPicker() {
+        sut.didSelectAvatarSource(.camera)
+
+        XCTAssertEqual(sut.presentedAvatarSource, .camera)
+    }
+
+    /// Кейс: выбранный файл из галереи не удалось прочитать.
+    /// Ожидание: пикер закрыт, показано сообщение об ошибке.
+    func test_didFailToPickImage_closesPickerAndShowsError() {
+        sut.didSelectAvatarSource(.gallery)
+
+        sut.didFailToPickImage()
+
+        XCTAssertNil(sut.presentedAvatarSource)
+        XCTAssertEqual(sut.errorMessage, ProfileStrings.avatarLoadFailed)
+    }
+
+    /// Кейс: изображение выбрано, загрузка и назначение аватара прошли успешно.
+    /// Ожидание: на сервер ушёл закодированный JPEG под именем `avatar.jpg`, аватар назначен по `fileId`
+    /// загруженного файла, сессия обновлена, ошибки нет.
+    func test_uploadAvatar_success_uploadsEncodedImageAndUpdatesSession() async {
+        let encoded = Data("ENCODED".utf8)
+        let updated = User(userId: 1, login: "ivan", name: "Ivan", avatar: .stub)
+        imageEncoder.stubbedResult = .success(encoded)
+        filesService.stubbedUpload = .success(.stub)
+        profileService.stubbedProfile = .success(updated)
+
+        await sut.uploadAvatar(.image(.stub()))
+
+        XCTAssertEqual(filesService.uploads.count, 1)
+        XCTAssertEqual(filesService.uploads.first?.data, encoded)
+        XCTAssertEqual(filesService.uploads.first?.filename, "avatar.jpg")
+        XCTAssertEqual(filesService.uploads.first?.type, .jpeg)
+        XCTAssertEqual(profileService.setAvatarFileIds, [RemoteFile.stub.fileId])
+        XCTAssertEqual(sessionService.currentUser, updated)
+        XCTAssertEqual(sut.profile?.avatarURL, RemoteFile.stub.url)
+        XCTAssertNil(sut.errorMessage)
+        XCTAssertFalse(sut.isUploadingAvatar)
+    }
+
+    /// Кейс: изображение не удалось декодировать / закодировать.
+    /// Ожидание: запрос в сеть не уходит, показано сообщение про выбранное изображение (а не общее про сеть).
+    func test_uploadAvatar_encodingFails_showsImageErrorWithoutUpload() async {
+        let errors: [ImageEncoderError] = [
+            .decodingFailed,
+            .encodingFailed,
+        ]
+
+        for error in errors {
+            imageEncoder.stubbedResult = .failure(error)
+            sut.errorMessage = nil
+
+            await sut.uploadAvatar(.file(Data()))
+
+            XCTAssertTrue(filesService.uploads.isEmpty, "\(error)")
+            XCTAssertEqual(sut.errorMessage, ProfileStrings.avatarLoadFailed, "\(error)")
+        }
+    }
+
+    /// Кейс: сервер отклонил файл как слишком большой.
+    /// Ожидание: аватар не назначается, показано сообщение о размере файла, пользователь сессии не изменён.
+    func test_uploadAvatar_uploadFails_showsErrorAndKeepsUser() async {
+        filesService.stubbedUpload = .failure(NetworkError.api(code: NetworkError.Code.fileTooLarge))
+
+        await sut.uploadAvatar(.image(.stub()))
+
+        XCTAssertTrue(profileService.setAvatarFileIds.isEmpty)
+        XCTAssertEqual(sut.errorMessage, CommonStrings.errorFileTooLarge)
+        XCTAssertEqual(sessionService.currentUser, storedUser)
+    }
+
+    /// Кейс: файл загружен, но назначение аватара завершилось транспортной ошибкой.
+    /// Ожидание: показано сообщение об отсутствии соединения, пользователь сессии не изменён.
+    func test_uploadAvatar_setAvatarFails_showsErrorAndKeepsUser() async {
+        filesService.stubbedUpload = .success(.stub)
+        profileService.stubbedProfile = .failure(NetworkError.transport(URLError(.notConnectedToInternet)))
+
+        await sut.uploadAvatar(.image(.stub()))
+
+        XCTAssertEqual(sut.errorMessage, CommonStrings.errorNoConnection)
+        XCTAssertEqual(sessionService.currentUser, storedUser)
+    }
+
+    /// Кейс: во время загрузки аватара.
+    /// Ожидание: флаг `isUploadingAvatar` поднят на время запроса, нажатие на аватар в это время игнорируется.
+    func test_uploadAvatar_setsUploadingAndBlocksTap() async {
+        let sut: ProfileViewModel = sut
+        var wasUploading = false
+        var presentedDuringUpload = false
+        filesService.stubbedUpload = .success(.stub)
+        profileService.stubbedProfile = .success(storedUser)
+        profileService.onRequest = {
+            wasUploading = sut.isUploadingAvatar
+            sut.didTapAvatar()
+            presentedDuringUpload = sut.isAvatarSourcesPresented
+        }
+
+        await sut.uploadAvatar(.image(.stub()))
+
+        XCTAssertTrue(wasUploading)
+        XCTAssertFalse(presentedDuringUpload)
+        XCTAssertFalse(sut.isUploadingAvatar)
+    }
+
+    /// Кейс: выбрано изображение из пикера.
+    /// Ожидание: пикер закрыт сразу, загрузка запущена — дожидаемся её через хук сервиса.
+    func test_didPickImage_closesPickerAndStartsUpload() async {
+        filesService.stubbedUpload = .success(.stub)
+        profileService.stubbedProfile = .success(storedUser)
+        let requestStarted = expectation(description: "setAvatar called")
+        profileService.onRequest = { requestStarted.fulfill() }
+        sut.didSelectAvatarSource(.gallery)
+
+        sut.didPickImage(.image(.stub()))
+
+        XCTAssertNil(sut.presentedAvatarSource)
+        await fulfillment(of: [requestStarted], timeout: 1)
+        XCTAssertEqual(filesService.uploads.count, 1)
     }
 }

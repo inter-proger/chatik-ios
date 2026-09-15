@@ -20,7 +20,7 @@ enum PreviewDependencies {
     ///   - authResult: чем отвечает сервис авторизации на регистрацию / вход.
     static func authViewModel(
         mode: AuthMode,
-        authResult: Result<AuthUser, Error> = .success(AuthUser(userId: 1, name: "Иван"))
+        authResult: Result<User, Error> = .success(User(userId: 1, login: "ivan", name: "Иван", avatar: nil))
     ) -> AuthViewModel {
         AuthViewModel(
             mode: mode,
@@ -46,12 +46,12 @@ enum PreviewDependencies {
 
 /// Мок сервиса авторизации для превью: отвечает заданным результатом с задержкой, чтобы было видно состояние загрузки.
 final class AuthServicePreviewMock: AuthServiceProtocol {
-    private let authResult: Result<AuthUser, Error>
+    private let authResult: Result<User, Error>
     private let logoutResult: Result<Void, Error>
     private let delay: Duration
 
     init(
-        authResult: Result<AuthUser, Error> = .success(AuthUser(userId: 1, name: "Иван")),
+        authResult: Result<User, Error> = .success(User(userId: 1, login: "ivan", name: "Иван", avatar: nil)),
         logoutResult: Result<Void, Error> = .success(()),
         delay: Duration = .seconds(1.5)
     ) {
@@ -60,12 +60,12 @@ final class AuthServicePreviewMock: AuthServiceProtocol {
         self.delay = delay
     }
 
-    func signup(login: String, password: String, name: String) async throws -> AuthUser {
+    func signup(login: String, password: String, name: String) async throws -> User {
         try await Task.sleep(for: delay)
         return try authResult.get()
     }
 
-    func login(login: String, password: String) async throws -> AuthUser {
+    func login(login: String, password: String) async throws -> User {
         try await Task.sleep(for: delay)
         return try authResult.get()
     }
@@ -78,12 +78,12 @@ final class AuthServicePreviewMock: AuthServiceProtocol {
 
 /// Хранилище настроек для превью: держит значения в памяти, `UserDefaults` не трогает.
 actor UserDefaultsServicePreviewMock: UserDefaultsServiceProtocol {
-    private var storedUser: AuthUser?
+    private var storedUser: User?
     private var storedLanguage: AppLanguage?
 
-    func currentUser() -> AuthUser? { storedUser }
+    func currentUser() -> User? { storedUser }
 
-    func setCurrentUser(_ user: AuthUser?) {
+    func setCurrentUser(_ user: User?) {
         storedUser = user
     }
 

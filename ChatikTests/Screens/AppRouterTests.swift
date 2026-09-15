@@ -8,11 +8,11 @@ import XCTest
 
 @MainActor
 final class AppRouterTests: XCTestCase {
-    private let user = AuthUser(userId: 1, name: "Ivan")
+    private let user = User(userId: 1, login: "ivan", name: "Ivan", avatar: nil)
 
     /// Создаёт роутер над сессией с заданным сохранённым пользователем и без задержки splash.
     private func makeSUT(
-        storedUser: AuthUser? = nil,
+        storedUser: User? = nil,
         storedLanguage: AppLanguage? = nil,
         minimumSplashDuration: Duration = .zero
     ) -> AppRouter {

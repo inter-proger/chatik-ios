@@ -8,10 +8,10 @@ import XCTest
 
 @MainActor
 final class SessionServiceTests: XCTestCase {
-    private let user = AuthUser(userId: 1, name: "Ivan")
+    private let user = User(userId: 1, login: "ivan", name: "Ivan", avatar: nil)
 
     /// Создаёт сервис над моком хранилища и восстанавливает сессию.
-    private func makeRestoredSUT(storedUser: AuthUser? = nil) async -> (SessionService, UserDefaultsServiceMock) {
+    private func makeRestoredSUT(storedUser: User? = nil) async -> (SessionService, UserDefaultsServiceMock) {
         let defaults = UserDefaultsServiceMock(currentUser: storedUser)
         let sut = SessionService(userDefaultsService: defaults)
         await sut.restore()
@@ -63,6 +63,36 @@ final class SessionServiceTests: XCTestCase {
         XCTAssertEqual(sut.currentUser, user)
         XCTAssertEqual(stored, user)
         XCTAssertFalse(sut.isExpired)
+    }
+
+    /// Кейс: сессия открыта; приходит обновлённый профиль с аватаром.
+    /// Ожидание: пользователь заменён в памяти и в хранилище — новый инстанс сервиса восстанавливает его с аватаром;
+    /// флаг истечения не тронут.
+    func test_update_whileLoggedIn_replacesUserInMemoryAndStorage() async {
+        let (sut, defaults) = await makeRestoredSUT(storedUser: user)
+        let updated = User(userId: user.userId, login: user.login, name: "Ivan Petrov", avatar: .stub)
+
+        await sut.update(user: updated)
+
+        let restored = SessionService(userDefaultsService: defaults)
+        await restored.restore()
+        XCTAssertEqual(sut.currentUser, updated)
+        XCTAssertEqual(restored.currentUser, updated)
+        XCTAssertFalse(sut.isExpired)
+    }
+
+    /// Кейс: сессии нет (пользователь вышел или она истекла); вызван `update(user:)`.
+    /// Ожидание: ничего не происходит — сессия не открывается, хранилище пустое, флаг истечения сохранён.
+    func test_update_whileLoggedOut_isNoop() async {
+        let (sut, defaults) = await makeRestoredSUT(storedUser: user)
+        await sut.expire()
+
+        await sut.update(user: user)
+
+        let stored = await defaults.currentUser()
+        XCTAssertFalse(sut.isLoggedIn)
+        XCTAssertNil(stored)
+        XCTAssertTrue(sut.isExpired)
     }
 
     /// Кейс: выход пользователя.

@@ -6,7 +6,7 @@
 import Foundation
 
 /// Тип файла на сервере. Список будет расширяться: неизвестные значения читаются как `.other`.
-enum RemoteFileType: String, Decodable, Equatable {
+enum RemoteFileType: String, Codable, Equatable {
     case image
     case other
 
@@ -17,7 +17,7 @@ enum RemoteFileType: String, Decodable, Equatable {
 }
 
 /// Объект `File` из API — файл, загруженный на сервер.
-struct RemoteFile: Decodable, Equatable {
+struct RemoteFile: Codable, Equatable {
     let fileId: Int
     let type: RemoteFileType
     let url: URL
@@ -30,7 +30,7 @@ struct RemoteFile: Decodable, Equatable {
     let smallURL: URL?
 
     private enum CodingKeys: String, CodingKey {
-        case fileId = "file_id"
+        case fileId
         case type
         case url
         case size
@@ -41,7 +41,7 @@ struct RemoteFile: Decodable, Equatable {
 
     /// Дополнительные поля `data`, состав зависит от `type`.
     private enum DataCodingKeys: String, CodingKey {
-        case smallURL = "small_url"
+        case smallURL = "smallUrl"
     }
 
     init(fileId: Int, type: RemoteFileType, url: URL, size: Int, filename: String, fileExtension: String, smallURL: URL?) {
@@ -55,7 +55,7 @@ struct RemoteFile: Decodable, Equatable {
     }
 
     /// Разбирает плоские поля и вложенный объект `data`. Отсутствующий или `null` `data`, как и отсутствующий
-    /// `small_url`, не считается ошибкой; `data` не-объект (строка, массив) — ошибка декодирования.
+    /// `smallUrl`, не считается ошибкой; `data` не-объект (строка, массив) — ошибка декодирования.
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         fileId = try container.decode(Int.self, forKey: .fileId)
@@ -74,5 +74,18 @@ struct RemoteFile: Decodable, Equatable {
     ) throws -> KeyedDecodingContainer<DataCodingKeys>? {
         guard container.contains(.data), try !container.decodeNil(forKey: .data) else { return nil }
         return try container.nestedContainer(keyedBy: DataCodingKeys.self, forKey: .data)
+    }
+
+    /// Пишет файл в том же формате, что отдаёт сервер: `smallUrl` — внутри вложенного `data`.
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(fileId, forKey: .fileId)
+        try container.encode(type, forKey: .type)
+        try container.encode(url, forKey: .url)
+        try container.encode(size, forKey: .size)
+        try container.encode(filename, forKey: .filename)
+        try container.encode(fileExtension, forKey: .fileExtension)
+        var data = container.nestedContainer(keyedBy: DataCodingKeys.self, forKey: .data)
+        try data.encodeIfPresent(smallURL, forKey: .smallURL)
     }
 }

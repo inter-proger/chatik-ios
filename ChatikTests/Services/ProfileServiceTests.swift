@@ -32,7 +32,7 @@ final class ProfileServiceTests: XCTestCase {
     }
 
     /// Кейс: установка аватара.
-    /// Ожидание: POST /profile/setAvatar с `file_id`, возвращён обновлённый пользователь.
+    /// Ожидание: POST /profile/setAvatar с `fileId`, возвращён обновлённый пользователь.
     func test_setAvatar_requestsSetAvatarEndpointWithFileId() async throws {
         let expected = User(userId: 1, login: "ivan", name: "Ivan", avatar: .stub)
         networkService.stubbedResult = .success(expected)
@@ -43,7 +43,7 @@ final class ProfileServiceTests: XCTestCase {
         let endpoint = try XCTUnwrap(networkService.requestedEndpoints.first)
         XCTAssertEqual(endpoint.path, "/profile/setAvatar")
         XCTAssertEqual(endpoint.method, .post)
-        XCTAssertEqual(endpoint.parameters, ["file_id": "42"])
+        XCTAssertEqual(endpoint.parameters, ["fileId": "42"])
     }
 
     /// Кейс: удаление аватара.

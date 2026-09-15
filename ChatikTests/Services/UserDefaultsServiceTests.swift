@@ -34,7 +34,7 @@ final class UserDefaultsServiceTests: XCTestCase {
     /// Кейс: пользователь сохранён; сервис пересоздан над тем же `UserDefaults`.
     /// Ожидание: пользователь читается обратно без потерь.
     func test_currentUser_persistsAcrossInstances() async {
-        let user = AuthUser(userId: 42, name: "Иван")
+        let user = User(userId: 42, login: "ivan", name: "Иван", avatar: nil)
 
         await sut.setCurrentUser(user)
         let reloaded = await UserDefaultsService(defaults: defaults).currentUser()
@@ -45,7 +45,7 @@ final class UserDefaultsServiceTests: XCTestCase {
     /// Кейс: сохранённому пользователю присваивается `nil`.
     /// Ожидание: запись удалена из `UserDefaults`, сервис отдаёт `nil`.
     func test_setCurrentUser_nil_removesStoredValue() async {
-        await sut.setCurrentUser(AuthUser(userId: 1, name: "Ivan"))
+        await sut.setCurrentUser(User(userId: 1, login: "ivan", name: "Ivan", avatar: nil))
 
         await sut.setCurrentUser(nil)
 
@@ -57,12 +57,12 @@ final class UserDefaultsServiceTests: XCTestCase {
     /// Кейс: значение прочитано один раз, затем запись в `UserDefaults` изменена извне (минуя сервис).
     /// Ожидание: сервис продолжает отдавать закэшированное значение — из `defaults` он читает только при первом обращении.
     func test_currentUser_isReadFromDefaultsOnlyOnce() async throws {
-        let first = AuthUser(userId: 1, name: "First")
+        let first = User(userId: 1, login: "ivan", name: "First", avatar: nil)
         await sut.setCurrentUser(first)
         let cached = await sut.currentUser()
         XCTAssertEqual(cached, first)
 
-        let external = AuthUser(userId: 2, name: "External")
+        let external = User(userId: 2, login: "ivan", name: "External", avatar: nil)
         defaults.set(try JSONEncoder().encode(external), forKey: "currentUser")
 
         let stillCached = await sut.currentUser()
@@ -74,7 +74,7 @@ final class UserDefaultsServiceTests: XCTestCase {
     /// Кейс: первое обращение происходит после того, как значение уже лежит в `UserDefaults`.
     /// Ожидание: при первом чтении кэш инициализируется из `defaults`.
     func test_currentUser_firstAccess_loadsFromDefaults() async throws {
-        let stored = AuthUser(userId: 3, name: "Stored")
+        let stored = User(userId: 3, login: "ivan", name: "Stored", avatar: nil)
         defaults.set(try JSONEncoder().encode(stored), forKey: "currentUser")
 
         let user = await sut.currentUser()
@@ -92,7 +92,7 @@ final class UserDefaultsServiceTests: XCTestCase {
             for index in 0..<iterations {
                 group.addTask {
                     if index.isMultiple(of: 2) {
-                        await service.setCurrentUser(AuthUser(userId: index, name: "User \(index)"))
+                        await service.setCurrentUser(User(userId: index, login: "ivan", name: "User \(index)", avatar: nil))
                     } else {
                         _ = await service.currentUser()
                     }

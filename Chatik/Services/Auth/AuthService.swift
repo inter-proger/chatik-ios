@@ -7,9 +7,9 @@ import Foundation
 
 protocol AuthServiceProtocol {
     /// Регистрирует нового пользователя и открывает сессию.
-    func signup(login: String, password: String, name: String) async throws -> AuthUser
+    func signup(login: String, password: String, name: String) async throws -> User
     /// Выполняет вход существующего пользователя и открывает сессию.
-    func login(login: String, password: String) async throws -> AuthUser
+    func login(login: String, password: String) async throws -> User
     /// Завершает текущую сессию на сервере и удаляет cookie сессии локально.
     func logout() async throws
 }
@@ -26,7 +26,7 @@ final class AuthService: AuthServiceProtocol {
     ///   - login: латиница, цифры, `_`.
     ///   - password: минимум 8 символов, заглавная, строчная буква и цифра.
     ///   - name: буквы, цифры, `-`, `_`, пробел.
-    func signup(login: String, password: String, name: String) async throws -> AuthUser {
+    func signup(login: String, password: String, name: String) async throws -> User {
         try await networkService.request(AuthEndpoint.signup(login: login, password: password, name: name))
     }
 
@@ -34,7 +34,7 @@ final class AuthService: AuthServiceProtocol {
     /// - Parameters:
     ///   - login: логин пользователя.
     ///   - password: пароль пользователя.
-    func login(login: String, password: String) async throws -> AuthUser {
+    func login(login: String, password: String) async throws -> User {
         try await networkService.request(AuthEndpoint.login(login: login, password: password))
     }
 

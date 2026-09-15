@@ -8,7 +8,7 @@ import Foundation
 @MainActor
 protocol SessionServiceProtocol: AnyObject {
     /// Залогиненный пользователь. `nil` — сессии нет (или она ещё не восстановлена, см. `isRestored`).
-    var currentUser: AuthUser? { get }
+    var currentUser: User? { get }
     var isLoggedIn: Bool { get }
     /// `true`, когда сохранённая сессия прочитана из хранилища и `currentUser` актуален.
     var isRestored: Bool { get }
@@ -18,7 +18,9 @@ protocol SessionServiceProtocol: AnyObject {
     /// Восстанавливает сессию из хранилища при старте приложения.
     func restore() async
     /// Открывает сессию после успешной регистрации / входа и сохраняет пользователя.
-    func start(user: AuthUser) async
+    func start(user: User) async
+    /// Обновляет данные текущего пользователя (например, после смены аватара). Если сессии нет — ничего не делает.
+    func update(user: User) async
     /// Завершает сессию по инициативе пользователя (выход).
     func end() async
     /// Завершает сессию по инициативе сервера (код 2003). Если сессии нет — ничего не делает.
@@ -32,7 +34,7 @@ protocol SessionServiceProtocol: AnyObject {
 @MainActor
 @Observable
 final class SessionService: SessionServiceProtocol {
-    private(set) var currentUser: AuthUser?
+    private(set) var currentUser: User?
     private(set) var isRestored = false
     private(set) var isExpired = false
 
@@ -53,9 +55,18 @@ final class SessionService: SessionServiceProtocol {
 
     /// Сохраняет пользователя и открывает сессию.
     /// - Parameter user: пользователь из ответа `/auth/signup` или `/auth/login`.
-    func start(user: AuthUser) async {
+    func start(user: User) async {
         currentUser = user
         isExpired = false
+        await userDefaultsService.setCurrentUser(user)
+    }
+
+    /// Заменяет пользователя в памяти и `UserDefaults`, не меняя состояние сессии (`isExpired` не трогается).
+    /// Без открытой сессии — no-op: обновление профиля не должно «открывать» сессию в обход `start`.
+    /// - Parameter user: обновлённый пользователь из ответа `/profile/*`.
+    func update(user: User) async {
+        guard isLoggedIn else { return }
+        currentUser = user
         await userDefaultsService.setCurrentUser(user)
     }
 

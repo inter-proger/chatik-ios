@@ -34,7 +34,7 @@ enum ProfileEndpoint: Endpoint {
         case .get, .removeAvatar:
             return [:]
         case let .setAvatar(fileId):
-            return ["file_id": String(fileId)]
+            return ["fileId": String(fileId)]
         }
     }
 

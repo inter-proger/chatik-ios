@@ -16,7 +16,7 @@ final class ChatListViewModelTests: XCTestCase {
     override func setUp() async throws {
         try await super.setUp()
         networkService = NetworkServiceMock()
-        userDefaultsService = UserDefaultsServiceMock(currentUser: AuthUser(userId: 1, name: "Ivan"))
+        userDefaultsService = UserDefaultsServiceMock(currentUser: User(userId: 1, login: "ivan", name: "Ivan", avatar: nil))
         sessionService = SessionService(userDefaultsService: userDefaultsService)
         await sessionService.restore()
         sut = ChatListViewModel(

@@ -36,7 +36,7 @@ enum FilesEndpoint: Endpoint {
         case .uploadImage:
             return [:]
         case let .get(fileId):
-            return ["file_id": String(fileId)]
+            return ["fileId": String(fileId)]
         }
     }
 

@@ -8,19 +8,19 @@ import Foundation
 
 /// Мок хранилища настроек: держит пользователя в памяти.
 actor UserDefaultsServiceMock: UserDefaultsServiceProtocol {
-    private var storedUser: AuthUser?
+    private var storedUser: User?
     private var storedLanguage: AppLanguage?
 
-    init(currentUser: AuthUser? = nil, language: AppLanguage? = nil) {
+    init(currentUser: User? = nil, language: AppLanguage? = nil) {
         storedUser = currentUser
         storedLanguage = language
     }
 
-    func currentUser() -> AuthUser? {
+    func currentUser() -> User? {
         storedUser
     }
 
-    func setCurrentUser(_ user: AuthUser?) {
+    func setCurrentUser(_ user: User?) {
         storedUser = user
     }
 

@@ -198,7 +198,7 @@ final class AuthViewModelTests: XCTestCase {
     /// Кейс: режим регистрации, сервер вернул пользователя.
     /// Ожидание: отправлен запрос на /auth/signup, сессия открыта, пользователь сохранён в `UserDefaults`.
     func test_submit_signupSuccess_startsSession() async {
-        let user = AuthUser(userId: 7, name: "Иван")
+        let user = User(userId: 7, login: "ivan", name: "Иван", avatar: nil)
         networkService.stubbedResult = .success(user)
         let sut = makeSUT(mode: .signup)
         fillValidSignupForm(sut)
@@ -216,7 +216,7 @@ final class AuthViewModelTests: XCTestCase {
     /// Кейс: режим входа, сервер вернул пользователя.
     /// Ожидание: отправлен запрос на /auth/login, сессия открыта.
     func test_submit_loginSuccess_startsSession() async {
-        let user = AuthUser(userId: 7, name: "Иван")
+        let user = User(userId: 7, login: "ivan", name: "Иван", avatar: nil)
         networkService.stubbedResult = .success(user)
         let sut = makeSUT(mode: .login)
         sut.login = "ivan"
@@ -231,7 +231,7 @@ final class AuthViewModelTests: XCTestCase {
     /// Кейс: логин и имя введены с краевыми пробелами, пароль — с пробелом в начале.
     /// Ожидание: в запрос уходят логин и имя без краевых пробелов, пароль — без изменений.
     func test_submit_trimsLoginAndName_keepsPassword() async throws {
-        networkService.stubbedResult = .success(AuthUser(userId: 7, name: "Иван"))
+        networkService.stubbedResult = .success(User(userId: 7, login: "ivan", name: "Иван", avatar: nil))
         let sut = makeSUT(mode: .signup)
         sut.name = " Иван "
         sut.login = " ivan "
@@ -262,7 +262,7 @@ final class AuthViewModelTests: XCTestCase {
     /// Ожидание: во время запроса `isLoading == true` и кнопка неактивна; после — `isLoading == false`.
     func test_isPrimaryButtonEnabled_whileLoading_isFalse() async {
         let authService = AuthServiceMock()
-        authService.stubbedUser = .success(AuthUser(userId: 1, name: "Иван"))
+        authService.stubbedUser = .success(User(userId: 1, login: "ivan", name: "Иван", avatar: nil))
         let sut = makeSUT(mode: .signup, authService: authService)
         fillValidSignupForm(sut)
         XCTAssertTrue(sut.isPrimaryButtonEnabled)
@@ -282,7 +282,7 @@ final class AuthViewModelTests: XCTestCase {
     /// Кейс: экран появился после того, как сервер завершил сессию (код 2003).
     /// Ожидание: показано сообщение «сессия истекла», флаг в сессии сброшен.
     func test_handleAppear_afterExpiration_showsMessageOnce() async {
-        await sessionService.start(user: AuthUser(userId: 1, name: "Иван"))
+        await sessionService.start(user: User(userId: 1, login: "ivan", name: "Иван", avatar: nil))
         await sessionService.expire()
         let sut = makeSUT(mode: .login)
 

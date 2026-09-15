@@ -8,9 +8,9 @@ import Foundation
 /// Методы `/auth/*`. Сессия ведётся через cookie `PHPSESSID`,
 /// которую `URLSession` сохраняет и подставляет автоматически.
 enum AuthEndpoint: Endpoint {
-    /// POST /auth/signup — регистрация. Ответ: `AuthUser`.
+    /// POST /auth/signup — регистрация. Ответ: `User`.
     case signup(login: String, password: String, name: String)
-    /// POST /auth/login — авторизация. Ответ: `AuthUser`.
+    /// POST /auth/login — авторизация. Ответ: `User`.
     case login(login: String, password: String)
     /// POST /auth/logout — завершение сессии. Ответ: `EmptyResponse`.
     case logout

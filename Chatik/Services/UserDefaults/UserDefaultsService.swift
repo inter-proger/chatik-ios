@@ -7,9 +7,9 @@ import Foundation
 
 protocol UserDefaultsServiceProtocol: Actor {
     /// Залогиненный пользователь. `nil` — сессии нет.
-    func currentUser() -> AuthUser?
+    func currentUser() -> User?
     /// Сохраняет пользователя; `nil` — удаляет запись.
-    func setCurrentUser(_ user: AuthUser?)
+    func setCurrentUser(_ user: User?)
     /// Выбранный пользователем язык интерфейса. `nil` — не выбирал, используется системный.
     func language() -> AppLanguage?
     /// Сохраняет выбранный язык интерфейса.
@@ -26,7 +26,7 @@ actor UserDefaultsService: UserDefaultsServiceProtocol {
 
     /// Кэш пользователя: читается из `UserDefaults` один раз при первом обращении,
     /// дальше меняется только через `setCurrentUser`, чтобы не декодировать JSON при каждом чтении.
-    private lazy var cachedUser: AuthUser? = readUser()
+    private lazy var cachedUser: User? = readUser()
     /// Кэш языка: читается из `UserDefaults` один раз при первом обращении, дальше меняется только через `setLanguage`.
     private lazy var cachedLanguage: AppLanguage? = readLanguage()
 
@@ -39,13 +39,13 @@ actor UserDefaultsService: UserDefaultsServiceProtocol {
         self.defaults = defaults
     }
 
-    func currentUser() -> AuthUser? {
+    func currentUser() -> User? {
         cachedUser
     }
 
     /// Обновляет кэш и запись в `UserDefaults`.
     /// - Parameter user: пользователь для сохранения; `nil` — удалить.
-    func setCurrentUser(_ user: AuthUser?) {
+    func setCurrentUser(_ user: User?) {
         cachedUser = user
         writeUser(user)
     }
@@ -67,14 +67,14 @@ actor UserDefaultsService: UserDefaultsServiceProtocol {
     }
 
     /// Читает и декодирует пользователя из `UserDefaults`.
-    private func readUser() -> AuthUser? {
+    private func readUser() -> User? {
         guard let data = defaults.data(forKey: Keys.currentUser) else { return nil }
-        return try? decoder.decode(AuthUser.self, from: data)
+        return try? decoder.decode(User.self, from: data)
     }
 
     /// Записывает пользователя в `UserDefaults`; `nil` — удаляет запись.
     /// - Parameter user: пользователь для сохранения.
-    private func writeUser(_ user: AuthUser?) {
+    private func writeUser(_ user: User?) {
         guard let user, let data = try? encoder.encode(user) else {
             defaults.removeObject(forKey: Keys.currentUser)
             return

@@ -19,7 +19,7 @@ final class AuthServiceTests: XCTestCase {
     /// Кейс: успешная регистрация.
     /// Ожидание: POST /auth/signup с login/password/name, возвращён пользователь из ответа.
     func test_signup_requestsSignupEndpointAndReturnsUser() async throws {
-        let expected = AuthUser(userId: 1, name: "Ivan")
+        let expected = User(userId: 1, login: "ivan", name: "Ivan", avatar: nil)
         networkService.stubbedResult = .success(expected)
 
         let user = try await sut.signup(login: "ivan", password: "Password1", name: "Ivan")
@@ -34,7 +34,7 @@ final class AuthServiceTests: XCTestCase {
     /// Кейс: успешный вход.
     /// Ожидание: запрос на /auth/login с login/password, возвращён пользователь из ответа.
     func test_login_requestsLoginEndpointAndReturnsUser() async throws {
-        let expected = AuthUser(userId: 7, name: "Ivan")
+        let expected = User(userId: 7, login: "ivan", name: "Ivan", avatar: nil)
         networkService.stubbedResult = .success(expected)
 
         let user = try await sut.login(login: "ivan", password: "Password1")

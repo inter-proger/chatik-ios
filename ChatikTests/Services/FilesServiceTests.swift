@@ -36,7 +36,7 @@ final class FilesServiceTests: XCTestCase {
     }
 
     /// Кейс: запрос информации о файле.
-    /// Ожидание: GET /files/get с `file_id`, возвращён файл из ответа.
+    /// Ожидание: GET /files/get с `fileId`, возвращён файл из ответа.
     func test_fetchFile_requestsGetEndpointWithFileId() async throws {
         networkService.stubbedResult = .success(RemoteFile.stub)
 
@@ -46,7 +46,7 @@ final class FilesServiceTests: XCTestCase {
         let endpoint = try XCTUnwrap(networkService.requestedEndpoints.first)
         XCTAssertEqual(endpoint.path, "/files/get")
         XCTAssertEqual(endpoint.method, .get)
-        XCTAssertEqual(endpoint.parameters, ["file_id": "7"])
+        XCTAssertEqual(endpoint.parameters, ["fileId": "7"])
         XCTAssertTrue(networkService.uploadedFiles.isEmpty)
     }
 

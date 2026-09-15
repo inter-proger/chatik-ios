@@ -30,9 +30,9 @@ final class NetworkServiceTests: XCTestCase {
     /// Кейс: POST-запрос с параметрами, содержащими пробел и `&`.
     /// Ожидание: путь собран от baseURL, Content-Type — form-urlencoded, тело закодировано и экранировано.
     func test_post_sendsFormURLEncodedBodyToCorrectPath() async throws {
-        let captured = stub(status: 200, json: #"{"status":1,"response":{"userId":1,"name":"Ivan"}}"#)
+        let captured = stub(status: 200, json: #"{"status":1,"response":{"userId":1,"login":"ivan","name":"Ivan","avatar":null}}"#)
 
-        let _: AuthUser = try await sut.request(AuthEndpoint.login(login: "ivan_1", password: "Pass word&1"))
+        let _: User = try await sut.request(AuthEndpoint.login(login: "ivan_1", password: "Pass word&1"))
 
         let request = try XCTUnwrap(captured.request)
         XCTAssertEqual(request.httpMethod, "POST")
@@ -60,13 +60,13 @@ final class NetworkServiceTests: XCTestCase {
     /// Ожидание: POST на path эндпоинта, `Content-Type: multipart/form-data` с boundary, тело собрано
     /// энкодером с этим же boundary (параметр — текстовое поле, файл — файловая часть), ответ разобран.
     func test_upload_sendsMultipartBodyAndDecodesResponse() async throws {
-        let captured = stub(status: 200, json: #"{"status":1,"response":{"userId":1,"name":"Ivan"}}"#)
+        let captured = stub(status: 200, json: #"{"status":1,"response":{"userId":1,"login":"ivan","name":"Ivan","avatar":null}}"#)
         let endpoint = TestEndpoint(path: "/files/uploadImage", method: .post, parameters: ["filename": "a.jpg"], headers: ["X-Test": "1"])
         let file = MultipartFile(fieldName: "file", filename: "a.jpg", mimeType: "image/jpeg", data: Data("JPEG".utf8))
 
-        let user: AuthUser = try await sut.upload(endpoint, file: file)
+        let user: User = try await sut.upload(endpoint, file: file)
 
-        XCTAssertEqual(user, AuthUser(userId: 1, name: "Ivan"))
+        XCTAssertEqual(user, User(userId: 1, login: "ivan", name: "Ivan", avatar: nil))
         let request = try XCTUnwrap(captured.request)
         XCTAssertEqual(request.httpMethod, "POST")
         XCTAssertEqual(request.url?.absoluteString, "http://localhost:8080/files/uploadImage")
@@ -109,11 +109,11 @@ final class NetworkServiceTests: XCTestCase {
     /// Кейс: ответ со `status: 1` и заполненным `response`.
     /// Ожидание: `response` декодирован в запрошенный тип.
     func test_successResponse_returnsDecodedPayload() async throws {
-        _ = stub(status: 200, json: #"{"status":1,"response":{"userId":42,"name":"Ivan Petrov"}}"#)
+        _ = stub(status: 200, json: #"{"status":1,"response":{"userId":42,"login":"ivan","name":"Ivan Petrov","avatar":null}}"#)
 
-        let user: AuthUser = try await sut.request(AuthEndpoint.logout)
+        let user: User = try await sut.request(AuthEndpoint.logout)
 
-        XCTAssertEqual(user, AuthUser(userId: 42, name: "Ivan Petrov"))
+        XCTAssertEqual(user, User(userId: 42, login: "ivan", name: "Ivan Petrov", avatar: nil))
     }
 
     /// Кейс: ответ со `status: 0` и `errorCode`.
@@ -122,7 +122,7 @@ final class NetworkServiceTests: XCTestCase {
         _ = stub(status: 200, json: #"{"status":0,"errorCode":2002}"#)
 
         await assertThrows(NetworkError.api(code: 2002)) {
-            let _: AuthUser = try await sut.request(AuthEndpoint.logout)
+            let _: User = try await sut.request(AuthEndpoint.logout)
         }
     }
 
@@ -132,7 +132,7 @@ final class NetworkServiceTests: XCTestCase {
         _ = stub(status: 200, json: #"{"status":1}"#)
 
         await assertThrows(NetworkError.missingResponse) {
-            let _: AuthUser = try await sut.request(AuthEndpoint.logout)
+            let _: User = try await sut.request(AuthEndpoint.logout)
         }
     }
 
@@ -142,7 +142,7 @@ final class NetworkServiceTests: XCTestCase {
         _ = stub(status: 500, json: "")
 
         await assertThrows(NetworkError.invalidResponse(statusCode: 500)) {
-            let _: AuthUser = try await sut.request(AuthEndpoint.logout)
+            let _: User = try await sut.request(AuthEndpoint.logout)
         }
     }
 
@@ -152,7 +152,7 @@ final class NetworkServiceTests: XCTestCase {
         _ = stub(status: 200, json: "not json")
 
         do {
-            let _: AuthUser = try await sut.request(AuthEndpoint.logout)
+            let _: User = try await sut.request(AuthEndpoint.logout)
             XCTFail("Expected decoding error")
         } catch NetworkError.decoding {
             // ok
@@ -167,7 +167,7 @@ final class NetworkServiceTests: XCTestCase {
         URLProtocolStub.requestHandler = { _ in throw URLError(.notConnectedToInternet) }
 
         await assertThrows(NetworkError.transport(URLError(.notConnectedToInternet))) {
-            let _: AuthUser = try await sut.request(AuthEndpoint.logout)
+            let _: User = try await sut.request(AuthEndpoint.logout)
         }
     }
 
@@ -185,7 +185,7 @@ final class NetworkServiceTests: XCTestCase {
         _ = stub(status: 200, json: #"{"status":0,"errorCode":2003}"#)
 
         await assertThrows(NetworkError.api(code: 2003)) {
-            let _: AuthUser = try await sut.request(AuthEndpoint.login(login: "ivan", password: "x"))
+            let _: User = try await sut.request(AuthEndpoint.login(login: "ivan", password: "x"))
         }
 
         XCTAssertTrue(flag.isCalled)
@@ -217,11 +217,11 @@ final class NetworkServiceTests: XCTestCase {
 
         _ = stub(status: 200, json: #"{"status":0,"errorCode":2002}"#)
         await assertThrows(NetworkError.api(code: 2002)) {
-            let _: AuthUser = try await sut.request(AuthEndpoint.login(login: "ivan", password: "x"))
+            let _: User = try await sut.request(AuthEndpoint.login(login: "ivan", password: "x"))
         }
 
-        _ = stub(status: 200, json: #"{"status":1,"response":{"userId":1,"name":"Ivan"}}"#)
-        let _: AuthUser = try await sut.request(AuthEndpoint.login(login: "ivan", password: "x"))
+        _ = stub(status: 200, json: #"{"status":1,"response":{"userId":1,"login":"ivan","name":"Ivan","avatar":null}}"#)
+        let _: User = try await sut.request(AuthEndpoint.login(login: "ivan", password: "x"))
 
         XCTAssertFalse(flag.isCalled)
         XCTAssertEqual(cookieStorage.cookies(for: baseURL)?.count, 1)

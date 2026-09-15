@@ -9,13 +9,22 @@ import Foundation
 @MainActor
 enum ErrorMessages {
     /// Возвращает понятное пользователю сообщение об ошибке.
-    /// - Parameter error: любая ошибка; для не-`NetworkError` возвращается общий текст.
+    /// - Parameter error: любая ошибка; для неизвестных типов возвращается общий текст.
     static func message(for error: Error) -> String {
-        guard let networkError = error as? NetworkError else { return CommonStrings.errorUnknown }
-        switch networkError {
+        switch error {
+        case let networkError as NetworkError: return message(for: networkError)
+        case FilesServiceError.fileTooLarge: return CommonStrings.errorFileTooLarge
+        default: return CommonStrings.errorUnknown
+        }
+    }
+
+    /// Сопоставляет ошибку сетевого слоя с текстом.
+    /// - Parameter error: ошибка `NetworkService`.
+    private static func message(for error: NetworkError) -> String {
+        switch error {
         case .api(let code): return message(forAPICode: code)
         case .transport: return CommonStrings.errorNoConnection
-        case .invalidURL, .invalidResponse, .missingResponse, .decoding: return CommonStrings.errorUnknown
+        case .invalidURL, .invalidResponse, .missingResponse, .decoding, .unsupportedMethod: return CommonStrings.errorUnknown
         }
     }
 

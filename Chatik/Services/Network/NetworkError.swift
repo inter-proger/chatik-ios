@@ -18,6 +18,9 @@ enum NetworkError: Error {
     case decoding(String)
     /// Ошибка транспортного уровня (нет сети, таймаут, отмена и т.п.) — исходная `URLError` сохраняется целиком.
     case transport(URLError)
+    /// Эндпоинт с таким HTTP-методом нельзя отправить выбранным способом (например, `upload` требует POST).
+    /// Ошибка программиста: запрос на сервер не уходит.
+    case unsupportedMethod(HTTPMethod)
 }
 
 extension NetworkError: Equatable {
@@ -34,6 +37,8 @@ extension NetworkError: Equatable {
             return lhsMessage == rhsMessage
         case let (.transport(lhsError), .transport(rhsError)):
             return lhsError.code == rhsError.code
+        case let (.unsupportedMethod(lhsMethod), .unsupportedMethod(rhsMethod)):
+            return lhsMethod == rhsMethod
         default:
             return false
         }

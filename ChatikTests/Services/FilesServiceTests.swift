@@ -6,7 +6,6 @@
 import XCTest
 @testable import Chatik
 
-@MainActor
 final class FilesServiceTests: XCTestCase {
     private var networkService: NetworkServiceMock!
     private var sut: FilesService!
@@ -18,13 +17,13 @@ final class FilesServiceTests: XCTestCase {
     }
 
     /// Кейс: загрузка изображения.
-    /// Ожидание: multipart-запрос на POST /files/uploadImage, файл уходит полем `file` с переданными именем и MIME-типом,
-    /// возвращён файл из ответа.
+    /// Ожидание: multipart-запрос на POST /files/uploadImage, файл уходит полем `file` с переданным именем
+    /// и MIME-типом выбранного формата, возвращён файл из ответа.
     func test_uploadImage_uploadsFileToUploadImageEndpoint() async throws {
         networkService.stubbedResult = .success(RemoteFile.stub)
         let data = Data("JPEG".utf8)
 
-        let file = try await sut.uploadImage(data: data, filename: "photo.jpg", mimeType: "image/jpeg")
+        let file = try await sut.uploadImage(data: data, filename: "photo.jpg", type: .jpeg)
 
         XCTAssertEqual(file, .stub)
         let endpoint = try XCTUnwrap(networkService.requestedEndpoints.first)
@@ -51,13 +50,38 @@ final class FilesServiceTests: XCTestCase {
         XCTAssertTrue(networkService.uploadedFiles.isEmpty)
     }
 
+    /// Кейс: файл на байт больше `maxImageSize`.
+    /// Ожидание: `FilesServiceError.fileTooLarge` с лимитом, запрос в сеть не уходит.
+    func test_uploadImage_tooLarge_throwsWithoutRequest() async {
+        let data = Data(count: FilesService.maxImageSize + 1)
+
+        do {
+            _ = try await sut.uploadImage(data: data, filename: "big.jpg", type: .jpeg)
+            XCTFail("Expected error")
+        } catch {
+            XCTAssertEqual(error as? FilesServiceError, .fileTooLarge(maxSize: FilesService.maxImageSize))
+        }
+        XCTAssertTrue(networkService.requestedEndpoints.isEmpty)
+        XCTAssertTrue(networkService.uploadedFiles.isEmpty)
+    }
+
+    /// Кейс: файл ровно `maxImageSize` байт.
+    /// Ожидание: лимит включительный — файл отправляется.
+    func test_uploadImage_exactlyMaxSize_uploads() async throws {
+        networkService.stubbedResult = .success(RemoteFile.stub)
+
+        _ = try await sut.uploadImage(data: Data(count: FilesService.maxImageSize), filename: "max.png", type: .png)
+
+        XCTAssertEqual(networkService.uploadedFiles.first?.mimeType, "image/png")
+    }
+
     /// Кейс: сервер вернул бизнес-ошибку при загрузке (файл слишком большой).
     /// Ожидание: ошибка пробрасывается наружу без изменений.
     func test_uploadImage_propagatesApiError() async {
         networkService.stubbedResult = .failure(NetworkError.api(code: NetworkError.Code.fileTooLarge))
 
         do {
-            _ = try await sut.uploadImage(data: Data(), filename: "a.jpg", mimeType: "image/jpeg")
+            _ = try await sut.uploadImage(data: Data(), filename: "a.jpg", type: .jpeg)
             XCTFail("Expected error")
         } catch {
             XCTAssertEqual(error as? NetworkError, .api(code: 3002))

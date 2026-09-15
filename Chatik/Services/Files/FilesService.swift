@@ -7,12 +7,22 @@ import Foundation
 
 protocol FilesServiceProtocol {
     /// Загружает изображение на сервер и возвращает описание созданного файла.
-    func uploadImage(data: Data, filename: String, mimeType: String) async throws -> RemoteFile
+    /// Бросает `FilesServiceError.fileTooLarge` до запроса, если `data` больше допустимого размера.
+    func uploadImage(data: Data, filename: String, type: ImageMIMEType) async throws -> RemoteFile
     /// Возвращает описание файла по идентификатору.
     func fetchFile(id: Int) async throws -> RemoteFile
 }
 
+/// Ошибки, которые `FilesService` обнаруживает локально, не обращаясь к серверу.
+enum FilesServiceError: Error, Equatable {
+    /// Файл больше `FilesService.maxImageSize` байт — сервер отклонил бы его кодом 3002, запрос не отправляется.
+    case fileTooLarge(maxSize: Int)
+}
+
 final class FilesService: FilesServiceProtocol {
+    /// Максимальный размер изображения для `/files/uploadImage` — 10 МБ (ограничение сервера).
+    static let maxImageSize = 10 * 1024 * 1024
+
     private let networkService: NetworkServiceProtocol
 
     init(networkService: NetworkServiceProtocol) {
@@ -21,11 +31,12 @@ final class FilesService: FilesServiceProtocol {
 
     /// Загружает изображение через `POST /files/uploadImage` (`multipart/form-data`).
     /// - Parameters:
-    ///   - data: содержимое файла; JPEG, PNG или WebP размером до 10 МБ, иначе сервер вернёт 3002 / 3003.
+    ///   - data: содержимое файла размером до `maxImageSize`; иначе `FilesServiceError.fileTooLarge` без запроса.
     ///   - filename: имя файла — сервер сохранит его как имя загруженного файла.
-    ///   - mimeType: MIME-тип содержимого, например `image/jpeg`.
-    func uploadImage(data: Data, filename: String, mimeType: String) async throws -> RemoteFile {
-        let file = MultipartFile(fieldName: FilesEndpoint.uploadFieldName, filename: filename, mimeType: mimeType, data: data)
+    ///   - type: формат изображения; определяет `Content-Type` файловой части.
+    func uploadImage(data: Data, filename: String, type: ImageMIMEType) async throws -> RemoteFile {
+        guard data.count <= Self.maxImageSize else { throw FilesServiceError.fileTooLarge(maxSize: Self.maxImageSize) }
+        let file = MultipartFile(fieldName: FilesEndpoint.uploadFieldName, filename: filename, mimeType: type.rawValue, data: data)
         return try await networkService.upload(FilesEndpoint.uploadImage, file: file)
     }
 

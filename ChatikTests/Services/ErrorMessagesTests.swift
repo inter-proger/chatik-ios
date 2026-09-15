@@ -36,7 +36,13 @@ final class ErrorMessagesTests: XCTestCase {
         XCTAssertEqual(ErrorMessages.message(for: NetworkError.transport(URLError(.notConnectedToInternet))), CommonStrings.errorNoConnection)
     }
 
-    /// Кейс: неизвестный код API, ошибки разбора / формата ответа, не-`NetworkError`.
+    /// Кейс: локальная проверка размера файла отклонила загрузку.
+    /// Ожидание: тот же текст, что и для серверного кода 3002.
+    func test_message_fileTooLarge_returnsFileTooLargeText() {
+        XCTAssertEqual(ErrorMessages.message(for: FilesServiceError.fileTooLarge(maxSize: 1)), CommonStrings.errorFileTooLarge)
+    }
+
+    /// Кейс: неизвестный код API, ошибки разбора / формата ответа, ошибка программиста, не-`NetworkError`.
     /// Ожидание: общий текст «что-то пошло не так».
     func test_message_otherErrors_returnUnknown() {
         let errors: [Error] = [
@@ -44,6 +50,7 @@ final class ErrorMessagesTests: XCTestCase {
             NetworkError.decoding("bad json"),
             NetworkError.missingResponse,
             NetworkError.invalidResponse(statusCode: 500),
+            NetworkError.unsupportedMethod(.get),
             URLError(.badURL),
         ]
 

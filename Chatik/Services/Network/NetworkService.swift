@@ -53,11 +53,13 @@ final class NetworkService: NetworkServiceProtocol {
 
     /// Загружает файл через `multipart/form-data`; обработка ответа такая же, как у `request(_:)`.
     /// - Parameters:
-    ///   - endpoint: описание запроса; `parameters` уходят текстовыми полями формы, `method` должен быть `.post`.
+    ///   - endpoint: описание запроса; `parameters` уходят текстовыми полями формы.
     ///   - file: файл, который уходит файловой частью формы.
     /// - Returns: декодированное поле `response`.
+    /// - Throws: `NetworkError.unsupportedMethod`, если `endpoint.method != .post` — запрос не отправляется.
     func upload<T: Decodable>(_ endpoint: Endpoint, file: MultipartFile) async throws -> T {
-        try await send(makeMultipartRequest(for: endpoint, file: file), for: endpoint)
+        guard endpoint.method == .post else { throw NetworkError.unsupportedMethod(endpoint.method) }
+        return try await send(makeMultipartRequest(for: endpoint, file: file), for: endpoint)
     }
 
     /// Удаляет все cookie, относящиеся к базовому URL API.

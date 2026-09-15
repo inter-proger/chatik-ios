@@ -78,6 +78,20 @@ final class NetworkServiceTests: XCTestCase {
         XCTAssertEqual(request.bodyString, String(data: expectedBody, encoding: .utf8))
     }
 
+    /// Кейс: `upload` вызван с GET-эндпоинтом.
+    /// Ожидание: выброшена `NetworkError.unsupportedMethod(.get)`, запрос на сервер не уходит.
+    func test_upload_nonPostEndpoint_throwsUnsupportedMethodWithoutRequest() async {
+        let captured = stub(status: 200, json: #"{"status":1,"response":{}}"#)
+        let endpoint = TestEndpoint(path: "/files/get", method: .get, parameters: [:], headers: nil)
+        let file = MultipartFile(fieldName: "file", filename: "a.jpg", mimeType: "image/jpeg", data: Data())
+
+        await assertThrows(NetworkError.unsupportedMethod(.get)) {
+            let _: EmptyResponse = try await sut.upload(endpoint, file: file)
+        }
+
+        XCTAssertNil(captured.request)
+    }
+
     /// Кейс: multipart-загрузка вернула `status: 0` с кодом 3002.
     /// Ожидание: выброшена `NetworkError.api(3002)` — обработка ответа общая с `request(_:)`.
     func test_upload_errorStatus_throwsApiError() async {

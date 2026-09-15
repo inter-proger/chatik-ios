@@ -54,7 +54,8 @@ struct RemoteFile: Decodable, Equatable {
         self.smallURL = smallURL
     }
 
-    /// Разбирает плоские поля и вложенный объект `data`; отсутствующий `data` или `small_url` не считается ошибкой.
+    /// Разбирает плоские поля и вложенный объект `data`. Отсутствующий или `null` `data`, как и отсутствующий
+    /// `small_url`, не считается ошибкой; `data` не-объект (строка, массив) — ошибка декодирования.
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         fileId = try container.decode(Int.self, forKey: .fileId)
@@ -63,7 +64,15 @@ struct RemoteFile: Decodable, Equatable {
         size = try container.decode(Int.self, forKey: .size)
         filename = try container.decode(String.self, forKey: .filename)
         fileExtension = try container.decode(String.self, forKey: .fileExtension)
-        let data = try? container.nestedContainer(keyedBy: DataCodingKeys.self, forKey: .data)
-        smallURL = try data?.decodeIfPresent(URL.self, forKey: .smallURL)
+        smallURL = try Self.dataContainer(in: container)?.decodeIfPresent(URL.self, forKey: .smallURL)
+    }
+
+    /// Контейнер объекта `data`, если он есть и не `null`.
+    /// - Parameter container: контейнер верхнего уровня файла.
+    private static func dataContainer(
+        in container: KeyedDecodingContainer<CodingKeys>
+    ) throws -> KeyedDecodingContainer<DataCodingKeys>? {
+        guard container.contains(.data), try !container.decodeNil(forKey: .data) else { return nil }
+        return try container.nestedContainer(keyedBy: DataCodingKeys.self, forKey: .data)
     }
 }

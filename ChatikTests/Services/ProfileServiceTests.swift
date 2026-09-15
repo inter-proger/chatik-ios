@@ -6,7 +6,6 @@
 import XCTest
 @testable import Chatik
 
-@MainActor
 final class ProfileServiceTests: XCTestCase {
     private var networkService: NetworkServiceMock!
     private var sut: ProfileService!

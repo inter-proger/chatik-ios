@@ -9,6 +9,7 @@ import XCTest
 final class FilesServiceTests: XCTestCase {
     private var networkService: NetworkServiceMock!
     private var sut: FilesService!
+    private var temporaryFiles: [URL] = []
 
     override func setUp() {
         super.setUp()
@@ -16,14 +17,20 @@ final class FilesServiceTests: XCTestCase {
         sut = FilesService(networkService: networkService)
     }
 
-    /// Кейс: загрузка изображения.
-    /// Ожидание: multipart-запрос на POST /files/uploadImage, файл уходит полем `file` с переданным именем
-    /// и MIME-типом выбранного формата, возвращён файл из ответа.
+    override func tearDown() {
+        TemporaryFile.remove(temporaryFiles)
+        temporaryFiles = []
+        super.tearDown()
+    }
+
+    /// Кейс: загрузка файла изображения.
+    /// Ожидание: multipart-запрос на POST /files/uploadImage, файл уходит полем `file` по своему адресу
+    /// с переданным именем и MIME-типом своего формата, возвращён файл из ответа.
     func test_uploadImage_uploadsFileToUploadImageEndpoint() async throws {
         networkService.stubbedResult = .success(RemoteFile.stub)
-        let data = Data("JPEG".utf8)
+        let imageFile = try makeImageFile(size: 4, type: .jpeg)
 
-        let file = try await sut.uploadImage(data: data, filename: "photo.jpg", type: .jpeg, onProgress: { _ in })
+        let file = try await sut.uploadImage(file: imageFile, filename: "photo.jpg", onProgress: { _ in })
 
         XCTAssertEqual(file, .stub)
         let endpoint = try XCTUnwrap(networkService.requestedEndpoints.first)
@@ -31,7 +38,7 @@ final class FilesServiceTests: XCTestCase {
         XCTAssertEqual(endpoint.method, .post)
         XCTAssertEqual(endpoint.parameters, [:])
         XCTAssertEqual(networkService.uploadedFiles, [
-            MultipartFile(fieldName: "file", filename: "photo.jpg", mimeType: "image/jpeg", data: data),
+            MultipartFile(fieldName: "file", filename: "photo.jpg", mimeType: "image/jpeg", fileURL: imageFile.url),
         ])
     }
 
@@ -42,7 +49,7 @@ final class FilesServiceTests: XCTestCase {
         networkService.stubbedUploadProgress = [0.25, 0.5, 1]
         let received = ProgressRecorder()
 
-        _ = try await sut.uploadImage(data: Data(), filename: "a.jpg", type: .jpeg, onProgress: { received.append($0) })
+        _ = try await sut.uploadImage(file: try makeImageFile(size: 0, type: .jpeg), filename: "a.jpg", onProgress: { received.append($0) })
 
         XCTAssertEqual(received.values, [0.25, 0.5, 1])
     }
@@ -64,11 +71,11 @@ final class FilesServiceTests: XCTestCase {
 
     /// Кейс: файл на байт больше `maxImageSize`.
     /// Ожидание: `FilesServiceError.fileTooLarge` с лимитом, запрос в сеть не уходит.
-    func test_uploadImage_tooLarge_throwsWithoutRequest() async {
-        let data = Data(count: FilesService.maxImageSize + 1)
+    func test_uploadImage_tooLarge_throwsWithoutRequest() async throws {
+        let imageFile = try makeImageFile(size: FilesService.maxImageSize + 1, type: .jpeg)
 
         do {
-            _ = try await sut.uploadImage(data: data, filename: "big.jpg", type: .jpeg, onProgress: { _ in })
+            _ = try await sut.uploadImage(file: imageFile, filename: "big.jpg", onProgress: { _ in })
             XCTFail("Expected error")
         } catch {
             XCTAssertEqual(error as? FilesServiceError, .fileTooLarge(maxSize: FilesService.maxImageSize))
@@ -78,25 +85,48 @@ final class FilesServiceTests: XCTestCase {
     }
 
     /// Кейс: файл ровно `maxImageSize` байт.
-    /// Ожидание: лимит включительный — файл отправляется.
+    /// Ожидание: лимит включительный — файл отправляется с MIME-типом своего формата.
     func test_uploadImage_exactlyMaxSize_uploads() async throws {
         networkService.stubbedResult = .success(RemoteFile.stub)
 
-        _ = try await sut.uploadImage(data: Data(count: FilesService.maxImageSize), filename: "max.png", type: .png, onProgress: { _ in })
+        _ = try await sut.uploadImage(file: try makeImageFile(size: FilesService.maxImageSize, type: .png), filename: "max.png", onProgress: { _ in })
 
         XCTAssertEqual(networkService.uploadedFiles.first?.mimeType, "image/png")
     }
 
+    /// Кейс: файла по указанному адресу нет.
+    /// Ожидание: `FilesServiceError.fileUnreadable`, запрос в сеть не уходит.
+    func test_uploadImage_missingFile_throwsWithoutRequest() async {
+        let missing = ImageFile(url: FileManager.default.temporaryDirectory.appendingPathComponent("missing-\(UUID().uuidString).jpg"), type: .jpeg)
+
+        do {
+            _ = try await sut.uploadImage(file: missing, filename: "a.jpg", onProgress: { _ in })
+            XCTFail("Expected error")
+        } catch {
+            XCTAssertEqual(error as? FilesServiceError, .fileUnreadable)
+        }
+        XCTAssertTrue(networkService.uploadedFiles.isEmpty)
+    }
+
     /// Кейс: сервер вернул бизнес-ошибку при загрузке (файл слишком большой).
     /// Ожидание: ошибка пробрасывается наружу без изменений.
-    func test_uploadImage_propagatesApiError() async {
+    func test_uploadImage_propagatesApiError() async throws {
         networkService.stubbedResult = .failure(NetworkError.api(code: NetworkError.Code.fileTooLarge))
 
         do {
-            _ = try await sut.uploadImage(data: Data(), filename: "a.jpg", type: .jpeg, onProgress: { _ in })
+            _ = try await sut.uploadImage(file: try makeImageFile(size: 0, type: .jpeg), filename: "a.jpg", onProgress: { _ in })
             XCTFail("Expected error")
         } catch {
             XCTAssertEqual(error as? NetworkError, .api(code: 3002))
         }
+    }
+
+    // MARK: - Helpers
+
+    /// Создаёт во временной директории файл заданного размера (нули) и регистрирует его для удаления.
+    private func makeImageFile(size: Int, type: ImageMIMEType) throws -> ImageFile {
+        let url = try TemporaryFile.make(Data(count: size), fileExtension: type.fileExtension)
+        temporaryFiles.append(url)
+        return ImageFile(url: url, type: type)
     }
 }

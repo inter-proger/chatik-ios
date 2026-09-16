@@ -21,11 +21,22 @@ extension ProfileViewModel {
     }
 
     /// Обработчик выбранного изображения: закрывает пикер и запускает установку аватара.
+    /// Если загрузка уже идёт, выбор игнорируется, а временный файл из галереи удаляется.
     /// - Parameter image: снимок с камеры или файл из галереи.
     func didPickImage(_ image: PickedImage) {
         presentedAvatarSource = nil
-        guard !isUploadingAvatar else { return }
+        guard !isUploadingAvatar else {
+            discard(image)
+            return
+        }
         Task { await uploadAvatar(image) }
+    }
+
+    /// Удаляет временный файл изображения, если он есть — выбранный файл не будет загружен.
+    /// - Parameter image: изображение, от загрузки которого отказались.
+    private func discard(_ image: PickedImage) {
+        guard case .file(let file) = image else { return }
+        imageFileStore.remove(file)
     }
 
     /// Обработчик ситуации, когда выбранный в галерее файл не удалось прочитать как изображение.

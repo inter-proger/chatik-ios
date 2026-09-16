@@ -24,7 +24,7 @@ enum ErrorMessages {
         switch error {
         case .api(let code): return message(forAPICode: code)
         case .transport: return CommonStrings.errorNoConnection
-        case .invalidURL, .invalidResponse, .missingResponse, .decoding, .unsupportedMethod: return CommonStrings.errorUnknown
+        case .invalidURL, .invalidResponse, .missingResponse, .decoding, .unsupportedMethod, .fileAccess: return CommonStrings.errorUnknown
         }
     }
 

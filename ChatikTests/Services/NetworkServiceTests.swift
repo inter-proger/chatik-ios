@@ -11,6 +11,7 @@ final class NetworkServiceTests: XCTestCase {
     private let baseURL = URL(string: "http://localhost:8080")!
     private var cookieStorage: HTTPCookieStorage!
     private var sut: NetworkService!
+    private var temporaryFiles: [URL] = []
 
     override func setUp() {
         super.setUp()
@@ -22,6 +23,8 @@ final class NetworkServiceTests: XCTestCase {
         URLProtocolStub.requestHandler = nil
         sut = nil
         cookieStorage = nil
+        TemporaryFile.remove(temporaryFiles)
+        temporaryFiles = []
         super.tearDown()
     }
 
@@ -38,7 +41,7 @@ final class NetworkServiceTests: XCTestCase {
         XCTAssertEqual(request.httpMethod, "POST")
         XCTAssertEqual(request.url?.absoluteString, "http://localhost:8080/auth/login")
         XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/x-www-form-urlencoded")
-        XCTAssertEqual(request.bodyString, "login=ivan_1&password=Pass+word%261")
+        XCTAssertEqual(captured.bodyString, "login=ivan_1&password=Pass+word%261")
     }
 
     /// Кейс: GET-запрос с параметрами и кастомным заголовком.
@@ -53,16 +56,18 @@ final class NetworkServiceTests: XCTestCase {
         XCTAssertEqual(request.httpMethod, "GET")
         XCTAssertEqual(request.url?.absoluteString, "http://localhost:8080/items?page=2&q=a%20b")
         XCTAssertEqual(request.value(forHTTPHeaderField: "X-Test"), "1")
-        XCTAssertNil(request.bodyString)
+        XCTAssertNil(captured.bodyString)
     }
 
     /// Кейс: multipart-загрузка файла с текстовым параметром эндпоинта.
     /// Ожидание: POST на path эндпоинта, `Content-Type: multipart/form-data` с boundary, тело собрано
-    /// энкодером с этим же boundary (параметр — текстовое поле, файл — файловая часть), ответ разобран.
-    func test_upload_sendsMultipartBodyAndDecodesResponse() async throws {
+    /// энкодером с этим же boundary (параметр — текстовое поле, файл — файловая часть с содержимым файла
+    /// с диска), ответ разобран; временный файл тела после отправки удалён.
+    func test_upload_sendsMultipartBodyFromFileAndDecodesResponse() async throws {
         let captured = stub(status: 200, json: #"{"status":1,"response":{"userId":1,"login":"ivan","name":"Ivan","avatar":null}}"#)
         let endpoint = TestEndpoint(path: "/files/uploadImage", method: .post, parameters: ["filename": "a.jpg"], headers: ["X-Test": "1"])
-        let file = MultipartFile(fieldName: "file", filename: "a.jpg", mimeType: "image/jpeg", data: Data("JPEG".utf8))
+        let file = try makeMultipartFile(Data("JPEG".utf8))
+        let bodyFilesBefore = try multipartBodyFiles()
 
         let user: User = try await sut.upload(endpoint, file: file, onProgress: { _ in })
 
@@ -74,16 +79,17 @@ final class NetworkServiceTests: XCTestCase {
         let contentType = try XCTUnwrap(request.value(forHTTPHeaderField: "Content-Type"))
         let boundary = try XCTUnwrap(contentType.split(separator: "=").last.map(String.init))
         XCTAssertEqual(contentType, "multipart/form-data; boundary=\(boundary)")
-        let expectedBody = MultipartFormEncoder.encode(parameters: ["filename": "a.jpg"], file: file, boundary: boundary)
-        XCTAssertEqual(request.bodyString, String(data: expectedBody, encoding: .utf8))
+        let expectedBody = try expectedMultipartBody(parameters: ["filename": "a.jpg"], file: file, boundary: boundary)
+        XCTAssertEqual(captured.bodyString, String(data: expectedBody, encoding: .utf8))
+        XCTAssertEqual(try multipartBodyFiles(), bodyFilesBefore)
     }
 
     /// Кейс: `upload` вызван с GET-эндпоинтом.
     /// Ожидание: выброшена `NetworkError.unsupportedMethod(.get)`, запрос на сервер не уходит.
-    func test_upload_nonPostEndpoint_throwsUnsupportedMethodWithoutRequest() async {
+    func test_upload_nonPostEndpoint_throwsUnsupportedMethodWithoutRequest() async throws {
         let captured = stub(status: 200, json: #"{"status":1,"response":{}}"#)
         let endpoint = TestEndpoint(path: "/files/get", method: .get, parameters: [:], headers: nil)
-        let file = MultipartFile(fieldName: "file", filename: "a.jpg", mimeType: "image/jpeg", data: Data())
+        let file = try makeMultipartFile(Data())
 
         await assertThrows(NetworkError.unsupportedMethod(.get)) {
             let _: EmptyResponse = try await sut.upload(endpoint, file: file, onProgress: { _ in })
@@ -92,12 +98,32 @@ final class NetworkServiceTests: XCTestCase {
         XCTAssertNil(captured.request)
     }
 
+    /// Кейс: загружаемого файла нет на диске.
+    /// Ожидание: выброшена `NetworkError.fileAccess`, запрос на сервер не уходит, временный файл тела не остаётся.
+    func test_upload_missingFile_throwsFileAccessWithoutRequest() async throws {
+        let captured = stub(status: 200, json: #"{"status":1,"response":{}}"#)
+        let endpoint = TestEndpoint(path: "/files/uploadImage", method: .post, parameters: [:], headers: nil)
+        let missing = FileManager.default.temporaryDirectory.appendingPathComponent("missing-\(UUID().uuidString).jpg")
+        let file = MultipartFile(fieldName: "file", filename: "a.jpg", mimeType: "image/jpeg", fileURL: missing)
+        let bodyFilesBefore = try multipartBodyFiles()
+
+        do {
+            let _: EmptyResponse = try await sut.upload(endpoint, file: file, onProgress: { _ in })
+            XCTFail("Expected error")
+        } catch {
+            guard case NetworkError.fileAccess = error else { return XCTFail("Unexpected error: \(error)") }
+        }
+
+        XCTAssertNil(captured.request)
+        XCTAssertEqual(try multipartBodyFiles(), bodyFilesBefore)
+    }
+
     /// Кейс: multipart-загрузка вернула `status: 0` с кодом 3002.
     /// Ожидание: выброшена `NetworkError.api(3002)` — обработка ответа общая с `request(_:)`.
-    func test_upload_errorStatus_throwsApiError() async {
+    func test_upload_errorStatus_throwsApiError() async throws {
         _ = stub(status: 200, json: #"{"status":0,"errorCode":3002}"#)
         let endpoint = TestEndpoint(path: "/files/uploadImage", method: .post, parameters: [:], headers: nil)
-        let file = MultipartFile(fieldName: "file", filename: "a.jpg", mimeType: "image/jpeg", data: Data())
+        let file = try makeMultipartFile(Data())
 
         await assertThrows(NetworkError.api(code: 3002)) {
             let _: EmptyResponse = try await sut.upload(endpoint, file: file, onProgress: { _ in })
@@ -259,15 +285,38 @@ final class NetworkServiceTests: XCTestCase {
         ]))
     }
 
-    /// Подставляет ответ сервера и возвращает контейнер с перехваченным запросом.
+    /// Подставляет ответ сервера и возвращает контейнер с перехваченным запросом. Тело читается сразу
+    /// при перехвате: тело загрузки лежит во временном файле, который после отправки удаляется.
     private func stub(status: Int, json: String) -> CapturedRequest {
         let captured = CapturedRequest()
         URLProtocolStub.requestHandler = { request in
             captured.request = request
+            captured.bodyString = request.bodyString
             let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!
             return (response, Data(json.utf8))
         }
         return captured
+    }
+
+    /// Создаёт во временной директории файл с содержимым и описывает его как часть формы `file`.
+    private func makeMultipartFile(_ contents: Data) throws -> MultipartFile {
+        let url = try TemporaryFile.make(contents, fileExtension: "jpg")
+        temporaryFiles.append(url)
+        return MultipartFile(fieldName: "file", filename: "a.jpg", mimeType: "image/jpeg", fileURL: url)
+    }
+
+    /// Собирает энкодером ожидаемое тело с тем же boundary, что и в перехваченном запросе.
+    private func expectedMultipartBody(parameters: [String: String], file: MultipartFile, boundary: String) throws -> Data {
+        let destination = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).expected")
+        temporaryFiles.append(destination)
+        try MultipartFormEncoder.write(parameters: parameters, file: file, boundary: boundary, to: destination)
+        return try Data(contentsOf: destination)
+    }
+
+    /// Временные файлы тел загрузок (`*.multipart`) — чтобы проверить, что после отправки их не остаётся.
+    private func multipartBodyFiles() throws -> Set<String> {
+        let names = try FileManager.default.contentsOfDirectory(atPath: FileManager.default.temporaryDirectory.path)
+        return Set(names.filter { $0.hasSuffix(".multipart") })
     }
 
     /// Проверяет, что замыкание бросает ровно ожидаемую `NetworkError`.
@@ -290,6 +339,8 @@ final class NetworkServiceTests: XCTestCase {
 
 private final class CapturedRequest: @unchecked Sendable {
     var request: URLRequest?
+    /// Тело запроса на момент перехвата.
+    var bodyString: String?
 }
 
 /// Флаг вызова обработчика `onUnauthorized` из `@Sendable`-замыкания.

@@ -57,7 +57,7 @@ enum PreviewDependencies {
         return ProfileViewModel(
             profileService: ProfileServicePreviewMock(profileResult: profileResult ?? .success(user)),
             filesService: FilesServicePreviewMock(),
-            imageEncoder: ImageEncoder(),
+            imageFileStore: ImageFileStore(),
             sessionService: sessionService,
             // Как в приложении: на симуляторе камеры нет, и «Сделать фото» предлагаться не должно —
             // `UIImagePickerController` с `.camera` без камеры падает.
@@ -78,16 +78,15 @@ final class FilesServicePreviewMock: FilesServiceProtocol {
     }
 
     func uploadImage(
-        data: Data,
+        file: ImageFile,
         filename: String,
-        type: ImageMIMEType,
         onProgress: @escaping @Sendable (Double) -> Void
     ) async throws -> RemoteFile {
         for step in 1...progressSteps {
             try await Task.sleep(for: delay / progressSteps)
             onProgress(Double(step) / Double(progressSteps))
         }
-        return RemoteFile(fileId: 1, type: .image, url: URL(string: "http://localhost:8080/static/uploads/avatar.jpg")!, size: data.count, filename: filename, fileExtension: type.fileExtension, smallURL: nil)
+        return RemoteFile(fileId: 1, type: .image, url: URL(string: "http://localhost:8080/static/uploads/avatar.jpg")!, size: 0, filename: filename, fileExtension: file.type.fileExtension, smallURL: nil)
     }
 
     func fetchFile(id: Int) async throws -> RemoteFile {

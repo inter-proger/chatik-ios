@@ -14,15 +14,14 @@ final class FilesServiceMock: FilesServiceProtocol {
     /// Вызывается внутри `uploadImage` после сообщения прогресса и ожидается до возврата результата —
     /// пока ViewModel гарантированно в состоянии загрузки. `@MainActor`, чтобы читать состояние ViewModel.
     var onUpload: (@MainActor () async -> Void)?
-    private(set) var uploads: [(data: Data, filename: String, type: ImageMIMEType)] = []
+    private(set) var uploads: [(file: ImageFile, filename: String)] = []
 
     func uploadImage(
-        data: Data,
+        file: ImageFile,
         filename: String,
-        type: ImageMIMEType,
         onProgress: @escaping @Sendable (Double) -> Void
     ) async throws -> RemoteFile {
-        uploads.append((data, filename, type))
+        uploads.append((file, filename))
         stubbedUploadProgress.forEach(onProgress)
         await onUpload?()
         return try stubbedUpload.get()

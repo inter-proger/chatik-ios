@@ -11,7 +11,7 @@ final class ProfileViewModelTests: XCTestCase {
     private let storedUser = User(userId: 1, login: "ivan", name: "Ivan", avatar: nil)
     private var profileService: ProfileServiceMock!
     private var filesService: FilesServiceMock!
-    private var imageEncoder: ImageEncoderMock!
+    private var imageFileStore: ImageFileStoreMock!
     private var userDefaultsService: UserDefaultsServiceMock!
     private var sessionService: SessionService!
     private var sut: ProfileViewModel!
@@ -20,7 +20,7 @@ final class ProfileViewModelTests: XCTestCase {
         try await super.setUp()
         profileService = ProfileServiceMock()
         filesService = FilesServiceMock()
-        imageEncoder = ImageEncoderMock()
+        imageFileStore = ImageFileStoreMock()
         userDefaultsService = UserDefaultsServiceMock(currentUser: storedUser)
         sessionService = SessionService(userDefaultsService: userDefaultsService)
         await sessionService.restore()
@@ -31,7 +31,7 @@ final class ProfileViewModelTests: XCTestCase {
         ProfileViewModel(
             profileService: profileService,
             filesService: filesService,
-            imageEncoder: imageEncoder,
+            imageFileStore: imageFileStore,
             sessionService: sessionService,
             isCameraAvailable: isCameraAvailable
         )
@@ -163,41 +163,61 @@ final class ProfileViewModelTests: XCTestCase {
     }
 
     /// Кейс: изображение выбрано, загрузка и назначение аватара прошли успешно.
-    /// Ожидание: на сервер ушёл закодированный JPEG под именем `avatar.jpg`, аватар назначен по `fileId`
-    /// загруженного файла, сессия обновлена, ошибки нет.
-    func test_uploadAvatar_success_uploadsEncodedImageAndUpdatesSession() async {
-        let encoded = Data("ENCODED".utf8)
+    /// Ожидание: на сервер ушёл подготовленный файл под именем `avatar.jpg`, аватар назначен по `fileId`
+    /// загруженного файла, сессия обновлена, временный файл удалён, ошибки нет.
+    func test_uploadAvatar_success_uploadsStoredFileAndUpdatesSession() async {
         let updated = User(userId: 1, login: "ivan", name: "Ivan", avatar: .stub)
-        imageEncoder.stubbedResult = .success(encoded)
+        imageFileStore.stubbedResult = .success(.stub)
         filesService.stubbedUpload = .success(.stub)
         profileService.stubbedProfile = .success(updated)
 
         await sut.uploadAvatar(.image(.stub()))
 
         XCTAssertEqual(filesService.uploads.count, 1)
-        XCTAssertEqual(filesService.uploads.first?.data, encoded)
+        XCTAssertEqual(filesService.uploads.first?.file, .stub)
         XCTAssertEqual(filesService.uploads.first?.filename, "avatar.jpg")
-        XCTAssertEqual(filesService.uploads.first?.type, .jpeg)
         XCTAssertEqual(profileService.setAvatarFileIds, [RemoteFile.stub.fileId])
+        XCTAssertEqual(imageFileStore.removedFiles, [.stub])
         XCTAssertEqual(sessionService.currentUser, updated)
         XCTAssertEqual(sut.profile?.avatarURL, RemoteFile.stub.url)
         XCTAssertNil(sut.errorMessage)
         XCTAssertFalse(sut.isUploadingAvatar)
     }
 
-    /// Кейс: изображение не удалось декодировать / закодировать.
+    /// Кейс: файл из галереи в каждом поддерживаемом формате.
+    /// Ожидание: имя файла на сервере — `avatar` с расширением формата исходного файла.
+    func test_uploadAvatar_filenameFollowsFileType() async {
+        let cases: [(type: ImageMIMEType, filename: String)] = [
+            (.jpeg, "avatar.jpg"),
+            (.png, "avatar.png"),
+            (.webp, "avatar.webp"),
+        ]
+        filesService.stubbedUpload = .success(.stub)
+        profileService.stubbedProfile = .success(storedUser)
+
+        for testCase in cases {
+            let file = ImageFile(url: ImageFile.stub.url, type: testCase.type)
+            imageFileStore.stubbedResult = .success(file)
+
+            await sut.uploadAvatar(.file(file))
+
+            XCTAssertEqual(filesService.uploads.last?.filename, testCase.filename, "\(testCase.type)")
+        }
+    }
+
+    /// Кейс: файл не удалось подготовить (снимок не закодирован / не записан во временную директорию).
     /// Ожидание: запрос в сеть не уходит, показано сообщение про выбранное изображение (а не общее про сеть).
-    func test_uploadAvatar_encodingFails_showsImageErrorWithoutUpload() async {
-        let errors: [ImageEncoderError] = [
-            .decodingFailed,
+    func test_uploadAvatar_storeFails_showsImageErrorWithoutUpload() async {
+        let errors: [ImageFileStoreError] = [
             .encodingFailed,
+            .writeFailed,
         ]
 
         for error in errors {
-            imageEncoder.stubbedResult = .failure(error)
+            imageFileStore.stubbedResult = .failure(error)
             sut.errorMessage = nil
 
-            await sut.uploadAvatar(.file(Data()))
+            await sut.uploadAvatar(.image(.stub()))
 
             XCTAssertTrue(filesService.uploads.isEmpty, "\(error)")
             XCTAssertEqual(sut.errorMessage, ProfileStrings.avatarLoadFailed, "\(error)")
@@ -205,7 +225,8 @@ final class ProfileViewModelTests: XCTestCase {
     }
 
     /// Кейс: сервер отклонил файл как слишком большой.
-    /// Ожидание: аватар не назначается, показано сообщение о размере файла, пользователь сессии не изменён.
+    /// Ожидание: аватар не назначается, показано сообщение о размере файла, пользователь сессии не изменён,
+    /// временный файл всё равно удалён.
     func test_uploadAvatar_uploadFails_showsErrorAndKeepsUser() async {
         filesService.stubbedUpload = .failure(NetworkError.api(code: NetworkError.Code.fileTooLarge))
 
@@ -214,6 +235,7 @@ final class ProfileViewModelTests: XCTestCase {
         XCTAssertTrue(profileService.setAvatarFileIds.isEmpty)
         XCTAssertEqual(sut.errorMessage, CommonStrings.errorFileTooLarge)
         XCTAssertEqual(sessionService.currentUser, storedUser)
+        XCTAssertEqual(imageFileStore.removedFiles, [.stub])
     }
 
     /// Кейс: файл загружен, но назначение аватара завершилось транспортной ошибкой.
@@ -328,6 +350,21 @@ final class ProfileViewModelTests: XCTestCase {
         XCTAssertNil(sut.presentedAvatarSource)
         await fulfillment(of: [requestStarted], timeout: 1)
         XCTAssertEqual(filesService.uploads.count, 1)
+    }
+
+    /// Кейс: файл из галереи выбран, пока идёт загрузка другого аватара.
+    /// Ожидание: вторая загрузка не запускается, временный файл выбранного изображения удалён.
+    func test_didPickImage_whileUploading_discardsFile() async {
+        let sut: ProfileViewModel = sut
+        let ignored = ImageFile(url: FileManager.default.temporaryDirectory.appendingPathComponent("ignored.png"), type: .png)
+        filesService.stubbedUpload = .success(.stub)
+        filesService.onUpload = { sut.didPickImage(.file(ignored)) }
+        profileService.stubbedProfile = .success(storedUser)
+
+        await sut.uploadAvatar(.image(.stub()))
+
+        XCTAssertEqual(filesService.uploads.count, 1)
+        XCTAssertEqual(imageFileStore.removedFiles, [ignored, .stub])
     }
 
     // MARK: - Helpers

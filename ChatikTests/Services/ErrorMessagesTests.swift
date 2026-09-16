@@ -42,7 +42,8 @@ final class ErrorMessagesTests: XCTestCase {
         XCTAssertEqual(ErrorMessages.message(for: FilesServiceError.fileTooLarge(maxSize: 1)), CommonStrings.errorFileTooLarge)
     }
 
-    /// Кейс: неизвестный код API, ошибки разбора / формата ответа, ошибка программиста, не-`NetworkError`.
+    /// Кейс: неизвестный код API, ошибки разбора / формата ответа, ошибка программиста, ошибки файлов
+    /// на диске, не-`NetworkError`.
     /// Ожидание: общий текст «что-то пошло не так».
     func test_message_otherErrors_returnUnknown() {
         let errors: [Error] = [
@@ -51,6 +52,8 @@ final class ErrorMessagesTests: XCTestCase {
             NetworkError.missingResponse,
             NetworkError.invalidResponse(statusCode: 500),
             NetworkError.unsupportedMethod(.get),
+            NetworkError.fileAccess("no such file"),
+            FilesServiceError.fileUnreadable,
             URLError(.badURL),
         ]
 

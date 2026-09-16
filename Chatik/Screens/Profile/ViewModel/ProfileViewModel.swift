@@ -16,7 +16,7 @@ final class ProfileViewModel {
     /// `true`, пока выполняется запрос профиля.
     private(set) var isLoading = false
     /// Прогресс установки аватара. `nil` — установка не идёт. Иначе доля отправленного изображения от 0 до 1:
-    /// 0 — идёт кодирование, 1 — файл отправлен и аватар назначается.
+    /// 0 — файл готовится к отправке, 1 — файл отправлен и аватар назначается.
     private(set) var avatarUploadProgress: Double?
     /// `true`, пока показан выбор источника аватара.
     var isAvatarSourcesPresented = false
@@ -27,32 +27,37 @@ final class ProfileViewModel {
 
     /// Доступные источники аватара: камера предлагается только там, где она есть.
     let avatarSources: [AvatarSource]
-    /// Имя файла аватара при загрузке; сервер хранит его как имя файла.
-    static let avatarFilename = "avatar.\(ImageMIMEType.jpeg.fileExtension)"
 
     private let profileService: ProfileServiceProtocol
     private let filesService: FilesServiceProtocol
-    private let imageEncoder: ImageEncoderProtocol
+    /// Временные файлы для загрузки; нужен и `ProfileViewModel+AvatarPicking`, поэтому не `private`.
+    let imageFileStore: ImageFileStoreProtocol
     private let sessionService: SessionServiceProtocol
 
     /// - Parameters:
     ///   - profileService: сервис профиля.
     ///   - filesService: сервис загрузки файлов — для отправки изображения аватара.
-    ///   - imageEncoder: подготовка изображения к загрузке (уменьшение, JPEG).
+    ///   - imageFileStore: временные файлы изображений для загрузки.
     ///   - sessionService: сервис сессии; отсюда берётся текущий пользователь, сюда пишется обновлённый.
     ///   - isCameraAvailable: есть ли на устройстве камера; без неё вариант «Сделать фото» не предлагается.
     init(
         profileService: ProfileServiceProtocol,
         filesService: FilesServiceProtocol,
-        imageEncoder: ImageEncoderProtocol,
+        imageFileStore: ImageFileStoreProtocol,
         sessionService: SessionServiceProtocol,
         isCameraAvailable: Bool
     ) {
         self.profileService = profileService
         self.filesService = filesService
-        self.imageEncoder = imageEncoder
+        self.imageFileStore = imageFileStore
         self.sessionService = sessionService
         avatarSources = isCameraAvailable ? [.gallery, .camera] : [.gallery]
+    }
+
+    /// Имя файла аватара при загрузке; сервер хранит его как имя файла.
+    /// - Parameter type: формат загружаемого файла — задаёт расширение.
+    static func avatarFilename(for type: ImageMIMEType) -> String {
+        "avatar.\(type.fileExtension)"
     }
 
     /// Профиль для отображения — из текущей сессии. `nil` — сессии нет.
@@ -60,7 +65,7 @@ final class ProfileViewModel {
         sessionService.currentUser.map(ProfileDisplayModel.init)
     }
 
-    /// `true`, пока изображение кодируется, загружается на сервер и назначается аватаром.
+    /// `true`, пока файл изображения готовится, загружается на сервер и назначается аватаром.
     var isUploadingAvatar: Bool {
         avatarUploadProgress != nil
     }
@@ -84,34 +89,41 @@ final class ProfileViewModel {
 
     // MARK: - Установка аватара
 
-    /// Кодирует изображение, загружает его на сервер, назначает аватаром и обновляет сессию.
+    /// Готовит файл изображения, загружает его на сервер как есть, назначает аватаром и обновляет сессию.
     /// При ошибке на любом шаге показывает сообщение; аватар остаётся прежним.
-    /// Ошибка подготовки изображения — это проблема выбранного файла, а не сети, поэтому текст у неё свой.
+    /// Ошибка подготовки файла — это проблема выбранного изображения, а не сети, поэтому текст у неё свой.
     /// - Parameter image: изображение для аватара.
     func uploadAvatar(_ image: PickedImage) async {
         avatarUploadProgress = 0
         defer { avatarUploadProgress = nil }
 
         do {
-            let data = try await imageEncoder.encodeForUpload(image)
-            let file = try await filesService.uploadImage(
-                data: data,
-                filename: Self.avatarFilename,
-                type: .jpeg,
-                onProgress: { [weak self] progress in
-                    // Колбэк приходит не на main: обновление состояния — отдельной задачей на main actor.
-                    Task { @MainActor [weak self] in self?.didSendAvatarBytes(progress) }
-                }
-            )
+            let file = try await imageFileStore.storeForUpload(image)
+            let remoteFile = try await upload(file)
             // Отправка завершена независимо от того, какие значения успел доставить делегат сессии.
             avatarUploadProgress = 1
-            let user = try await profileService.setAvatar(fileId: file.fileId)
+            let user = try await profileService.setAvatar(fileId: remoteFile.fileId)
             await sessionService.update(user: user)
-        } catch is ImageEncoderError {
+        } catch is ImageFileStoreError {
             errorMessage = ProfileStrings.avatarLoadFailed
         } catch {
             errorMessage = ErrorMessages.message(for: error)
         }
+    }
+
+    /// Отправляет временный файл на сервер, пробрасывая прогресс отправки в состояние,
+    /// и удаляет его по завершении — независимо от результата.
+    /// - Parameter file: файл аватара во временной директории.
+    private func upload(_ file: ImageFile) async throws -> RemoteFile {
+        defer { imageFileStore.remove(file) }
+        return try await filesService.uploadImage(
+            file: file,
+            filename: Self.avatarFilename(for: file.type),
+            onProgress: { [weak self] progress in
+                // Колбэк приходит не на main: обновление состояния — отдельной задачей на main actor.
+                Task { @MainActor [weak self] in self?.didSendAvatarBytes(progress) }
+            }
+        )
     }
 
     /// Обновляет прогресс отправки. Значения приходят из фоновых задач, порядок их доставки на main не гарантирован,

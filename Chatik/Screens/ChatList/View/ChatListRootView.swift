@@ -22,7 +22,7 @@ struct ChatListRootView: View {
                     ProfileView(viewModel: ProfileViewModel(
                         profileService: DIContainer.shared.profileService,
                         filesService: DIContainer.shared.filesService,
-                        imageEncoder: DIContainer.shared.imageEncoder,
+                        imageFileStore: DIContainer.shared.imageFileStore,
                         sessionService: DIContainer.shared.sessionService,
                         isCameraAvailable: UIImagePickerController.isSourceTypeAvailable(.camera)
                     ))

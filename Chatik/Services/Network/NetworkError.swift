@@ -21,6 +21,9 @@ enum NetworkError: Error {
     /// Эндпоинт с таким HTTP-методом нельзя отправить выбранным способом (например, `upload` требует POST).
     /// Ошибка программиста: запрос на сервер не уходит.
     case unsupportedMethod(HTTPMethod)
+    /// Не удалось собрать тело загрузки на диске: загружаемый файл не прочитан или временный файл не записан.
+    /// Запрос на сервер не уходит.
+    case fileAccess(String)
 }
 
 extension NetworkError: Equatable {
@@ -39,6 +42,8 @@ extension NetworkError: Equatable {
             return lhsError.code == rhsError.code
         case let (.unsupportedMethod(lhsMethod), .unsupportedMethod(rhsMethod)):
             return lhsMethod == rhsMethod
+        case let (.fileAccess(lhsMessage), .fileAccess(rhsMessage)):
+            return lhsMessage == rhsMessage
         default:
             return false
         }

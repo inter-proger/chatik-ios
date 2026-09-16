@@ -9,6 +9,8 @@ import Foundation
 /// Мок сетевого слоя: возвращает заранее заданный результат и запоминает вызовы.
 final class NetworkServiceMock: NetworkServiceProtocol {
     var stubbedResult: Result<Any, Error> = .failure(NetworkError.missingResponse)
+    /// Значения прогресса, которые `upload` сообщает перед возвратом результата.
+    var stubbedUploadProgress: [Double] = []
     private(set) var requestedEndpoints: [Endpoint] = []
     private(set) var uploadedFiles: [MultipartFile] = []
     private(set) var clearSessionCookiesCallCount = 0
@@ -22,8 +24,9 @@ final class NetworkServiceMock: NetworkServiceProtocol {
         return typed
     }
 
-    func upload<T: Decodable>(_ endpoint: Endpoint, file: MultipartFile) async throws -> T {
+    func upload<T: Decodable>(_ endpoint: Endpoint, file: MultipartFile, onProgress: @escaping @Sendable (Double) -> Void) async throws -> T {
         uploadedFiles.append(file)
+        stubbedUploadProgress.forEach(onProgress)
         return try await request(endpoint)
     }
 

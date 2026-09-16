@@ -8,7 +8,7 @@ import SwiftUI
 
 /// Пикеры изображения для аватара: системная галерея (`PhotosPicker`) и камера.
 /// Какой из них показан, определяется значением `presentedSource`.
-struct AvatarSourcePickers: ViewModifier {
+struct AvatarSourcePickerViewModifier: ViewModifier {
     @Binding var presentedSource: AvatarSource?
     /// Вызывается с выбранным изображением: снимок с камеры или содержимое файла из галереи.
     let onPick: (PickedImage) -> Void
@@ -63,6 +63,6 @@ extension View {
         onPick: @escaping (PickedImage) -> Void,
         onFailure: @escaping () -> Void
     ) -> some View {
-        modifier(AvatarSourcePickers(presentedSource: presentedSource, onPick: onPick, onFailure: onFailure))
+        modifier(AvatarSourcePickerViewModifier(presentedSource: presentedSource, onPick: onPick, onFailure: onFailure))
     }
 }

@@ -6,10 +6,11 @@
 import SwiftUI
 
 /// Шапка профиля: крупный аватар (кнопка) и имя пользователя.
-/// Во время загрузки аватара поверх него показывается прелоадер, кнопка неактивна.
+/// Во время загрузки аватара поверх него показывается прогресс отправки, кнопка неактивна.
 struct ProfileHeaderView: View {
     let profile: ProfileDisplayModel
-    let isUploadingAvatar: Bool
+    /// Прогресс загрузки аватара от 0 до 1; `nil` — загрузки нет.
+    let uploadProgress: Double?
     let onAvatarTap: () -> Void
 
     var body: some View {
@@ -30,14 +31,13 @@ struct ProfileHeaderView: View {
             AvatarView(url: profile.avatarURL, thumbnailURL: profile.avatarThumbnailURL)
                 .frame(width: 120, height: 120)
                 .overlay {
-                    if isUploadingAvatar {
-                        Circle().fill(.black.opacity(0.3))
-                        ProgressView().tint(.white)
+                    if let uploadProgress {
+                        AvatarUploadProgressView(progress: uploadProgress)
                     }
                 }
         }
         .buttonStyle(.plain)
-        .disabled(isUploadingAvatar)
+        .disabled(uploadProgress != nil)
         .accessibilityLabel(ProfileStrings.avatarTitle)
     }
 }
@@ -46,12 +46,12 @@ struct ProfileHeaderView: View {
     List {
         ProfileHeaderView(
             profile: ProfileDisplayModel(name: "Иван", login: "ivan", userId: "1", avatarURL: nil, avatarThumbnailURL: nil),
-            isUploadingAvatar: false,
+            uploadProgress: nil,
             onAvatarTap: {}
         )
         ProfileHeaderView(
             profile: ProfileDisplayModel(name: "Иван", login: "ivan", userId: "1", avatarURL: nil, avatarThumbnailURL: nil),
-            isUploadingAvatar: true,
+            uploadProgress: 0.6,
             onAvatarTap: {}
         )
     }

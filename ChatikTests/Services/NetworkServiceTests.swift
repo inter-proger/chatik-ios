@@ -64,7 +64,7 @@ final class NetworkServiceTests: XCTestCase {
         let endpoint = TestEndpoint(path: "/files/uploadImage", method: .post, parameters: ["filename": "a.jpg"], headers: ["X-Test": "1"])
         let file = MultipartFile(fieldName: "file", filename: "a.jpg", mimeType: "image/jpeg", data: Data("JPEG".utf8))
 
-        let user: User = try await sut.upload(endpoint, file: file)
+        let user: User = try await sut.upload(endpoint, file: file, onProgress: { _ in })
 
         XCTAssertEqual(user, User(userId: 1, login: "ivan", name: "Ivan", avatar: nil))
         let request = try XCTUnwrap(captured.request)
@@ -86,7 +86,7 @@ final class NetworkServiceTests: XCTestCase {
         let file = MultipartFile(fieldName: "file", filename: "a.jpg", mimeType: "image/jpeg", data: Data())
 
         await assertThrows(NetworkError.unsupportedMethod(.get)) {
-            let _: EmptyResponse = try await sut.upload(endpoint, file: file)
+            let _: EmptyResponse = try await sut.upload(endpoint, file: file, onProgress: { _ in })
         }
 
         XCTAssertNil(captured.request)
@@ -100,7 +100,7 @@ final class NetworkServiceTests: XCTestCase {
         let file = MultipartFile(fieldName: "file", filename: "a.jpg", mimeType: "image/jpeg", data: Data())
 
         await assertThrows(NetworkError.api(code: 3002)) {
-            let _: EmptyResponse = try await sut.upload(endpoint, file: file)
+            let _: EmptyResponse = try await sut.upload(endpoint, file: file, onProgress: { _ in })
         }
     }
 

@@ -10,7 +10,8 @@ protocol NetworkServiceProtocol {
     func request<T: Decodable>(_ endpoint: Endpoint) async throws -> T
     /// Загружает файл POST-запросом с телом `multipart/form-data`: параметры эндпоинта уходят текстовыми полями,
     /// `file` — файловой частью. Возвращает содержимое поля `response` успешного ответа.
-    func upload<T: Decodable>(_ endpoint: Endpoint, file: MultipartFile) async throws -> T
+    /// `onProgress` получает долю отправленного тела от 0 до 1; вызывается не на main.
+    func upload<T: Decodable>(_ endpoint: Endpoint, file: MultipartFile, onProgress: @escaping @Sendable (Double) -> Void) async throws -> T
     /// Очищает cookie сессии (`PHPSESSID`) для базового URL.
     func clearSessionCookies()
 }
@@ -55,11 +56,18 @@ final class NetworkService: NetworkServiceProtocol {
     /// - Parameters:
     ///   - endpoint: описание запроса; `parameters` уходят текстовыми полями формы.
     ///   - file: файл, который уходит файловой частью формы.
+    ///   - onProgress: получает долю отправленного тела от 0 до 1 по мере отправки; вызывается не на main.
     /// - Returns: декодированное поле `response`.
     /// - Throws: `NetworkError.unsupportedMethod`, если `endpoint.method != .post` — запрос не отправляется.
-    func upload<T: Decodable>(_ endpoint: Endpoint, file: MultipartFile) async throws -> T {
+    func upload<T: Decodable>(
+        _ endpoint: Endpoint,
+        file: MultipartFile,
+        onProgress: @escaping @Sendable (Double) -> Void
+    ) async throws -> T {
         guard endpoint.method == .post else { throw NetworkError.unsupportedMethod(endpoint.method) }
-        return try await send(makeMultipartRequest(for: endpoint, file: file), for: endpoint)
+        let (request, body) = makeMultipartRequest(for: endpoint, file: file)
+        let (data, response) = try await performUpload(request, body: body, onProgress: onProgress)
+        return try await decodeAPIResponse(data: data, response: response, for: endpoint)
     }
 
     /// Удаляет все cookie, относящиеся к базовому URL API.
@@ -69,9 +77,14 @@ final class NetworkService: NetworkServiceProtocol {
 
     // MARK: - Private
 
-    /// Выполняет собранный запрос, проверяет HTTP-статус и общую обёртку `{status, response, errorCode}`.
+    /// Выполняет собранный запрос и разбирает ответ.
     private func send<T: Decodable>(_ request: URLRequest, for endpoint: Endpoint) async throws -> T {
         let (data, response) = try await perform(request)
+        return try await decodeAPIResponse(data: data, response: response, for: endpoint)
+    }
+
+    /// Проверяет HTTP-статус и общую обёртку `{status, response, errorCode}` полученного ответа.
+    private func decodeAPIResponse<T: Decodable>(data: Data, response: URLResponse, for endpoint: Endpoint) async throws -> T {
         try validate(response)
         let apiResponse: APIResponse<T> = try decode(data)
         await handleUnauthorizedIfNeeded(apiResponse, for: endpoint)
@@ -82,6 +95,22 @@ final class NetworkService: NetworkServiceProtocol {
     private func perform(_ request: URLRequest) async throws -> (Data, URLResponse) {
         do {
             return try await session.data(for: request)
+        } catch let error as URLError {
+            throw NetworkError.transport(error)
+        }
+    }
+
+    /// Отправляет `body` upload-задачей, чтобы `URLSession` сообщала о прогрессе отправки через делегат задачи.
+    /// `URLError` оборачивается в `NetworkError.transport`; прочие ошибки пробрасываются как есть.
+    /// Доставка прогресса юнит-тестами не покрывается: `URLProtocol`-стаб не генерирует `didSendBodyData`;
+    /// проверяется интеграционно против локального сервера (`NetworkServiceUploadIntegrationTests`).
+    private func performUpload(
+        _ request: URLRequest,
+        body: Data,
+        onProgress: @escaping @Sendable (Double) -> Void
+    ) async throws -> (Data, URLResponse) {
+        do {
+            return try await session.upload(for: request, from: body, delegate: UploadProgressDelegate(onProgress: onProgress))
         } catch let error as URLError {
             throw NetworkError.transport(error)
         }
@@ -123,15 +152,16 @@ final class NetworkService: NetworkServiceProtocol {
         return request
     }
 
-    /// Собирает POST-запрос с телом `multipart/form-data`: параметры эндпоинта — текстовые поля, `file` — файл.
-    private func makeMultipartRequest(for endpoint: Endpoint, file: MultipartFile) -> URLRequest {
+    /// Собирает POST-запрос `multipart/form-data`: параметры эндпоинта — текстовые поля, `file` — файл.
+    /// Тело возвращается отдельно — upload-задача принимает его параметром, а не через `httpBody`.
+    private func makeMultipartRequest(for endpoint: Endpoint, file: MultipartFile) -> (URLRequest, Data) {
         let boundary = "Boundary-\(UUID().uuidString)"
         var request = URLRequest(url: baseURL.appendingPathComponent(endpoint.path))
         request.httpMethod = HTTPMethod.post.rawValue
         request.setValue(MultipartFormEncoder.contentType(boundary: boundary), forHTTPHeaderField: "Content-Type")
-        request.httpBody = MultipartFormEncoder.encode(parameters: endpoint.parameters, file: file, boundary: boundary)
         applyHeaders(endpoint.headers, to: &request)
-        return request
+        let body = MultipartFormEncoder.encode(parameters: endpoint.parameters, file: file, boundary: boundary)
+        return (request, body)
     }
 
     /// Проставляет кастомные заголовки эндпоинта в запрос.

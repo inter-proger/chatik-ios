@@ -19,7 +19,7 @@ struct ProfileView: View {
             if let profile = viewModel.profile {
                 ProfileHeaderView(
                     profile: profile,
-                    isUploadingAvatar: viewModel.isUploadingAvatar,
+                    uploadProgress: viewModel.avatarUploadProgress,
                     onAvatarTap: viewModel.didTapAvatar
                 )
                 ProfileDetailsView(profile: profile)

@@ -249,6 +249,71 @@ final class ProfileViewModelTests: XCTestCase {
         XCTAssertFalse(sut.isUploadingAvatar)
     }
 
+    /// Кейс: файл отправлен (делегат ничего не сообщил), аватар назначается; затем установка завершена.
+    /// Ожидание: во время отправки прогресс 0; на время назначения аватара — 1, даже без колбэков делегата;
+    /// после завершения — `nil`.
+    func test_uploadAvatar_progressFollowsUploadStages() async {
+        let sut: ProfileViewModel = sut
+        var progressDuringUpload: Double?
+        var progressDuringSetAvatar: Double?
+        filesService.stubbedUpload = .success(.stub)
+        filesService.onUpload = { progressDuringUpload = sut.avatarUploadProgress }
+        profileService.stubbedProfile = .success(storedUser)
+        profileService.onRequest = { progressDuringSetAvatar = sut.avatarUploadProgress }
+
+        await sut.uploadAvatar(.image(.stub()))
+
+        XCTAssertEqual(progressDuringUpload, 0)
+        XCTAssertEqual(progressDuringSetAvatar, 1)
+        XCTAssertNil(sut.avatarUploadProgress)
+    }
+
+    /// Кейс: сервис файлов сообщает прогресс через `onProgress` (колбэк не на main, доставляется отдельной задачей).
+    /// Ожидание: значение доходит до `avatarUploadProgress`, пока отправка ещё идёт.
+    func test_uploadAvatar_forwardsProgressCallbackToState() async {
+        let sut: ProfileViewModel = sut
+        var progressDuringUpload: Double?
+        filesService.stubbedUpload = .success(.stub)
+        filesService.stubbedUploadProgress = [0.5]
+        filesService.onUpload = {
+            // Колбэк ставит обновление в очередь main actor отдельной задачей — уступаем ей, оставаясь внутри отправки.
+            await Self.yieldUntil { sut.avatarUploadProgress == 0.5 }
+            progressDuringUpload = sut.avatarUploadProgress
+        }
+        profileService.stubbedProfile = .success(storedUser)
+
+        await sut.uploadAvatar(.image(.stub()))
+
+        XCTAssertEqual(progressDuringUpload, 0.5)
+    }
+
+    /// Кейс: значения прогресса приходят не по порядку (доставка на main из фоновых задач не упорядочена).
+    /// Ожидание: прогресс только растёт — более раннее значение не откатывает его назад.
+    func test_didSendAvatarBytes_isMonotonic() async {
+        let sut: ProfileViewModel = sut
+        var progressDuringUpload: Double?
+        filesService.stubbedUpload = .success(.stub)
+        filesService.onUpload = {
+            sut.didSendAvatarBytes(0.25)
+            sut.didSendAvatarBytes(0.75)
+            sut.didSendAvatarBytes(0.5)
+            progressDuringUpload = sut.avatarUploadProgress
+        }
+        profileService.stubbedProfile = .success(storedUser)
+
+        await sut.uploadAvatar(.image(.stub()))
+
+        XCTAssertEqual(progressDuringUpload, 0.75)
+    }
+
+    /// Кейс: колбэк прогресса пришёл, когда загрузка не идёт (поздняя доставка после завершения).
+    /// Ожидание: игнорируется — прогресс остаётся `nil`, кольцо загрузки не появляется.
+    func test_didSendAvatarBytes_outsideUpload_isIgnored() {
+        sut.didSendAvatarBytes(0.5)
+
+        XCTAssertNil(sut.avatarUploadProgress)
+    }
+
     /// Кейс: выбрано изображение из пикера.
     /// Ожидание: пикер закрыт сразу, загрузка запущена — дожидаемся её через хук сервиса.
     func test_didPickImage_closesPickerAndStartsUpload() async {
@@ -263,5 +328,17 @@ final class ProfileViewModelTests: XCTestCase {
         XCTAssertNil(sut.presentedAvatarSource)
         await fulfillment(of: [requestStarted], timeout: 1)
         XCTAssertEqual(filesService.uploads.count, 1)
+    }
+
+    // MARK: - Helpers
+
+    /// Уступает main actor уже поставленным в очередь задачам, пока `condition` не выполнится (не дольше 100 итераций).
+    /// Нужен там, где обновление приходит через `Task { @MainActor in }` из не-main колбэка.
+    private static func yieldUntil(_ condition: () -> Bool) async {
+        var attempts = 0
+        while !condition(), attempts < 100 {
+            await Task.yield()
+            attempts += 1
+        }
     }
 }

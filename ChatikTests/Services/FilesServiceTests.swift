@@ -23,7 +23,7 @@ final class FilesServiceTests: XCTestCase {
         networkService.stubbedResult = .success(RemoteFile.stub)
         let data = Data("JPEG".utf8)
 
-        let file = try await sut.uploadImage(data: data, filename: "photo.jpg", type: .jpeg)
+        let file = try await sut.uploadImage(data: data, filename: "photo.jpg", type: .jpeg, onProgress: { _ in })
 
         XCTAssertEqual(file, .stub)
         let endpoint = try XCTUnwrap(networkService.requestedEndpoints.first)
@@ -33,6 +33,18 @@ final class FilesServiceTests: XCTestCase {
         XCTAssertEqual(networkService.uploadedFiles, [
             MultipartFile(fieldName: "file", filename: "photo.jpg", mimeType: "image/jpeg", data: data),
         ])
+    }
+
+    /// Кейс: сетевой слой сообщает прогресс отправки.
+    /// Ожидание: значения доходят до переданного обработчика без изменений и в том же порядке.
+    func test_uploadImage_forwardsProgress() async throws {
+        networkService.stubbedResult = .success(RemoteFile.stub)
+        networkService.stubbedUploadProgress = [0.25, 0.5, 1]
+        let received = ProgressRecorder()
+
+        _ = try await sut.uploadImage(data: Data(), filename: "a.jpg", type: .jpeg, onProgress: { received.append($0) })
+
+        XCTAssertEqual(received.values, [0.25, 0.5, 1])
     }
 
     /// Кейс: запрос информации о файле.
@@ -56,7 +68,7 @@ final class FilesServiceTests: XCTestCase {
         let data = Data(count: FilesService.maxImageSize + 1)
 
         do {
-            _ = try await sut.uploadImage(data: data, filename: "big.jpg", type: .jpeg)
+            _ = try await sut.uploadImage(data: data, filename: "big.jpg", type: .jpeg, onProgress: { _ in })
             XCTFail("Expected error")
         } catch {
             XCTAssertEqual(error as? FilesServiceError, .fileTooLarge(maxSize: FilesService.maxImageSize))
@@ -70,7 +82,7 @@ final class FilesServiceTests: XCTestCase {
     func test_uploadImage_exactlyMaxSize_uploads() async throws {
         networkService.stubbedResult = .success(RemoteFile.stub)
 
-        _ = try await sut.uploadImage(data: Data(count: FilesService.maxImageSize), filename: "max.png", type: .png)
+        _ = try await sut.uploadImage(data: Data(count: FilesService.maxImageSize), filename: "max.png", type: .png, onProgress: { _ in })
 
         XCTAssertEqual(networkService.uploadedFiles.first?.mimeType, "image/png")
     }
@@ -81,7 +93,7 @@ final class FilesServiceTests: XCTestCase {
         networkService.stubbedResult = .failure(NetworkError.api(code: NetworkError.Code.fileTooLarge))
 
         do {
-            _ = try await sut.uploadImage(data: Data(), filename: "a.jpg", type: .jpeg)
+            _ = try await sut.uploadImage(data: Data(), filename: "a.jpg", type: .jpeg, onProgress: { _ in })
             XCTFail("Expected error")
         } catch {
             XCTAssertEqual(error as? NetworkError, .api(code: 3002))

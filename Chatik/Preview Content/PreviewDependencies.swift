@@ -66,16 +66,27 @@ enum PreviewDependencies {
     }
 }
 
-/// Мок сервиса файлов для превью: «загружает» любое изображение с задержкой и возвращает файл-заглушку.
+/// Мок сервиса файлов для превью: «загружает» любое изображение с задержкой, равномерно сообщая прогресс,
+/// и возвращает файл-заглушку.
 final class FilesServicePreviewMock: FilesServiceProtocol {
     private let delay: Duration
+    /// На сколько шагов разбита «отправка» — столько раз будет сообщён прогресс.
+    private let progressSteps = 10
 
     init(delay: Duration = .seconds(1.5)) {
         self.delay = delay
     }
 
-    func uploadImage(data: Data, filename: String, type: ImageMIMEType) async throws -> RemoteFile {
-        try await Task.sleep(for: delay)
+    func uploadImage(
+        data: Data,
+        filename: String,
+        type: ImageMIMEType,
+        onProgress: @escaping @Sendable (Double) -> Void
+    ) async throws -> RemoteFile {
+        for step in 1...progressSteps {
+            try await Task.sleep(for: delay / progressSteps)
+            onProgress(Double(step) / Double(progressSteps))
+        }
         return RemoteFile(fileId: 1, type: .image, url: URL(string: "http://localhost:8080/static/uploads/avatar.jpg")!, size: data.count, filename: filename, fileExtension: type.fileExtension, smallURL: nil)
     }
 

@@ -12,17 +12,23 @@ final class NetworkServiceTests: XCTestCase {
     private var cookieStorage: HTTPCookieStorage!
     private var sut: NetworkService!
     private var temporaryFiles: [URL] = []
+    /// Своя директория для тел загрузок: проверки «мусор не остался» не зависят от других процессов и тестов.
+    private var bodyDirectory: URL!
 
     override func setUp() {
         super.setUp()
         cookieStorage = HTTPCookieStorage.sharedCookieStorage(forGroupContainerIdentifier: "ChatikTests.\(UUID().uuidString)")
-        sut = NetworkService(session: URLProtocolStub.makeSession(), baseURL: baseURL, cookieStorage: cookieStorage)
+        bodyDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("bodies-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: bodyDirectory, withIntermediateDirectories: true)
+        sut = makeSUT()
     }
 
     override func tearDown() {
         URLProtocolStub.requestHandler = nil
         sut = nil
         cookieStorage = nil
+        try? FileManager.default.removeItem(at: bodyDirectory)
+        bodyDirectory = nil
         TemporaryFile.remove(temporaryFiles)
         temporaryFiles = []
         super.tearDown()
@@ -67,7 +73,6 @@ final class NetworkServiceTests: XCTestCase {
         let captured = stub(status: 200, json: #"{"status":1,"response":{"userId":1,"login":"ivan","name":"Ivan","avatar":null}}"#)
         let endpoint = TestEndpoint(path: "/files/uploadImage", method: .post, parameters: ["filename": "a.jpg"], headers: ["X-Test": "1"])
         let file = try makeMultipartFile(Data("JPEG".utf8))
-        let bodyFilesBefore = try multipartBodyFiles()
 
         let user: User = try await sut.upload(endpoint, file: file, onProgress: { _ in })
 
@@ -81,7 +86,7 @@ final class NetworkServiceTests: XCTestCase {
         XCTAssertEqual(contentType, "multipart/form-data; boundary=\(boundary)")
         let expectedBody = try expectedMultipartBody(parameters: ["filename": "a.jpg"], file: file, boundary: boundary)
         XCTAssertEqual(captured.bodyString, String(data: expectedBody, encoding: .utf8))
-        XCTAssertEqual(try multipartBodyFiles(), bodyFilesBefore)
+        XCTAssertTrue(try multipartBodyFiles().isEmpty)
     }
 
     /// Кейс: `upload` вызван с GET-эндпоинтом.
@@ -105,7 +110,6 @@ final class NetworkServiceTests: XCTestCase {
         let endpoint = TestEndpoint(path: "/files/uploadImage", method: .post, parameters: [:], headers: nil)
         let missing = FileManager.default.temporaryDirectory.appendingPathComponent("missing-\(UUID().uuidString).jpg")
         let file = MultipartFile(fieldName: "file", filename: "a.jpg", mimeType: "image/jpeg", fileURL: missing)
-        let bodyFilesBefore = try multipartBodyFiles()
 
         do {
             let _: EmptyResponse = try await sut.upload(endpoint, file: file, onProgress: { _ in })
@@ -115,7 +119,7 @@ final class NetworkServiceTests: XCTestCase {
         }
 
         XCTAssertNil(captured.request)
-        XCTAssertEqual(try multipartBodyFiles(), bodyFilesBefore)
+        XCTAssertTrue(try multipartBodyFiles().isEmpty)
     }
 
     /// Кейс: multipart-загрузка вернула `status: 0` с кодом 3002.
@@ -268,12 +272,13 @@ final class NetworkServiceTests: XCTestCase {
 
     // MARK: - Helpers
 
-    /// Создаёт сервис над стабом `URLSession` с обработчиком 2003.
-    private func makeSUT(onUnauthorized: @escaping @Sendable () async -> Void) -> NetworkService {
+    /// Создаёт сервис над стабом `URLSession` с собственной директорией тел и обработчиком 2003.
+    private func makeSUT(onUnauthorized: (@Sendable () async -> Void)? = nil) -> NetworkService {
         NetworkService(
             session: URLProtocolStub.makeSession(),
             baseURL: baseURL,
             cookieStorage: cookieStorage,
+            bodyDirectory: bodyDirectory,
             onUnauthorized: onUnauthorized
         )
     }
@@ -313,10 +318,9 @@ final class NetworkServiceTests: XCTestCase {
         return try Data(contentsOf: destination)
     }
 
-    /// Временные файлы тел загрузок (`*.multipart`) — чтобы проверить, что после отправки их не остаётся.
+    /// Содержимое директории тел загрузок — чтобы проверить, что после отправки временных файлов не остаётся.
     private func multipartBodyFiles() throws -> Set<String> {
-        let names = try FileManager.default.contentsOfDirectory(atPath: FileManager.default.temporaryDirectory.path)
-        return Set(names.filter { $0.hasSuffix(".multipart") })
+        Set(try FileManager.default.contentsOfDirectory(atPath: bodyDirectory.path))
     }
 
     /// Проверяет, что замыкание бросает ровно ожидаемую `NetworkError`.

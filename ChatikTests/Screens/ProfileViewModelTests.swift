@@ -210,7 +210,9 @@ final class ProfileViewModelTests: XCTestCase {
     func test_uploadAvatar_storeFails_showsImageErrorWithoutUpload() async {
         let errors: [ImageFileStoreError] = [
             .encodingFailed,
+            .decodingFailed,
             .writeFailed,
+            .readFailed,
         ]
 
         for error in errors {

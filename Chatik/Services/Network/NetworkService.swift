@@ -21,6 +21,8 @@ final class NetworkService: NetworkServiceProtocol {
     private let session: URLSession
     private let baseURL: URL
     private let cookieStorage: HTTPCookieStorage
+    /// Куда складываются временные файлы с телами загрузок; каждый удаляется сразу после отправки.
+    private let bodyDirectory: URL
     private let onUnauthorized: (@Sendable () async -> Void)?
     private let decoder = JSONDecoder()
 
@@ -29,6 +31,7 @@ final class NetworkService: NetworkServiceProtocol {
     ///     сохраняет и подставляет cookie `PHPSESSID` через `HTTPCookieStorage.shared`.
     ///   - baseURL: базовый адрес API.
     ///   - cookieStorage: хранилище cookie, которое использует `session`.
+    ///   - bodyDirectory: директория для временных файлов с телами загрузок.
     ///   - onUnauthorized: вызывается, когда запрос (кроме `Endpoint.terminatesSession`) вернул код 2003 —
     ///     сессия недействительна. Cookie сессии к этому моменту уже очищены; ошибка пробрасывается
     ///     вызывающему только после завершения обработчика, чтобы к её обработке сессия уже была закрыта.
@@ -36,11 +39,13 @@ final class NetworkService: NetworkServiceProtocol {
         session: URLSession = .shared,
         baseURL: URL = AppConfig.baseURL,
         cookieStorage: HTTPCookieStorage = .shared,
+        bodyDirectory: URL = FileManager.default.temporaryDirectory,
         onUnauthorized: (@Sendable () async -> Void)? = nil
     ) {
         self.session = session
         self.baseURL = baseURL
         self.cookieStorage = cookieStorage
+        self.bodyDirectory = bodyDirectory
         self.onUnauthorized = onUnauthorized
     }
 
@@ -173,7 +178,7 @@ final class NetworkService: NetworkServiceProtocol {
     /// Записывает тело `multipart/form-data` во временный файл. При ошибке недописанный файл удаляется,
     /// а ошибка файловой системы оборачивается в `NetworkError.fileAccess`.
     private func writeMultipartBody(parameters: [String: String], file: MultipartFile, boundary: String) throws -> URL {
-        let bodyURL = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).multipart")
+        let bodyURL = bodyDirectory.appendingPathComponent("\(UUID().uuidString).multipart")
         do {
             try MultipartFormEncoder.write(parameters: parameters, file: file, boundary: boundary, to: bodyURL)
         } catch {

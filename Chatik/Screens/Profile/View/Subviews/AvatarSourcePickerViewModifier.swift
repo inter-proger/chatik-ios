@@ -59,7 +59,7 @@ private struct PickedImageFile: Transferable {
     ///   - received: файл, предоставленный системой на время импорта.
     ///   - type: формат, в котором файл был запрошен.
     private init(copying received: ReceivedTransferredFile, type: ImageMIMEType) throws {
-        let url = ImageFile.makeTemporaryURL(type: type)
+        let url = ImageFileStore.makeTemporaryURL(type: type)
         try FileManager.default.copyItem(at: received.file, to: url)
         file = ImageFile(url: url, type: type)
     }

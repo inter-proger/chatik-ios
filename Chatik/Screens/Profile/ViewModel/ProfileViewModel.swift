@@ -99,6 +99,9 @@ final class ProfileViewModel {
 
         do {
             let file = try await imageFileStore.storeForUpload(image)
+            // Удаляем сразу после подготовки, а не внутри отправки: файл не останется во временной
+            // директории, даже если задача будет отменена до начала загрузки.
+            defer { imageFileStore.remove(file) }
             let remoteFile = try await upload(file)
             // Отправка завершена независимо от того, какие значения успел доставить делегат сессии.
             avatarUploadProgress = 1
@@ -111,12 +114,11 @@ final class ProfileViewModel {
         }
     }
 
-    /// Отправляет временный файл на сервер, пробрасывая прогресс отправки в состояние,
-    /// и удаляет его по завершении — независимо от результата.
+    /// Отправляет временный файл на сервер, пробрасывая прогресс отправки в состояние.
+    /// Удаление файла — на вызывающей стороне (`uploadAvatar`).
     /// - Parameter file: файл аватара во временной директории.
     private func upload(_ file: ImageFile) async throws -> RemoteFile {
-        defer { imageFileStore.remove(file) }
-        return try await filesService.uploadImage(
+        try await filesService.uploadImage(
             file: file,
             filename: Self.avatarFilename(for: file.type),
             onProgress: { [weak self] progress in

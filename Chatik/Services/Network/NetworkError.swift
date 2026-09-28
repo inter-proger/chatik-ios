@@ -56,6 +56,7 @@ extension NetworkError {
         static let invalidLogin = 1001
         static let invalidPassword = 1002
         static let invalidName = 1003
+        static let invalidParameters = 1004
         static let loginAlreadyTaken = 2001
         static let wrongCredentials = 2002
         static let unauthorized = 2003
@@ -64,5 +65,7 @@ extension NetworkError {
         static let fileNotImage = 3003
         static let fileNotFound = 3004
         static let fileSaveFailed = 3005
+        static let userNotFound = 4001
+        static let conversationWithSelf = 5001
     }
 }

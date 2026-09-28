@@ -19,6 +19,7 @@ enum CommonStrings {
     static var errorInvalidLogin: String { localized("common.error.api.invalid_login") }
     static var errorInvalidPassword: String { localized("common.error.api.invalid_password") }
     static var errorInvalidName: String { localized("common.error.api.invalid_name") }
+    static var errorInvalidParameters: String { localized("common.error.api.invalid_parameters") }
     static var errorLoginAlreadyTaken: String { localized("common.error.api.login_already_taken") }
     static var errorWrongCredentials: String { localized("common.error.api.wrong_credentials") }
     static var errorUnauthorized: String { localized("common.error.api.unauthorized") }
@@ -27,6 +28,8 @@ enum CommonStrings {
     static var errorFileNotImage: String { localized("common.error.api.file_not_image") }
     static var errorFileNotFound: String { localized("common.error.api.file_not_found") }
     static var errorFileSaveFailed: String { localized("common.error.api.file_save_failed") }
+    static var errorUserNotFound: String { localized("common.error.api.user_not_found") }
+    static var errorConversationWithSelf: String { localized("common.error.api.conversation_with_self") }
 
     /// Возвращает локализованную строку по ключу из таблицы `Common`.
     /// - Parameter key: ключ в `Common.strings`.

@@ -15,6 +15,7 @@ final class ErrorMessagesTests: XCTestCase {
             (NetworkError.Code.invalidLogin, CommonStrings.errorInvalidLogin),
             (NetworkError.Code.invalidPassword, CommonStrings.errorInvalidPassword),
             (NetworkError.Code.invalidName, CommonStrings.errorInvalidName),
+            (NetworkError.Code.invalidParameters, CommonStrings.errorInvalidParameters),
             (NetworkError.Code.loginAlreadyTaken, CommonStrings.errorLoginAlreadyTaken),
             (NetworkError.Code.wrongCredentials, CommonStrings.errorWrongCredentials),
             (NetworkError.Code.unauthorized, CommonStrings.errorUnauthorized),
@@ -23,6 +24,8 @@ final class ErrorMessagesTests: XCTestCase {
             (NetworkError.Code.fileNotImage, CommonStrings.errorFileNotImage),
             (NetworkError.Code.fileNotFound, CommonStrings.errorFileNotFound),
             (NetworkError.Code.fileSaveFailed, CommonStrings.errorFileSaveFailed),
+            (NetworkError.Code.userNotFound, CommonStrings.errorUserNotFound),
+            (NetworkError.Code.conversationWithSelf, CommonStrings.errorConversationWithSelf),
         ]
 
         for testCase in cases {

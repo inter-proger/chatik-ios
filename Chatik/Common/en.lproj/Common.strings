@@ -14,6 +14,7 @@
 "common.error.api.invalid_login" = "Invalid username";
 "common.error.api.invalid_password" = "Invalid password";
 "common.error.api.invalid_name" = "Invalid name";
+"common.error.api.invalid_parameters" = "Invalid request parameters";
 "common.error.api.login_already_taken" = "This username is already taken";
 "common.error.api.wrong_credentials" = "Wrong username or password";
 "common.error.api.unauthorized" = "Session expired. Please log in again";
@@ -22,3 +23,5 @@
 "common.error.api.file_not_image" = "The file is not an image";
 "common.error.api.file_not_found" = "File not found";
 "common.error.api.file_save_failed" = "Failed to save the file. Please try again";
+"common.error.api.user_not_found" = "User not found";
+"common.error.api.conversation_with_self" = "You cannot start a conversation with yourself";

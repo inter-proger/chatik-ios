@@ -14,6 +14,7 @@
 "common.error.api.invalid_login" = "Некорректный логин";
 "common.error.api.invalid_password" = "Некорректный пароль";
 "common.error.api.invalid_name" = "Некорректное имя";
+"common.error.api.invalid_parameters" = "Некорректные параметры запроса";
 "common.error.api.login_already_taken" = "Этот логин уже занят";
 "common.error.api.wrong_credentials" = "Неверный логин или пароль";
 "common.error.api.unauthorized" = "Сессия истекла. Войдите снова";
@@ -22,3 +23,5 @@
 "common.error.api.file_not_image" = "Файл не является изображением";
 "common.error.api.file_not_found" = "Файл не найден";
 "common.error.api.file_save_failed" = "Не удалось сохранить файл. Попробуйте ещё раз";
+"common.error.api.user_not_found" = "Пользователь не найден";
+"common.error.api.conversation_with_self" = "Нельзя начать переписку с самим собой";

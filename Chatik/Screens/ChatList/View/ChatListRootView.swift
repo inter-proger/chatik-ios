@@ -29,6 +29,13 @@ struct ChatListRootView: View {
                 }
             }
         }
+        .sheet(item: $router.presentedSheet) { sheet in
+            switch sheet {
+            case .createSingleConversation:
+                // Пока и отмена, и создание просто закрывают лист; переход в переписку появится вместе с её экраном.
+                CreateSingleConversationRootView(onFinish: { _ in router.dismissSheet() })
+            }
+        }
     }
 }
 

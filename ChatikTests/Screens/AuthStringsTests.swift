@@ -31,6 +31,25 @@ final class AuthStringsTests: XCTestCase {
         }
     }
 
+    /// Кейс: шаблоны сообщений о превышении длины во всех `<lang>.lproj`.
+    /// Ожидание: каждый содержит ровно один `%d` — иначе в подсказке не появится лимит.
+    func test_lengthLimitTemplates_containSingleNumberPlaceholder_inAllLanguages() throws {
+        let keys = [
+            "auth.error.name.too_long",
+            "auth.error.login.too_long",
+        ]
+
+        for language in AppLanguage.allCases {
+            let bundle = try localizedBundle(for: language)
+            for key in keys {
+                let format = bundle.localizedString(forKey: key, value: nil, table: "Auth")
+                XCTAssertNotEqual(format, key, "\(language.rawValue): нет ключа \(key)")
+                XCTAssertEqual(occurrences(of: "%d", in: format), 1, "\(language.rawValue) \(key)")
+                XCTAssertEqual(occurrences(of: "%", in: format), 1, "\(language.rawValue) \(key): лишние плейсхолдеры")
+            }
+        }
+    }
+
     /// Bundle директории `<language>.lproj` основного приложения.
     private func localizedBundle(for language: AppLanguage) throws -> Bundle {
         let appBundle = Bundle(for: AuthViewModel.self)

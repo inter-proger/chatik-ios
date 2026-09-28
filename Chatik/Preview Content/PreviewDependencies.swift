@@ -43,6 +43,22 @@ enum PreviewDependencies {
         )
     }
 
+    /// ViewModel экрана создания личного диалога над моками. У превью собственная сессия — в списке видно,
+    /// что текущий пользователь из него исключён.
+    /// - Parameter user: пользователь сессии; он же есть в списке мока и должен быть отфильтрован.
+    static func createSingleConversationViewModel(
+        user: User = User(userId: 1, login: "ivan", name: "Иван Петров", avatar: nil)
+    ) -> CreateSingleConversationViewModel {
+        let sessionService = SessionService(userDefaultsService: UserDefaultsServicePreviewMock(currentUser: user))
+        Task { await sessionService.restore() }
+        return CreateSingleConversationViewModel(
+            usersService: UsersServicePreviewMock(),
+            conversationService: ConversationServicePreviewMock(),
+            sessionService: sessionService,
+            router: CreateSingleConversationRouter(onFinish: { _ in })
+        )
+    }
+
     /// ViewModel профиля над моками. У превью собственная сессия, восстановленная из хранилища с пользователем `user`, —
     /// общий `sessionService` не трогается, и превью не зависят друг от друга.
     /// - Parameters:
@@ -92,6 +108,57 @@ final class FilesServicePreviewMock: FilesServiceProtocol {
     func fetchFile(id: Int) async throws -> RemoteFile {
         try await Task.sleep(for: delay)
         return RemoteFile(fileId: id, type: .image, url: URL(string: "http://localhost:8080/static/uploads/avatar.jpg")!, size: 0, filename: "avatar.jpg", fileExtension: "jpg", smallURL: nil)
+    }
+}
+
+/// Мок сервиса пользователей для превью: отдаёт одну страницу пользователей, отфильтрованную по запросу, с задержкой.
+final class UsersServicePreviewMock: UsersServiceProtocol {
+    private let users = [
+        User(userId: 1, login: "ivan", name: "Иван Петров", avatar: nil),
+        User(userId: 2, login: "maria", name: "Мария Иванова", avatar: nil),
+        User(userId: 3, login: "petr", name: "Пётр Сидоров", avatar: nil),
+        User(userId: 4, login: "olga", name: "Ольга Смирнова", avatar: nil),
+    ]
+    private let delay: Duration
+
+    init(delay: Duration = .seconds(1)) {
+        self.delay = delay
+    }
+
+    func fetchUsers(query: String?, maxId: Int?, count: Int?) async throws -> UsersPage {
+        try await Task.sleep(for: delay)
+        guard maxId == nil else { return UsersPage(users: [], nextMaxId: nil, hasNext: false) }
+        let found = users.filter { user in
+            guard let query, !query.isEmpty else { return true }
+            return user.name.localizedCaseInsensitiveContains(query) || user.login.localizedCaseInsensitiveContains(query)
+        }
+        return UsersPage(users: found, nextMaxId: found.last?.userId, hasNext: false)
+    }
+}
+
+/// Мок сервиса переписок для превью: «создаёт» переписку с задержкой.
+final class ConversationServicePreviewMock: ConversationServiceProtocol {
+    private let delay: Duration
+
+    init(delay: Duration = .seconds(1.5)) {
+        self.delay = delay
+    }
+
+    func createSingle(userId: Int) async throws -> Conversation {
+        try await Task.sleep(for: delay)
+        return Conversation(
+            conversationId: 1,
+            type: .single,
+            memberIds: [1, userId],
+            name: nil,
+            avatar: nil,
+            opponentUser: User(userId: userId, login: "user\(userId)", name: "Пользователь \(userId)", avatar: nil)
+        )
+    }
+
+    func fetchConversations(offset: Int?, count: Int?) async throws -> ConversationsPage {
+        try await Task.sleep(for: delay)
+        return ConversationsPage(conversations: [], hasNext: false)
     }
 }
 

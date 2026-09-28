@@ -21,16 +21,13 @@ protocol FilesServiceProtocol {
 
 /// Ошибки, которые `FilesService` обнаруживает локально, не обращаясь к серверу.
 enum FilesServiceError: Error, Equatable {
-    /// Файл больше `FilesService.maxImageSize` байт — сервер отклонил бы его кодом 3002, запрос не отправляется.
+    /// Файл больше `ImageUploadLimits.maxFileSize` байт — сервер отклонил бы его кодом 3002, запрос не отправляется.
     case fileTooLarge(maxSize: Int)
     /// Файл по указанному адресу не существует или его размер не удалось прочитать; запрос не отправляется.
     case fileUnreadable
 }
 
 final class FilesService: FilesServiceProtocol {
-    /// Максимальный размер изображения для `/files/uploadImage` — 10 МБ (ограничение сервера).
-    static let maxImageSize = 10 * 1024 * 1024
-
     private let networkService: NetworkServiceProtocol
 
     init(networkService: NetworkServiceProtocol) {
@@ -40,7 +37,7 @@ final class FilesService: FilesServiceProtocol {
     /// Загружает изображение через `POST /files/uploadImage` (`multipart/form-data`) из файла — содержимое
     /// уходит без изменений и в память целиком не читается.
     /// - Parameters:
-    ///   - file: файл размером до `maxImageSize`; иначе `FilesServiceError.fileTooLarge` без запроса.
+    ///   - file: файл размером до `ImageUploadLimits.maxFileSize`; иначе `FilesServiceError.fileTooLarge` без запроса.
     ///   - filename: имя файла — сервер сохранит его как имя загруженного файла.
     ///   - onProgress: получает долю отправленных данных от 0 до 1 по мере отправки; вызывается не на main.
     func uploadImage(
@@ -48,8 +45,8 @@ final class FilesService: FilesServiceProtocol {
         filename: String,
         onProgress: @escaping @Sendable (Double) -> Void
     ) async throws -> RemoteFile {
-        guard try fileSize(of: file.url) <= Self.maxImageSize else {
-            throw FilesServiceError.fileTooLarge(maxSize: Self.maxImageSize)
+        guard try fileSize(of: file.url) <= ImageUploadLimits.maxFileSize else {
+            throw FilesServiceError.fileTooLarge(maxSize: ImageUploadLimits.maxFileSize)
         }
         let part = MultipartFile(fieldName: FilesEndpoint.uploadFieldName, filename: filename, mimeType: file.type.rawValue, fileURL: file.url)
         return try await networkService.upload(FilesEndpoint.uploadImage, file: part, onProgress: onProgress)

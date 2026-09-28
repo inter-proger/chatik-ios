@@ -46,6 +46,7 @@ enum ErrorMessages {
         case NetworkError.Code.fileSaveFailed: return CommonStrings.errorFileSaveFailed
         case NetworkError.Code.userNotFound: return CommonStrings.errorUserNotFound
         case NetworkError.Code.conversationWithSelf: return CommonStrings.errorConversationWithSelf
+        case NetworkError.Code.internalServerError: return CommonStrings.errorInternalServer
         default: return CommonStrings.errorUnknown
         }
     }

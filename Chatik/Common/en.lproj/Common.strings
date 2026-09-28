@@ -25,3 +25,5 @@
 "common.error.api.file_save_failed" = "Failed to save the file. Please try again";
 "common.error.api.user_not_found" = "User not found";
 "common.error.api.conversation_with_self" = "You cannot start a conversation with yourself";
+
+"common.error.api.internal_server" = "Server error. Please try again later";

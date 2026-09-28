@@ -25,3 +25,5 @@
 "common.error.api.file_save_failed" = "Не удалось сохранить файл. Попробуйте ещё раз";
 "common.error.api.user_not_found" = "Пользователь не найден";
 "common.error.api.conversation_with_self" = "Нельзя начать переписку с самим собой";
+
+"common.error.api.internal_server" = "Ошибка на сервере. Попробуйте позже";

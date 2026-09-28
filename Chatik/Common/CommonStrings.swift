@@ -30,6 +30,7 @@ enum CommonStrings {
     static var errorFileSaveFailed: String { localized("common.error.api.file_save_failed") }
     static var errorUserNotFound: String { localized("common.error.api.user_not_found") }
     static var errorConversationWithSelf: String { localized("common.error.api.conversation_with_self") }
+    static var errorInternalServer: String { localized("common.error.api.internal_server") }
 
     /// Возвращает локализованную строку по ключу из таблицы `Common`.
     /// - Parameter key: ключ в `Common.strings`.

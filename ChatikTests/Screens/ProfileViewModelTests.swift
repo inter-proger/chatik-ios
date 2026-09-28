@@ -301,7 +301,7 @@ final class ProfileViewModelTests: XCTestCase {
         filesService.stubbedUploadProgress = [0.5]
         filesService.onUpload = {
             // Колбэк ставит обновление в очередь main actor отдельной задачей — уступаем ей, оставаясь внутри отправки.
-            await Self.yieldUntil { sut.avatarUploadProgress == 0.5 }
+            await self.yieldUntil { sut.avatarUploadProgress == 0.5 }
             progressDuringUpload = sut.avatarUploadProgress
         }
         profileService.stubbedProfile = .success(storedUser)
@@ -369,15 +369,4 @@ final class ProfileViewModelTests: XCTestCase {
         XCTAssertEqual(imageFileStore.removedFiles, [ignored, .stub])
     }
 
-    // MARK: - Helpers
-
-    /// Уступает main actor уже поставленным в очередь задачам, пока `condition` не выполнится (не дольше 100 итераций).
-    /// Нужен там, где обновление приходит через `Task { @MainActor in }` из не-main колбэка.
-    private static func yieldUntil(_ condition: () -> Bool) async {
-        var attempts = 0
-        while !condition(), attempts < 100 {
-            await Task.yield()
-            attempts += 1
-        }
-    }
 }

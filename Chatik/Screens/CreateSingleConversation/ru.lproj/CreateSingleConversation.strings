@@ -1,0 +1,13 @@
+/*
+  CreateSingleConversation.strings
+  Chatik
+
+  Строки экрана создания личного диалога.
+*/
+
+"create_single_conversation.title" = "Личный диалог";
+"create_single_conversation.create" = "Создать";
+"create_single_conversation.cancel" = "Отмена";
+"create_single_conversation.search_prompt" = "Имя или логин";
+"create_single_conversation.empty.title" = "Пользователей пока нет";
+"create_single_conversation.empty_search.title" = "Никого не найдено";

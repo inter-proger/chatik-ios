@@ -35,6 +35,9 @@
 "auth.error.name.invalid_characters" = "Only letters, digits, space, “-” and “_” are allowed";
 "auth.error.login.empty" = "Enter your username";
 "auth.error.login.invalid_characters" = "Only Latin letters, digits and “_” are allowed";
+/* %d — maximum length */
+"auth.error.name.too_long" = "The name must not be longer than %d characters";
+"auth.error.login.too_long" = "The username must not be longer than %d characters";
 "auth.error.password.too_short" = "Password must be at least 8 characters";
 "auth.error.password.missing_uppercase" = "Add at least one uppercase Latin letter";
 "auth.error.password.missing_lowercase" = "Add at least one lowercase Latin letter";

@@ -9,3 +9,5 @@
 "chat_list.profile" = "Профиль";
 "chat_list.logout" = "Выйти";
 "chat_list.empty" = "Чатов пока нет";
+"chat_list.create" = "Новый чат";
+"chat_list.create.single" = "Личный диалог";

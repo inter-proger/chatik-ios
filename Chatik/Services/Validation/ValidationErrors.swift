@@ -9,12 +9,14 @@ import Foundation
 enum NameValidationError: Equatable {
     case empty
     case invalidCharacters
+    case tooLong(maxLength: Int)
 }
 
 /// Ошибка валидации логина при регистрации.
 enum LoginValidationError: Equatable {
     case empty
     case invalidCharacters
+    case tooLong(maxLength: Int)
 }
 
 /// Ошибка валидации пароля при регистрации. Возвращается первая по порядку нарушенная проверка.

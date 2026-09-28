@@ -19,7 +19,7 @@ final class UsersServiceTests: XCTestCase {
     /// Кейс: запрос первой страницы без фильтра и без явных параметров пагинации.
     /// Ожидание: GET /users/getList без параметров — сервер применит значения по умолчанию; страница возвращена.
     func test_fetchUsers_withoutParameters_requestsGetListWithoutQueryItems() async throws {
-        let expected = UsersPage(users: [.stub], nextMaxId: 1)
+        let expected = UsersPage(users: [.stub], nextMaxId: 1, hasNext: true)
         networkService.stubbedResult = .success(expected)
 
         let page = try await sut.fetchUsers(query: nil, maxId: nil, count: nil)
@@ -34,7 +34,7 @@ final class UsersServiceTests: XCTestCase {
     /// Кейс: запрос следующей страницы с фильтром, `maxId` и размером страницы.
     /// Ожидание: все три параметра уходят в запрос, числа — строками.
     func test_fetchUsers_withAllParameters_passesThemToEndpoint() async throws {
-        networkService.stubbedResult = .success(UsersPage(users: [], nextMaxId: nil))
+        networkService.stubbedResult = .success(UsersPage(users: [], nextMaxId: nil, hasNext: false))
 
         _ = try await sut.fetchUsers(query: "ivan", maxId: 5, count: 30)
 
@@ -45,7 +45,7 @@ final class UsersServiceTests: XCTestCase {
     /// Кейс: задан только фильтр.
     /// Ожидание: незаданные `maxId` и `count` в запрос не попадают.
     func test_fetchUsers_withQueryOnly_omitsPaginationParameters() async throws {
-        networkService.stubbedResult = .success(UsersPage(users: [], nextMaxId: nil))
+        networkService.stubbedResult = .success(UsersPage(users: [], nextMaxId: nil, hasNext: false))
 
         _ = try await sut.fetchUsers(query: "ivan", maxId: nil, count: nil)
 
@@ -64,7 +64,7 @@ final class UsersServiceTests: XCTestCase {
 
         for query in blankQueries {
             networkService = NetworkServiceMock()
-            networkService.stubbedResult = .success(UsersPage(users: [], nextMaxId: nil))
+            networkService.stubbedResult = .success(UsersPage(users: [], nextMaxId: nil, hasNext: false))
             sut = UsersService(networkService: networkService)
 
             _ = try await sut.fetchUsers(query: query, maxId: nil, count: nil)

@@ -12,6 +12,7 @@ extension NameValidationError {
         switch self {
         case .empty: return AuthStrings.errorNameEmpty
         case .invalidCharacters: return AuthStrings.errorNameInvalidCharacters
+        case .tooLong(let maxLength): return AuthStrings.errorNameTooLong(maxLength: maxLength)
         }
     }
 }
@@ -22,6 +23,7 @@ extension LoginValidationError {
         switch self {
         case .empty: return AuthStrings.errorLoginEmpty
         case .invalidCharacters: return AuthStrings.errorLoginInvalidCharacters
+        case .tooLong(let maxLength): return AuthStrings.errorLoginTooLong(maxLength: maxLength)
         }
     }
 }

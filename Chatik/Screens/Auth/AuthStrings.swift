@@ -36,6 +36,19 @@ enum AuthStrings {
     static var errorNameInvalidCharacters: String { localized("auth.error.name.invalid_characters") }
     static var errorLoginEmpty: String { localized("auth.error.login.empty") }
     static var errorLoginInvalidCharacters: String { localized("auth.error.login.invalid_characters") }
+
+    /// Сообщение о слишком длинном имени.
+    /// - Parameter maxLength: максимально допустимая длина имени.
+    static func errorNameTooLong(maxLength: Int) -> String {
+        String(format: localized("auth.error.name.too_long"), maxLength)
+    }
+
+    /// Сообщение о слишком длинном логине.
+    /// - Parameter maxLength: максимально допустимая длина логина.
+    static func errorLoginTooLong(maxLength: Int) -> String {
+        String(format: localized("auth.error.login.too_long"), maxLength)
+    }
+
     static var errorPasswordTooShort: String { localized("auth.error.password.too_short") }
     static var errorPasswordMissingUppercase: String { localized("auth.error.password.missing_uppercase") }
     static var errorPasswordMissingLowercase: String { localized("auth.error.password.missing_lowercase") }

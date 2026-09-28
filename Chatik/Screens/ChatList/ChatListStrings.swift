@@ -14,6 +14,8 @@ enum ChatListStrings {
     static var profile: String { localized("chat_list.profile") }
     static var logout: String { localized("chat_list.logout") }
     static var empty: String { localized("chat_list.empty") }
+    static var create: String { localized("chat_list.create") }
+    static var createSingle: String { localized("chat_list.create.single") }
 
     /// Возвращает локализованную строку по ключу из таблицы `ChatList`.
     /// - Parameter key: ключ в `ChatList.strings`.

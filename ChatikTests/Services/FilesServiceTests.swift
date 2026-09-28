@@ -69,27 +69,27 @@ final class FilesServiceTests: XCTestCase {
         XCTAssertTrue(networkService.uploadedFiles.isEmpty)
     }
 
-    /// Кейс: файл на байт больше `maxImageSize`.
+    /// Кейс: файл на байт больше `ImageUploadLimits.maxFileSize`.
     /// Ожидание: `FilesServiceError.fileTooLarge` с лимитом, запрос в сеть не уходит.
     func test_uploadImage_tooLarge_throwsWithoutRequest() async throws {
-        let imageFile = try makeImageFile(size: FilesService.maxImageSize + 1, type: .jpeg)
+        let imageFile = try makeImageFile(size: ImageUploadLimits.maxFileSize + 1, type: .jpeg)
 
         do {
             _ = try await sut.uploadImage(file: imageFile, filename: "big.jpg", onProgress: { _ in })
             XCTFail("Expected error")
         } catch {
-            XCTAssertEqual(error as? FilesServiceError, .fileTooLarge(maxSize: FilesService.maxImageSize))
+            XCTAssertEqual(error as? FilesServiceError, .fileTooLarge(maxSize: ImageUploadLimits.maxFileSize))
         }
         XCTAssertTrue(networkService.requestedEndpoints.isEmpty)
         XCTAssertTrue(networkService.uploadedFiles.isEmpty)
     }
 
-    /// Кейс: файл ровно `maxImageSize` байт.
+    /// Кейс: файл ровно `ImageUploadLimits.maxFileSize` байт.
     /// Ожидание: лимит включительный — файл отправляется с MIME-типом своего формата.
     func test_uploadImage_exactlyMaxSize_uploads() async throws {
         networkService.stubbedResult = .success(RemoteFile.stub)
 
-        _ = try await sut.uploadImage(file: try makeImageFile(size: FilesService.maxImageSize, type: .png), filename: "max.png", onProgress: { _ in })
+        _ = try await sut.uploadImage(file: try makeImageFile(size: ImageUploadLimits.maxFileSize, type: .png), filename: "max.png", onProgress: { _ in })
 
         XCTAssertEqual(networkService.uploadedFiles.first?.mimeType, "image/png")
     }

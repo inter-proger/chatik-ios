@@ -166,10 +166,30 @@ final class NetworkServiceTests: XCTestCase {
         }
     }
 
-    /// Кейс: HTTP-статус вне диапазона 2xx (500).
-    /// Ожидание: выброшена `NetworkError.invalidResponse` с этим статусом, тело не разбирается.
-    func test_non2xxHttpStatus_throwsInvalidResponse() async {
+    /// Кейс: HTTP-статус вне диапазона 2xx (500), тело — не ответ API.
+    /// Ожидание: выброшена `NetworkError.invalidResponse` с этим статусом.
+    func test_non2xxHttpStatus_withoutApiBody_throwsInvalidResponse() async {
         _ = stub(status: 500, json: "")
+
+        await assertThrows(NetworkError.invalidResponse(statusCode: 500)) {
+            let _: User = try await sut.request(AuthEndpoint.logout)
+        }
+    }
+
+    /// Кейс: внутренняя ошибка сервера — статус 500 с телом `{status: 0, errorCode: 9001}`.
+    /// Ожидание: выброшена `NetworkError.api(9001)` — код из тела важнее HTTP-статуса.
+    func test_non2xxHttpStatus_withApiError_throwsApiErrorWithCode() async {
+        _ = stub(status: 500, json: #"{"status":0,"errorCode":9001}"#)
+
+        await assertThrows(NetworkError.api(code: 9001)) {
+            let _: User = try await sut.request(AuthEndpoint.logout)
+        }
+    }
+
+    /// Кейс: статус 500, но тело сообщает об успехе.
+    /// Ожидание: выброшена `NetworkError.invalidResponse` — такой ответ успехом не считается.
+    func test_non2xxHttpStatus_withSuccessBody_throwsInvalidResponse() async {
+        _ = stub(status: 500, json: #"{"status":1,"response":{"userId":1,"login":"ivan","name":"Ivan","avatar":null}}"#)
 
         await assertThrows(NetworkError.invalidResponse(statusCode: 500)) {
             let _: User = try await sut.request(AuthEndpoint.logout)

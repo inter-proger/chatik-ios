@@ -1,0 +1,13 @@
+/*
+  CreateSingleConversation.strings
+  Chatik
+
+  Create single conversation screen strings.
+*/
+
+"create_single_conversation.title" = "Direct Message";
+"create_single_conversation.create" = "Create";
+"create_single_conversation.cancel" = "Cancel";
+"create_single_conversation.search_prompt" = "Name or login";
+"create_single_conversation.empty.title" = "No users yet";
+"create_single_conversation.empty_search.title" = "No one found";

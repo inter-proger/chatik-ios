@@ -60,6 +60,14 @@ final class ChatListViewModelTests: XCTestCase {
         XCTAssertEqual(router.path.count, 1)
     }
 
+    /// Кейс: выбран пункт «Личный диалог» в меню создания.
+    /// Ожидание: модально открыт экран создания личного диалога.
+    func test_didTapCreateSingleConversation_presentsSheet() {
+        sut.didTapCreateSingleConversation()
+
+        XCTAssertEqual(router.presentedSheet, .createSingleConversation)
+    }
+
     /// Кейс: сервер успешно завершил сессию.
     /// Ожидание: сессия завершена, пользователь удалён из `UserDefaults`, ошибки нет.
     func test_logout_success_endsSession() async {

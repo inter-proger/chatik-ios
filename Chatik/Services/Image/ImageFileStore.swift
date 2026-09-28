@@ -9,8 +9,8 @@ import UIKit
 protocol ImageFileStoreProtocol: Sendable {
     /// Возвращает файл во временной директории, готовый к загрузке на сервер. Файл из галереи возвращается
     /// как есть — оригинал уходит без перекодирования. У снимка с камеры файла нет, поэтому он кодируется
-    /// в JPEG в исходном разрешении и записывается во временный файл. Файл, не уложившийся в лимит размера,
-    /// заменяется уменьшенной JPEG-копией. Работа выполняется вне main thread.
+    /// в JPEG в исходном разрешении и записывается во временный файл. Файл, не уложившийся в лимит числа
+    /// пикселей или размера, заменяется уменьшенной JPEG-копией. Работа выполняется вне main thread.
     func storeForUpload(_ image: PickedImage) async throws -> ImageFile
     /// Удаляет временный файл после загрузки. Отсутствие файла — не ошибка.
     func remove(_ file: ImageFile)
@@ -49,11 +49,17 @@ final class ImageFileStore: ImageFileStoreProtocol, Sendable {
 
     /// Максимальный размер файла, который примет сервер.
     private let maxFileSize: Int
+    /// Максимальное число пикселей (ширина × высота), которое примет сервер.
+    private let maxPixels: Int
 
-    /// - Parameter maxFileSize: лимит размера файла; по умолчанию — лимит `/files/uploadImage`.
-    ///   Файл крупнее заменяется уменьшенной копией, чтобы загрузка не упиралась в ошибку 3002.
-    init(maxFileSize: Int = FilesService.maxImageSize) {
+    /// - Parameters:
+    ///   - maxFileSize: лимит размера файла; по умолчанию — лимит `/files/uploadImage`.
+    ///   - maxPixels: лимит числа пикселей; по умолчанию — лимит `/files/uploadImage`.
+    ///   Файл, не уложившийся в любой из лимитов, заменяется уменьшенной копией,
+    ///   чтобы загрузка не упиралась в ошибку 3002.
+    init(maxFileSize: Int = ImageUploadLimits.maxFileSize, maxPixels: Int = ImageUploadLimits.maxPixels) {
         self.maxFileSize = maxFileSize
+        self.maxPixels = maxPixels
     }
 
     /// Готовит файл в фоновой задаче — main thread не блокируется на кодировании и записи,
@@ -61,8 +67,9 @@ final class ImageFileStore: ImageFileStoreProtocol, Sendable {
     /// - Parameter image: снимок с камеры или файл из галереи.
     func storeForUpload(_ image: PickedImage) async throws -> ImageFile {
         let maxFileSize = maxFileSize
+        let maxPixels = maxPixels
         return try await Task.detached(priority: .userInitiated) {
-            try Self.prepareForUpload(image, maxFileSize: maxFileSize)
+            try Self.prepareForUpload(image, maxFileSize: maxFileSize, maxPixels: maxPixels)
         }.value
     }
 
@@ -74,38 +81,87 @@ final class ImageFileStore: ImageFileStoreProtocol, Sendable {
 
     // MARK: - Private
 
-    /// Приводит выбранное изображение к файлу, укладывающемуся в лимит.
+    /// Приводит выбранное изображение к файлу, укладывающемуся в лимиты.
     /// - Parameters:
     ///   - image: снимок с камеры или файл из галереи.
     ///   - maxFileSize: лимит размера файла.
-    private static func prepareForUpload(_ image: PickedImage, maxFileSize: Int) throws -> ImageFile {
+    ///   - maxPixels: лимит числа пикселей.
+    private static func prepareForUpload(_ image: PickedImage, maxFileSize: Int, maxPixels: Int) throws -> ImageFile {
         switch image {
         case .file(let file):
-            return try fit(file, maxFileSize: maxFileSize)
+            return try fit(file, maxFileSize: maxFileSize, maxPixels: maxPixels)
         case .image(let uiImage):
-            return try fit(try writeJPEG(uiImage), maxFileSize: maxFileSize)
+            // Файл снимка создали здесь: если подгонка под лимиты не удалась, за собой убираем — наружу
+            // уходит только ошибка, и удалить этот файл вызывающему будет нечем.
+            let file = try writeJPEG(uiImage)
+            return try removingOnFailure(file) { try fit(file, maxFileSize: maxFileSize, maxPixels: maxPixels) }
         }
     }
 
-    /// Возвращает файл, укладывающийся в лимит: подходящий — как есть, иначе уменьшенную JPEG-копию.
+    /// Возвращает файл, укладывающийся в оба лимита: подходящий — как есть, иначе уменьшенную JPEG-копию.
+    /// Сначала кадр приводится к лимиту пикселей, затем — к лимиту размера файла.
     /// Заменённый файл удаляется — наружу отдаётся ровно один файл, и удалять вызывающему нужно только его.
     /// - Parameters:
     ///   - file: исходный файл.
     ///   - maxFileSize: лимит размера файла.
-    private static func fit(_ file: ImageFile, maxFileSize: Int) throws -> ImageFile {
+    ///   - maxPixels: лимит числа пикселей.
+    private static func fit(_ file: ImageFile, maxFileSize: Int, maxPixels: Int) throws -> ImageFile {
+        let file = try fitPixels(file, maxPixels: maxPixels)
         guard try fileSize(of: file.url) > maxFileSize else { return file }
 
         var reduced: ImageFile?
         for side in downscaleSides {
-            let candidate = try downscaledJPEG(of: file, maxSide: side)
+            let candidate = try removingOnFailure(reduced) { try downscaledJPEG(of: file, maxSide: side) }
             reduced.map { try? FileManager.default.removeItem(at: $0.url) }
             reduced = candidate
-            if try fileSize(of: candidate.url) <= maxFileSize { break }
+            // Промежуточный кандидат тоже за нами: если размер не прочитается, он не должен остаться на диске.
+            if try removingOnFailure(candidate, { try fileSize(of: candidate.url) }) <= maxFileSize { break }
         }
         guard let reduced else { return file }
 
         try? FileManager.default.removeItem(at: file.url)
         return reduced
+    }
+
+    /// Выполняет операцию, удаляя `file` при ошибке; `nil` — удалять нечего.
+    /// - Parameters:
+    ///   - file: временный файл, за который отвечает вызывающий.
+    ///   - operation: операция, которая может бросить ошибку.
+    private static func removingOnFailure<T>(_ file: ImageFile?, _ operation: () throws -> T) throws -> T {
+        do {
+            return try operation()
+        } catch {
+            file.map { try? FileManager.default.removeItem(at: $0.url) }
+            throw error
+        }
+    }
+
+    /// Приводит кадр к лимиту числа пикселей: уложившийся файл отдаётся как есть, иначе — уменьшенная
+    /// JPEG-копия, у которой большая сторона уменьшена пропорционально, а исходный файл удаляется.
+    /// - Parameters:
+    ///   - file: исходный файл.
+    ///   - maxPixels: лимит числа пикселей.
+    private static func fitPixels(_ file: ImageFile, maxPixels: Int) throws -> ImageFile {
+        let size = try pixelSize(of: file.url)
+        let pixels = size.width * size.height
+        guard pixels > CGFloat(maxPixels) else { return file }
+
+        let maxSide = (max(size.width, size.height) * sqrt(CGFloat(maxPixels) / pixels)).rounded(.down)
+        let reduced = try downscaledJPEG(of: file, maxSide: maxSide)
+        try? FileManager.default.removeItem(at: file.url)
+        return reduced
+    }
+
+    /// Размер изображения в пикселях по метаданным файла — кадр в память не декодируется.
+    /// - Parameter url: адрес файла изображения.
+    private static func pixelSize(of url: URL) throws -> CGSize {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? Double,
+              let height = properties[kCGImagePropertyPixelHeight] as? Double else {
+            throw ImageFileStoreError.decodingFailed
+        }
+        return CGSize(width: width, height: height)
     }
 
     /// Кодирует изображение в JPEG в исходном разрешении (ориентация сохраняется в EXIF)

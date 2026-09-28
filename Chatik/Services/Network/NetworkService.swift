@@ -92,20 +92,34 @@ final class NetworkService: NetworkServiceProtocol {
         return try await decodeAPIResponse(data: data, response: response, for: endpoint)
     }
 
-    /// Проверяет HTTP-статус и общую обёртку `{status, response, errorCode}` полученного ответа.
+    /// Разбирает общую обёртку `{status, response, errorCode}` с оглядкой на HTTP-статус.
+    /// Ответ с ошибкой приходит и на статусе вне 2xx (внутренняя ошибка сервера — 500 с кодом 9001),
+    /// поэтому тело разбирается до проверки статуса, а сам статус решает исход, только если тело — не ответ API
+    /// или сообщает об успехе.
     private func decodeAPIResponse<T: Decodable>(data: Data, response: URLResponse, for endpoint: Endpoint) async throws -> T {
-        try validate(response)
-        let apiResponse: APIResponse<T> = try decode(data)
+        let statusCode = try statusCode(of: response)
+        let apiResponse: APIResponse<T>
+        do {
+            apiResponse = try decode(data)
+        } catch {
+            guard isSuccessful(statusCode) else { throw NetworkError.invalidResponse(statusCode: statusCode) }
+            throw error
+        }
+        guard !apiResponse.isSuccess || isSuccessful(statusCode) else {
+            throw NetworkError.invalidResponse(statusCode: statusCode)
+        }
         await handleUnauthorizedIfNeeded(apiResponse, for: endpoint)
         return try unwrap(apiResponse)
     }
 
     /// Выполняет запрос, оборачивая `URLError` в `NetworkError.transport`; прочие ошибки пробрасываются как есть.
     private func perform(_ request: URLRequest) async throws -> (Data, URLResponse) {
-        do {
-            return try await session.data(for: request)
-        } catch let error as URLError {
-            throw NetworkError.transport(error)
+        try await logged(request) {
+            do {
+                return try await session.data(for: request)
+            } catch let error as URLError {
+                throw NetworkError.transport(error)
+            }
         }
     }
 
@@ -119,10 +133,34 @@ final class NetworkService: NetworkServiceProtocol {
         bodyURL: URL,
         onProgress: @escaping @Sendable (Double) -> Void
     ) async throws -> (Data, URLResponse) {
+        try await logged(request, bodyFileURL: bodyURL) {
+            do {
+                return try await session.upload(for: request, fromFile: bodyURL, delegate: UploadProgressDelegate(onProgress: onProgress))
+            } catch let error as URLError {
+                throw NetworkError.transport(error)
+            }
+        }
+    }
+
+    /// Выполняет отправку запроса, логируя в DEBUG-сборке сам запрос, ответ или ошибку и время выполнения.
+    /// - Parameters:
+    ///   - request: отправляемый запрос.
+    ///   - bodyFileURL: файл с телом upload-запроса; `nil` — тело в `request.httpBody`.
+    ///   - operation: собственно отправка.
+    private func logged(
+        _ request: URLRequest,
+        bodyFileURL: URL? = nil,
+        operation: () async throws -> (Data, URLResponse)
+    ) async throws -> (Data, URLResponse) {
+        NetworkLogger.logRequest(request, bodyFileURL: bodyFileURL)
+        let start = ContinuousClock.now
         do {
-            return try await session.upload(for: request, fromFile: bodyURL, delegate: UploadProgressDelegate(onProgress: onProgress))
-        } catch let error as URLError {
-            throw NetworkError.transport(error)
+            let (data, response) = try await operation()
+            NetworkLogger.logResponse(response, data: data, for: request, duration: start.duration(to: .now))
+            return (data, response)
+        } catch {
+            NetworkLogger.logFailure(error, for: request, duration: start.duration(to: .now))
+            throw error
         }
     }
 
@@ -193,14 +231,18 @@ final class NetworkService: NetworkServiceProtocol {
         headers?.forEach { request.setValue($1, forHTTPHeaderField: $0) }
     }
 
-    /// Проверяет, что ответ — HTTP с кодом 2xx.
-    private func validate(_ response: URLResponse) throws {
+    /// Возвращает HTTP-статус ответа.
+    /// - Throws: `NetworkError.invalidResponse`, если ответ не является HTTP-ответом.
+    private func statusCode(of response: URLResponse) throws -> Int {
         guard let httpResponse = response as? HTTPURLResponse else {
             throw NetworkError.invalidResponse(statusCode: nil)
         }
-        guard (200..<300).contains(httpResponse.statusCode) else {
-            throw NetworkError.invalidResponse(statusCode: httpResponse.statusCode)
-        }
+        return httpResponse.statusCode
+    }
+
+    /// `true`, если HTTP-статус входит в диапазон 2xx.
+    private func isSuccessful(_ statusCode: Int) -> Bool {
+        (200..<300).contains(statusCode)
     }
 
     /// Декодирует JSON, оборачивая ошибку в `NetworkError.decoding`.

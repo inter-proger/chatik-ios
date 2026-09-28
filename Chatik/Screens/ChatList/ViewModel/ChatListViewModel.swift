@@ -5,7 +5,7 @@
 
 import Foundation
 
-/// Состояние экрана списка чатов. Пока содержит переход в профиль и выход из аккаунта.
+/// Состояние экрана списка чатов. Пока содержит переход в профиль, создание личного диалога и выход из аккаунта.
 @MainActor
 @Observable
 final class ChatListViewModel {
@@ -38,6 +38,11 @@ final class ChatListViewModel {
     /// Обработчик кнопки-аватара: открывает экран профиля.
     func didTapProfile() {
         router.showProfile()
+    }
+
+    /// Обработчик пункта «Личный диалог» меню создания: открывает экран создания личного диалога.
+    func didTapCreateSingleConversation() {
+        router.showCreateSingleConversation()
     }
 
     /// Обработчик кнопки «Выйти»: запускает выход, если он ещё не выполняется.

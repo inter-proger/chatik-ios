@@ -26,6 +26,7 @@ final class ErrorMessagesTests: XCTestCase {
             (NetworkError.Code.fileSaveFailed, CommonStrings.errorFileSaveFailed),
             (NetworkError.Code.userNotFound, CommonStrings.errorUserNotFound),
             (NetworkError.Code.conversationWithSelf, CommonStrings.errorConversationWithSelf),
+            (NetworkError.Code.internalServerError, CommonStrings.errorInternalServer),
         ]
 
         for testCase in cases {

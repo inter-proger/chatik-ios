@@ -67,5 +67,7 @@ extension NetworkError {
         static let fileSaveFailed = 3005
         static let userNotFound = 4001
         static let conversationWithSelf = 5001
+        /// Внутренняя ошибка сервера; приходит с HTTP-статусом 500.
+        static let internalServerError = 9001
     }
 }

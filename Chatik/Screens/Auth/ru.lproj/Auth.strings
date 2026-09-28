@@ -35,6 +35,9 @@
 "auth.error.name.invalid_characters" = "Допустимы только буквы, цифры, пробел, «-» и «_»";
 "auth.error.login.empty" = "Введите логин";
 "auth.error.login.invalid_characters" = "Допустимы только латинские буквы, цифры и «_»";
+/* %d — максимальная длина */
+"auth.error.name.too_long" = "Имя не должно быть длиннее %d символов";
+"auth.error.login.too_long" = "Логин не должен быть длиннее %d символов";
 "auth.error.password.too_short" = "Пароль должен быть не короче 8 символов";
 "auth.error.password.missing_uppercase" = "Добавьте хотя бы одну заглавную латинскую букву";
 "auth.error.password.missing_lowercase" = "Добавьте хотя бы одну строчную латинскую букву";

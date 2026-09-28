@@ -31,6 +31,9 @@ struct Conversation: Decodable, Equatable, Identifiable {
     let name: String?
     /// Аватар — файл типа `image`; только у `group`, у `single` всегда `nil`.
     let avatar: RemoteFile?
+    /// Собеседник — второй участник относительно текущего пользователя; только у `single`,
+    /// у `group` всегда `nil`.
+    let opponentUser: User?
 
     var id: Int { conversationId }
 }

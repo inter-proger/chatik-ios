@@ -11,4 +11,6 @@ struct UsersPage: Decodable, Equatable {
     /// `userId` последнего пользователя страницы; передаётся в `maxId` за следующей страницей.
     /// `nil`, если список пуст.
     let nextMaxId: Int?
+    /// Есть ли пользователи после этой страницы.
+    let hasNext: Bool
 }

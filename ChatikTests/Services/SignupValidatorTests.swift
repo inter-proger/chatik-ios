@@ -73,15 +73,14 @@ final class SignupValidatorTests: XCTestCase {
         XCTAssertEqual(sut.validateLogin(""), .empty)
     }
 
-    /// Кейс: логин с кириллицей, пробелом, дефисом, точкой или только из пробелов.
-    /// Ожидание: ошибка `.invalidCharacters`.
+    /// Кейс: логин с кириллицей, внутренним пробелом, дефисом или точкой.
+    /// Ожидание: ошибка `.invalidCharacters`. Логин из одних пробелов — отдельный кейс: он считается пустым.
     func test_validateLogin_forbiddenCharacters_returnsInvalidCharacters() {
         let logins = [
             "иван",
             "ivan petrov",
             "ivan-petrov",
             "ivan.petrov",
-            " ",
         ]
 
         for login in logins {
@@ -145,5 +144,59 @@ final class SignupValidatorTests: XCTestCase {
         XCTAssertFalse(sut.isFormValid(name: "", login: "ivan", password: "Password1"))
         XCTAssertFalse(sut.isFormValid(name: "Иван", login: "иван", password: "Password1"))
         XCTAssertFalse(sut.isFormValid(name: "Иван", login: "ivan", password: "password"))
+    }
+
+    /// Кейс: логин и имя ровно по лимиту сервера.
+    /// Ожидание: валидны — граничная длина допустима.
+    func test_validate_maxLengthValues_areValid() {
+        let login = String(repeating: "a", count: SignupValidator.maxLoginLength)
+        let name = String(repeating: "и", count: SignupValidator.maxNameLength)
+
+        XCTAssertNil(sut.validateLogin(login))
+        XCTAssertNil(sut.validateName(name))
+    }
+
+    /// Кейс: логин длиннее 64 символов.
+    /// Ожидание: `.tooLong` с лимитом — сервер ответил бы кодом 1001, запрос не нужен.
+    func test_validateLogin_tooLong_returnsTooLong() {
+        let login = String(repeating: "a", count: SignupValidator.maxLoginLength + 1)
+
+        XCTAssertEqual(sut.validateLogin(login), .tooLong(maxLength: SignupValidator.maxLoginLength))
+    }
+
+    /// Кейс: имя длиннее 128 символов.
+    /// Ожидание: `.tooLong` с лимитом — сервер ответил бы кодом 1003, запрос не нужен.
+    func test_validateName_tooLong_returnsTooLong() {
+        let name = String(repeating: "и", count: SignupValidator.maxNameLength + 1)
+
+        XCTAssertEqual(sut.validateName(name), .tooLong(maxLength: SignupValidator.maxNameLength))
+    }
+
+    /// Кейс: логин с краевыми пробелами — например, вставленный из буфера.
+    /// Ожидание: валиден — пробелы отсекаются, как и у имени; на сервер уходит логин без них.
+    func test_validateLogin_surroundingSpaces_isValid() {
+        let logins = [
+            " ivan",
+            "ivan ",
+            "  ivan_1  ",
+        ]
+
+        for login in logins {
+            XCTAssertNil(sut.validateLogin(login), login)
+        }
+    }
+
+    /// Кейс: логин из одних пробелов.
+    /// Ожидание: считается пустым.
+    func test_validateLogin_whitespaceOnly_returnsEmpty() {
+        XCTAssertEqual(sut.validateLogin("   "), .empty)
+    }
+
+    /// Кейс: имя по лимиту, но с краевыми пробелами — в запрос уходит имя после их отсечения.
+    /// Ожидание: валидно — длина считается по тому же значению, что уходит на сервер.
+    func test_validateName_maxLengthWithSurroundingSpaces_isValid() {
+        let name = "  " + String(repeating: "и", count: SignupValidator.maxNameLength) + "  "
+
+        XCTAssertNil(sut.validateName(name))
     }
 }

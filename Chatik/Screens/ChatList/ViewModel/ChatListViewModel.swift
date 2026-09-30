@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import os
 
 /// Состояние экрана списка чатов: постраничный список переписок, переход в профиль, создание личного
 /// диалога и выход из аккаунта.
@@ -24,20 +25,28 @@ final class ChatListViewModel {
     static let pageSize = 30
 
     private let list = PaginatedList<ChatRowDisplayModel>()
+    /// Идущие загрузки первой страницы — хранятся, чтобы отменить их и дождаться при выходе. Обычно одна;
+    /// несколько — пока заменённая загрузка (pull-to-refresh поверх открытия) ещё не завершилась после отмены.
+    private var firstPageTasks: Set<Task<PaginationOutcome, Never>> = []
+    /// Последнее начатое сохранение созданной переписки; следующие сохранения выстраиваются за ним.
+    private var createdConversationSaveTask: Task<Void, Never>?
     private let authService: AuthServiceProtocol
     private let sessionService: SessionServiceProtocol
     private let conversationService: ConversationServiceProtocol
+    private let conversationStorage: ConversationStorageServiceProtocol
     private let router: ChatListRouter
 
     init(
         authService: AuthServiceProtocol,
         sessionService: SessionServiceProtocol,
         conversationService: ConversationServiceProtocol,
+        conversationStorage: ConversationStorageServiceProtocol,
         router: ChatListRouter
     ) {
         self.authService = authService
         self.sessionService = sessionService
         self.conversationService = conversationService
+        self.conversationStorage = conversationStorage
         self.router = router
     }
 
@@ -71,8 +80,17 @@ final class ChatListViewModel {
     // MARK: - Список
 
     /// Загружает список переписок заново с первой страницы: при открытии экрана и pull-to-refresh.
+    /// Если список пуст (открытие экрана), до ответа сервера показываются переписки из локальной БД.
+    /// Загрузка идёт в отдельной задаче, чтобы выход мог её отменить. Отмена вызывающей задачи (SwiftUI отменяет
+    /// `.task` при уходе экрана) её не прерывает: ViewModel живёт дольше экрана, и загруженная страница пригодится.
+    /// Прежняя загрузка отменяется: её ответ всё равно был бы отброшен, а в БД писать его незачем.
     func loadFirstPage() async {
-        show(await list.refresh(load: loadPage))
+        firstPageTasks.forEach { $0.cancel() }
+        let task = Task { await list.refresh(cached: loadCachedConversations, load: loadPage) }
+        firstPageTasks.insert(task)
+        let outcome = await task.value
+        firstPageTasks.remove(task)
+        show(outcome)
     }
 
     /// Начинает загрузку следующей страницы, если показана одна из последних переписок списка.
@@ -86,16 +104,61 @@ final class ChatListViewModel {
     /// - Parameter conversation: переписка, с которой завершился экран создания.
     func didCreateConversation(_ conversation: Conversation) {
         list.insertIfAbsent(ChatRowDisplayModel(conversation: conversation))
+        let previousSave = createdConversationSaveTask
+        createdConversationSaveTask = Task {
+            await previousSave?.value
+            await saveCreatedConversation(conversation)
+        }
     }
 
-    /// Запрашивает страницу переписок и приводит её к строкам списка.
+    /// Запрашивает страницу переписок, сохраняет её в локальную БД и приводит к строкам списка.
     /// - Parameter context: сколько переписок уже получено — от этого числа идёт сдвиг выдачи.
     private func loadPage(_ context: PaginationContext) async throws -> PaginatedListPage<ChatRowDisplayModel> {
         let page = try await conversationService.fetchConversations(
             offset: context.isFirstPage ? nil : context.loadedCount,
             count: Self.pageSize
         )
+        // Загрузку отменили (выход из аккаунта), пока шёл запрос: страницу нельзя писать в БД —
+        // она может попасть туда уже после очистки.
+        try Task.checkCancellation()
+        await savePage(page, isFirstPage: context.isFirstPage)
         return PaginatedListPage(items: page.conversations.map(ChatRowDisplayModel.init), hasNext: page.hasNext)
+    }
+
+    // MARK: - Локальная БД
+
+    /// Читает переписки из локальной БД для показа до ответа сервера. Ошибка чтения не показывается
+    /// пользователю — список просто дождётся сервера.
+    /// - Returns: строки списка; пустой массив, если БД пуста или не прочиталась.
+    private func loadCachedConversations() async -> [ChatRowDisplayModel] {
+        do {
+            return try await conversationStorage.fetchLatest(limit: Self.pageSize).map(ChatRowDisplayModel.init)
+        } catch {
+            Logger.storage.error("Не удалось прочитать переписки из БД: \(String(describing: error), privacy: .public)")
+            return []
+        }
+    }
+
+    /// Сохраняет страницу переписок из ответа сервера. Ошибка записи не мешает показать страницу.
+    /// - Parameters:
+    ///   - page: страница из ответа сервера.
+    ///   - isFirstPage: `true` — страница первая; из БД удаляются переписки, которых больше нет на сервере.
+    private func savePage(_ page: ConversationsPage, isFirstPage: Bool) async {
+        do {
+            try await conversationStorage.save(page: page, isFirstPage: isFirstPage)
+        } catch {
+            Logger.storage.error("Не удалось сохранить страницу переписок в БД: \(String(describing: error), privacy: .public)")
+        }
+    }
+
+    /// Сохраняет только что созданную переписку, чтобы она была в списке и без сети.
+    /// - Parameter conversation: переписка, с которой завершился экран создания.
+    private func saveCreatedConversation(_ conversation: Conversation) async {
+        do {
+            try await conversationStorage.save(conversation: conversation)
+        } catch {
+            Logger.storage.error("Не удалось сохранить созданную переписку в БД: \(String(describing: error), privacy: .public)")
+        }
     }
 
     /// Показывает сообщение, если загрузка страницы не удалась. Устаревшие ответы игнорируются.
@@ -134,18 +197,31 @@ final class ChatListViewModel {
 
     /// Завершает сессию на сервере и локально; приложение переключится на экран авторизации.
     /// Если сервер ответил «не авторизован», сессии уже нет — завершаем локально без сообщения об ошибке.
-    /// При прочих ошибках показывает сообщение и остаётся на экране.
+    /// При прочих ошибках показывает сообщение и остаётся на экране — загрузки списка не прерываются.
     func logout() async {
         isLoggingOut = true
         defer { isLoggingOut = false }
 
         do {
             try await authService.logout()
-            await sessionService.end()
+            await endSession()
         } catch NetworkError.api(let code) where code == NetworkError.Code.unauthorized {
-            await sessionService.end()
+            await endSession()
         } catch {
             errorMessage = ErrorMessages.message(for: error)
         }
+    }
+
+    /// Отменяет загрузки списка, дожидается записей в БД и только затем завершает сессию: иначе страница,
+    /// пришедшая во время выхода, записалась бы в БД уже после её очистки и досталась следующему пользователю.
+    private func endSession() async {
+        let firstPageTasks = firstPageTasks
+        firstPageTasks.forEach { $0.cancel() }
+        await list.cancelLoading()
+        for task in firstPageTasks {
+            _ = await task.value
+        }
+        await createdConversationSaveTask?.value
+        await sessionService.end()
     }
 }

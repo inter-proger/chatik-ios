@@ -6,12 +6,13 @@
 #if DEBUG
 import UIKit
 
-/// Зависимости для `#Preview` экранов: моки вместо сети и `UserDefaults`, чтобы превью не ходили
-/// на сервер и не трогали настройки приложения, а состояния (загрузка, ошибка) были воспроизводимы.
+/// Зависимости для `#Preview` экранов: моки вместо сети и `UserDefaults`, хранилище CoreData в памяти, чтобы превью
+/// не ходили на сервер и не трогали настройки и БД приложения, а состояния (загрузка, ошибка) были воспроизводимы.
 @MainActor
 enum PreviewDependencies {
+    static let storageContainer = CoreDataStack.makeContainer(inMemory: true)
     static let userDefaultsService = UserDefaultsServicePreviewMock()
-    static let sessionService = SessionService(userDefaultsService: userDefaultsService)
+    static let sessionService = makeSessionService(userDefaultsService: userDefaultsService)
     static let localizationService = LocalizationService(userDefaultsService: userDefaultsService, systemLanguage: .ru)
 
     /// ViewModel экрана авторизации над моками.
@@ -40,7 +41,17 @@ enum PreviewDependencies {
             authService: AuthServicePreviewMock(logoutResult: logoutResult),
             sessionService: sessionService,
             conversationService: ConversationServicePreviewMock(),
+            conversationStorage: ConversationStorageService(container: storageContainer),
             router: ChatListRouter()
+        )
+    }
+
+    /// Сессия над заданным хранилищем настроек; при выходе очищается БД превью, а не приложения.
+    /// - Parameter userDefaultsService: хранилище настроек превью.
+    static func makeSessionService(userDefaultsService: UserDefaultsServiceProtocol) -> SessionService {
+        SessionService(
+            userDefaultsService: userDefaultsService,
+            localStorageCleaner: LocalStorageCleaner(container: storageContainer)
         )
     }
 
@@ -50,7 +61,7 @@ enum PreviewDependencies {
     static func createSingleConversationViewModel(
         user: User = User(userId: 1, login: "ivan", name: "Иван Петров", avatar: nil)
     ) -> CreateSingleConversationViewModel {
-        let sessionService = SessionService(userDefaultsService: UserDefaultsServicePreviewMock(currentUser: user))
+        let sessionService = makeSessionService(userDefaultsService: UserDefaultsServicePreviewMock(currentUser: user))
         Task { await sessionService.restore() }
         return CreateSingleConversationViewModel(
             usersService: UsersServicePreviewMock(),
@@ -69,7 +80,7 @@ enum PreviewDependencies {
         user: User = User(userId: 1, login: "ivan", name: "Иван", avatar: nil),
         profileResult: Result<User, Error>? = nil
     ) -> ProfileViewModel {
-        let sessionService = SessionService(userDefaultsService: UserDefaultsServicePreviewMock(currentUser: user))
+        let sessionService = makeSessionService(userDefaultsService: UserDefaultsServicePreviewMock(currentUser: user))
         Task { await sessionService.restore() }
         return ProfileViewModel(
             profileService: ProfileServicePreviewMock(profileResult: profileResult ?? .success(user)),

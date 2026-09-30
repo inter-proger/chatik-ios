@@ -19,7 +19,7 @@ final class CreateSingleConversationViewModelTests: XCTestCase {
         try await super.setUp()
         usersService = UsersServiceMock()
         conversationService = ConversationServiceMock()
-        sessionService = SessionService(userDefaultsService: UserDefaultsServiceMock(currentUser: .stub))
+        sessionService = SessionService(userDefaultsService: UserDefaultsServiceMock(currentUser: .stub), localStorageCleaner: LocalStorageCleanerMock())
         await sessionService.restore()
         finishResults = []
         sut = makeSUT(searchDebounce: .zero)

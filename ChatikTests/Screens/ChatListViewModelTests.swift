@@ -13,6 +13,7 @@ final class ChatListViewModelTests: XCTestCase {
     private var userDefaultsService: UserDefaultsServiceMock!
     private var sessionService: SessionService!
     private var conversationService: ConversationServiceMock!
+    private var conversationStorage: ConversationStorageServiceMock!
     private var router: ChatListRouter!
     private var sut: ChatListViewModel!
 
@@ -20,14 +21,16 @@ final class ChatListViewModelTests: XCTestCase {
         try await super.setUp()
         networkService = NetworkServiceMock()
         userDefaultsService = UserDefaultsServiceMock(currentUser: User(userId: 1, login: "ivan", name: "Ivan", avatar: nil))
-        sessionService = SessionService(userDefaultsService: userDefaultsService)
+        sessionService = SessionService(userDefaultsService: userDefaultsService, localStorageCleaner: LocalStorageCleanerMock())
         await sessionService.restore()
         conversationService = ConversationServiceMock()
+        conversationStorage = ConversationStorageServiceMock()
         router = ChatListRouter()
         sut = ChatListViewModel(
             authService: AuthService(networkService: networkService),
             sessionService: sessionService,
             conversationService: conversationService,
+            conversationStorage: conversationStorage,
             router: router
         )
     }
@@ -95,6 +98,112 @@ final class ChatListViewModelTests: XCTestCase {
         await sut.loadFirstPage()
 
         XCTAssertEqual(sut.conversations.map(\.id), [Conversation.groupStub.id])
+    }
+
+    // MARK: - Локальная БД
+
+    /// Кейс: в локальной БД есть переписки, экран открывается.
+    /// Ожидание: до ответа сервера показаны переписки из БД, после — они заменены ответом сервера.
+    func test_loadFirstPage_withCache_showsCacheThenNetwork() async {
+        let gate = Gate()
+        conversationStorage.stubbedConversations = .success([.groupStub])
+        conversationService.stubbedPages = [.success(ConversationsPage(conversations: [.singleStub], hasNext: false))]
+        conversationService.onRequest = { await gate.wait() }
+        let load = Task { await sut.loadFirstPage() }
+        await yieldUntil { gate.isWaiting }
+
+        await yieldUntil { [unowned self] in sut.conversations.map(\.id) == [Conversation.groupStub.id] }
+        gate.open()
+        await load.value
+
+        XCTAssertEqual(sut.conversations.map(\.id), [Conversation.singleStub.id])
+    }
+
+    /// Кейс: экран открывается, в локальной БД может быть сколько угодно переписок.
+    /// Ожидание: из БД читается не больше одной страницы — экрану до ответа сервера нужно только начало списка.
+    func test_loadFirstPage_readsCacheWithinPageSize() async {
+        conversationService.stubbedPages = [.success(ConversationsPage(conversations: [.singleStub], hasNext: false))]
+
+        await sut.loadFirstPage()
+
+        XCTAssertEqual(conversationStorage.fetchLatestLimits, [ChatListViewModel.pageSize])
+    }
+
+    /// Кейс: в локальной БД есть переписки, сервер недоступен.
+    /// Ожидание: на экране остаются переписки из БД, показано сообщение об ошибке.
+    func test_loadFirstPage_withCache_transportError_keepsCachedConversations() async {
+        conversationStorage.stubbedConversations = .success([.groupStub])
+        conversationService.stubbedPages = [.failure(NetworkError.transport(URLError(.notConnectedToInternet)))]
+
+        await sut.loadFirstPage()
+
+        XCTAssertEqual(sut.conversations.map(\.id), [Conversation.groupStub.id])
+        XCTAssertEqual(sut.errorMessage, CommonStrings.errorNoConnection)
+    }
+
+    /// Кейс: чтение локальной БД завершилось ошибкой.
+    /// Ожидание: ошибка БД пользователю не показывается, список показан по ответу сервера.
+    func test_loadFirstPage_cacheReadError_showsNetworkWithoutError() async {
+        conversationStorage.stubbedConversations = .failure(CocoaError(.fileReadCorruptFile))
+        conversationService.stubbedPages = [.success(ConversationsPage(conversations: [.singleStub], hasNext: false))]
+
+        await sut.loadFirstPage()
+
+        XCTAssertEqual(sut.conversations.map(\.id), [Conversation.singleStub.id])
+        XCTAssertNil(sut.errorMessage)
+    }
+
+    /// Кейс: pull-to-refresh, когда список уже показан.
+    /// Ожидание: БД повторно не читается — до ответа на экране остаётся текущий список.
+    func test_loadFirstPage_again_doesNotReadCache() async {
+        conversationService.stubbedPages = [
+            .success(ConversationsPage(conversations: [.singleStub], hasNext: false)),
+            .success(ConversationsPage(conversations: [.groupStub], hasNext: false)),
+        ]
+        await sut.loadFirstPage()
+        var isCacheRead = false
+        conversationStorage.onFetchLatest = { isCacheRead = true }
+
+        await sut.loadFirstPage()
+
+        XCTAssertFalse(isCacheRead)
+    }
+
+    /// Кейс: сервер вернул первую и следующую страницы.
+    /// Ожидание: обе страницы сохранены в БД с признаком первой страницы — от него зависит, какие
+    /// переписки удаляются из БД.
+    func test_loadPages_savesPagesToStorage() async throws {
+        let firstPage = ConversationsPage(conversations: makeConversations(ids: Array((1...30).reversed())), hasNext: true)
+        let nextPage = ConversationsPage(conversations: makeConversations(ids: [0]), hasNext: false)
+        conversationService.stubbedPages = [.success(firstPage), .success(nextPage)]
+        await sut.loadFirstPage()
+
+        sut.prefetchNextPageIfNeeded(currentConversation: try XCTUnwrap(sut.conversations.last))
+        await waitUntilNextPageLoaded()
+
+        XCTAssertEqual(conversationStorage.savedPages.map(\.page), [firstPage, nextPage])
+        XCTAssertEqual(conversationStorage.savedPages.map(\.isFirstPage), [true, false])
+    }
+
+    /// Кейс: сохранение страницы в БД завершилось ошибкой.
+    /// Ожидание: страница всё равно показана, ошибка БД пользователю не показывается.
+    func test_loadFirstPage_saveError_showsConversationsWithoutError() async {
+        conversationStorage.stubbedSaveError = CocoaError(.fileWriteUnknown)
+        conversationService.stubbedPages = [.success(ConversationsPage(conversations: [.singleStub], hasNext: false))]
+
+        await sut.loadFirstPage()
+
+        XCTAssertEqual(sut.conversations.map(\.id), [Conversation.singleStub.id])
+        XCTAssertNil(sut.errorMessage)
+    }
+
+    /// Кейс: создана новая переписка.
+    /// Ожидание: она сохранена в БД — чтобы была в списке и без сети.
+    func test_didCreateConversation_savesToStorage() async {
+        sut.didCreateConversation(.singleStub)
+        await yieldUntil { [unowned self] in !conversationStorage.savedConversations.isEmpty }
+
+        XCTAssertEqual(conversationStorage.savedConversations, [.singleStub])
     }
 
     // MARK: - Следующие страницы
@@ -385,6 +494,75 @@ final class ChatListViewModelTests: XCTestCase {
 
         XCTAssertTrue(sessionService.isLoggedIn)
         XCTAssertEqual(sut.errorMessage, CommonStrings.errorNoConnection)
+    }
+
+    // MARK: - Выход во время загрузки
+
+    /// Кейс: выход подтверждён, пока грузится первая страница; ответ на неё приходит уже после отмены.
+    /// Ожидание: сессия завершается только после того, как загрузка закончилась; страница в БД не записана,
+    /// ошибка не показана.
+    func test_logout_duringFirstPage_cancelsLoadingBeforeEndingSession() async {
+        let gate = Gate()
+        conversationService.stubbedPages = [.success(ConversationsPage(conversations: [.singleStub], hasNext: false))]
+        conversationService.onRequest = { await gate.wait() }
+        networkService.stubbedResult = .success(EmptyResponse())
+        let load = Task { await sut.loadFirstPage() }
+        await yieldUntil { gate.isWaiting }
+
+        let logout = Task { await sut.logout() }
+        await yieldUntil { [unowned self] in !sut.isLoadingFirstPage }
+        let isLoggedInBeforeLoadFinished = sessionService.isLoggedIn
+        gate.open()
+        await logout.value
+        await load.value
+
+        XCTAssertTrue(isLoggedInBeforeLoadFinished)
+        XCTAssertFalse(sessionService.isLoggedIn)
+        XCTAssertTrue(conversationStorage.savedPages.isEmpty)
+        XCTAssertNil(sut.errorMessage)
+    }
+
+    /// Кейс: выход подтверждён, пока грузится следующая страница; ответ на неё приходит уже после отмены.
+    /// Ожидание: сессия завершается только после того, как подгрузка закончилась; в БД записана только первая страница.
+    func test_logout_duringNextPage_cancelsLoadingBeforeEndingSession() async throws {
+        let gate = Gate()
+        conversationService.stubbedPages = [
+            .success(ConversationsPage(conversations: makeConversations(ids: Array((1...30).reversed())), hasNext: true)),
+            .success(ConversationsPage(conversations: makeConversations(ids: [0]), hasNext: false)),
+        ]
+        networkService.stubbedResult = .success(EmptyResponse())
+        await sut.loadFirstPage()
+        conversationService.onRequest = { await gate.wait() }
+        sut.prefetchNextPageIfNeeded(currentConversation: try XCTUnwrap(sut.conversations.last))
+        await yieldUntil { gate.isWaiting }
+
+        let logout = Task { await sut.logout() }
+        await yieldUntil { [unowned self] in !sut.isLoadingNextPage }
+        let isLoggedInBeforeLoadFinished = sessionService.isLoggedIn
+        gate.open()
+        await logout.value
+
+        XCTAssertTrue(isLoggedInBeforeLoadFinished)
+        XCTAssertFalse(sessionService.isLoggedIn)
+        XCTAssertEqual(conversationStorage.savedPages.map(\.isFirstPage), [true])
+    }
+
+    /// Кейс: выход не удался из-за сети, пока грузится первая страница.
+    /// Ожидание: загрузка не прерывается — после ответа страница показана и записана в БД.
+    func test_logout_failure_doesNotCancelLoading() async {
+        let gate = Gate()
+        conversationService.stubbedPages = [.success(ConversationsPage(conversations: [.singleStub], hasNext: false))]
+        conversationService.onRequest = { await gate.wait() }
+        networkService.stubbedResult = .failure(NetworkError.transport(URLError(.notConnectedToInternet)))
+        let load = Task { await sut.loadFirstPage() }
+        await yieldUntil { gate.isWaiting }
+
+        await sut.logout()
+        gate.open()
+        await load.value
+
+        XCTAssertEqual(sut.conversations.map(\.id), [Conversation.singleStub.id])
+        XCTAssertEqual(conversationStorage.savedPages.count, 1)
     }
 
     // MARK: - Helpers

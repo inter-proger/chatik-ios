@@ -218,6 +218,183 @@ final class PaginatedListTests: XCTestCase {
         XCTAssertFalse(sut.isEmpty)
     }
 
+    // MARK: - Отмена
+
+    /// Кейс: идёт загрузка первой страницы, вызван `cancelLoading()`; затем загрузчик всё-таки ответил.
+    /// Ожидание: флаг загрузки снят сразу, опоздавший ответ отброшен — итог `superseded`, список прежний.
+    func test_cancelLoading_duringRefresh_discardsResponse() async {
+        await sut.refresh(load: page(ids: [1], hasNext: false))
+        let gate = Gate()
+        var outcome: PaginationOutcome?
+        let refresh = Task { outcome = await self.sut.refresh(load: self.page(ids: [2], hasNext: false, gate: gate)) }
+        await yieldUntil { gate.isWaiting }
+
+        await sut.cancelLoading()
+        let isLoadingAfterCancel = sut.isLoadingFirstPage
+        gate.open()
+        await refresh.value
+
+        XCTAssertFalse(isLoadingAfterCancel)
+        XCTAssertEqual(sut.items.map(\.id), [1])
+        guard case .superseded = try? XCTUnwrap(outcome) else { return XCTFail("Ожидался superseded") }
+    }
+
+    /// Кейс: идёт подгрузка следующей страницы, вызван `cancelLoading()`.
+    /// Ожидание: `cancelLoading()` возвращается только после завершения подгрузки; её страница не дописана,
+    /// флаг подгрузки снят, а сама задача подгрузки отменена.
+    func test_cancelLoading_duringNextPage_waitsAndDiscardsPage() async throws {
+        await sut.refresh(load: page(ids: [1, 2], hasNext: true))
+        let gate = Gate()
+        var isLoaderCancelled = false
+        let load: PaginatedList<Item>.Load = { _ in
+            await gate.wait()
+            isLoaderCancelled = Task.isCancelled
+            return PaginatedListPage(items: [Item(id: 3)], hasNext: false)
+        }
+        sut.prefetchNextPageIfNeeded(currentItem: try XCTUnwrap(sut.items.last), load: load, onOutcome: { _ in })
+        await yieldUntil { gate.isWaiting }
+
+        var isCancelFinished = false
+        let cancel = Task { await self.sut.cancelLoading(); isCancelFinished = true }
+        await yieldUntil { [unowned self] in !sut.isLoadingNextPage }
+        let isFinishedBeforeLoaderReturned = isCancelFinished
+        gate.open()
+        await cancel.value
+
+        XCTAssertFalse(isFinishedBeforeLoaderReturned)
+        XCTAssertTrue(isLoaderCancelled)
+        XCTAssertEqual(sut.items.map(\.id), [1, 2])
+    }
+
+    // MARK: - Кэш
+
+    /// Кейс: список пуст, передан кэш; загрузка первой страницы ещё идёт.
+    /// Ожидание: до ответа загрузчика показаны элементы кэша, после — они заменены страницей.
+    func test_refresh_withCache_showsCacheUntilPageLoaded() async {
+        let gate = Gate()
+        let refresh = Task {
+            await self.sut.refresh(cached: { [Item(id: 10), Item(id: 11)] }, load: self.page(ids: [1], hasNext: false, gate: gate))
+        }
+        await yieldUntil { gate.isWaiting }
+
+        await yieldUntil { [unowned self] in sut.items.map(\.id) == [10, 11] }
+        gate.open()
+        await refresh.value
+
+        XCTAssertEqual(sut.items.map(\.id), [1])
+    }
+
+    /// Кейс: список пуст, передан кэш, чтение которого не завершается, пока тест его не отпустит.
+    /// Ожидание: загрузчик вызван до завершения чтения кэша — сеть не ждёт БД.
+    func test_refresh_withCache_loadsWithoutWaitingForCache() async {
+        let cacheGate = Gate()
+        var isLoaderCalled = false
+        let cached: PaginatedList<Item>.Cached = {
+            await cacheGate.wait()
+            return [Item(id: 10)]
+        }
+
+        let refresh = Task {
+            await self.sut.refresh(cached: cached, load: { _ in
+                isLoaderCalled = true
+                return PaginatedListPage(items: [Item(id: 1)], hasNext: false)
+            })
+        }
+        await yieldUntil { isLoaderCalled && cacheGate.isWaiting }
+        cacheGate.open()
+        await refresh.value
+
+        XCTAssertEqual(sut.items.map(\.id), [1])
+    }
+
+    /// Кейс: ответ сервера пришёл раньше, чем дочитался кэш; набор ответов — непустая и пустая страница.
+    /// Ожидание: опоздавший кэш отброшен — на экране ответ сервера, даже если он пустой.
+    func test_refresh_cacheReadAfterPage_isDiscarded() async {
+        let pages = [
+            [1],
+            [],
+        ]
+
+        for ids in pages {
+            let list = PaginatedList<Item>()
+            let cacheGate = Gate()
+            let cached: PaginatedList<Item>.Cached = {
+                await cacheGate.wait()
+                return [Item(id: 10)]
+            }
+            var isPageLoaded = false
+            let refresh = Task {
+                await list.refresh(cached: cached, load: { _ in
+                    isPageLoaded = true
+                    return PaginatedListPage(items: ids.map(Item.init), hasNext: false)
+                })
+            }
+            await yieldUntil { cacheGate.isWaiting && isPageLoaded }
+
+            cacheGate.open()
+            await refresh.value
+
+            XCTAssertEqual(list.items.map(\.id), ids, "\(ids)")
+        }
+    }
+
+    /// Кейс: список пуст, передан кэш; загрузка первой страницы завершилась ошибкой.
+    /// Ожидание: на экране остаются элементы кэша, наружу отдана ошибка.
+    func test_refresh_withCache_failure_keepsCachedItems() async {
+        let outcome = await sut.refresh(cached: { [Item(id: 10)] }, load: failing())
+
+        XCTAssertEqual(sut.items.map(\.id), [10])
+        guard case .failed = outcome else { return XCTFail("Ожидалась ошибка, получено \(outcome)") }
+    }
+
+    /// Кейс: список уже показан (pull-to-refresh), передан кэш.
+    /// Ожидание: кэш не читается — на экране до ответа остаются текущие, более свежие элементы.
+    func test_refresh_withCache_nonEmptyList_doesNotReadCache() async {
+        await sut.refresh(load: page(ids: [1], hasNext: false))
+        var isCacheRead = false
+        var itemsDuringLoad: [Int] = []
+
+        await sut.refresh(cached: { isCacheRead = true; return [Item(id: 10)] }, load: { [unowned self] _ in
+            itemsDuringLoad = sut.items.map(\.id)
+            return PaginatedListPage(items: [Item(id: 2)], hasNext: false)
+        })
+
+        XCTAssertFalse(isCacheRead)
+        XCTAssertEqual(itemsDuringLoad, [1])
+    }
+
+    /// Кейс: показаны элементы кэша, загрузчик ответил полной страницей; затем грузится следующая страница.
+    /// Ожидание: элементы кэша не участвуют в пагинации — сдвиг считается только по полученным с сервера.
+    func test_refresh_withCache_doesNotShiftNextPageContext() async {
+        let recorder = ContextRecorder()
+        await sut.refresh(cached: { [Item(id: 10), Item(id: 11), Item(id: 12)] }, load: page(ids: [1, 2], hasNext: true))
+
+        await sut.loadNextPage(load: page(ids: [3], hasNext: false, recorder: recorder))
+
+        XCTAssertEqual(recorder.contexts, [PaginationContext(loadedCount: 2, cursor: nil)])
+        XCTAssertEqual(sut.items.map(\.id), [1, 2, 3])
+    }
+
+    /// Кейс: пока читался кэш, в пустой список локально вставлен элемент.
+    /// Ожидание: кэш не затирает вставленный элемент — он актуальнее.
+    func test_refresh_withCache_insertDuringCacheRead_keepsInsertedItem() async {
+        let gate = Gate()
+        var isCacheRead = false
+        let cached: PaginatedList<Item>.Cached = { [unowned self] in
+            sut.insertIfAbsent(Item(id: 99))
+            isCacheRead = true
+            return [Item(id: 10)]
+        }
+        let refresh = Task { await self.sut.refresh(cached: cached, load: self.page(ids: [1], hasNext: false, gate: gate)) }
+        await yieldUntil { gate.isWaiting && isCacheRead }
+
+        let itemsAfterCacheRead = sut.items.map(\.id)
+        gate.open()
+        await refresh.value
+
+        XCTAssertEqual(itemsAfterCacheRead, [99])
+    }
+
     // MARK: - Helpers
 
     private struct Item: Identifiable, Equatable {
@@ -234,27 +411,6 @@ final class PaginatedListTests: XCTestCase {
 
         func record(_ context: PaginationContext) {
             contexts.append(context)
-        }
-    }
-
-    /// Задерживает загрузчик, пока тест его не отпустит: так порядок ответов задаётся тестом, а не планировщиком.
-    private final class Gate {
-        private var continuation: CheckedContinuation<Void, Never>?
-
-        /// `true`, пока загрузчик ждёт у шлагбаума.
-        var isWaiting: Bool {
-            continuation != nil
-        }
-
-        /// Приостанавливает вызывающего до `open()`.
-        func wait() async {
-            await withCheckedContinuation { continuation = $0 }
-        }
-
-        /// Отпускает ждущего загрузчика.
-        func open() {
-            continuation?.resume()
-            continuation = nil
         }
     }
 

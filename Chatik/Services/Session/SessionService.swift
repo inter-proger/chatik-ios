@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import os
 
 @MainActor
 protocol SessionServiceProtocol: AnyObject {
@@ -17,11 +18,11 @@ protocol SessionServiceProtocol: AnyObject {
 
     /// Восстанавливает сессию из хранилища при старте приложения.
     func restore() async
-    /// Открывает сессию после успешной регистрации / входа и сохраняет пользователя.
+    /// Открывает сессию после успешной регистрации / входа: очищает локальную БД и сохраняет пользователя.
     func start(user: User) async
     /// Обновляет данные текущего пользователя (например, после смены аватара). Если сессии нет — ничего не делает.
     func update(user: User) async
-    /// Завершает сессию по инициативе пользователя (выход).
+    /// Завершает сессию по инициативе пользователя (выход): очищает локальную БД и удаляет пользователя.
     func end() async
     /// Завершает сессию по инициативе сервера (код 2003). Если сессии нет — ничего не делает.
     func expire() async
@@ -30,7 +31,8 @@ protocol SessionServiceProtocol: AnyObject {
 }
 
 /// Единая точка истины о текущей сессии. Хранит пользователя в памяти и в `UserDefaults`;
-/// экраны и корневой роутер наблюдают за `currentUser`.
+/// экраны и корневой роутер наблюдают за `currentUser`. Завершение сессии — единая точка выхода:
+/// и выход пользователя, и истечение сессии на сервере очищают локальную БД.
 @MainActor
 @Observable
 final class SessionService: SessionServiceProtocol {
@@ -39,9 +41,11 @@ final class SessionService: SessionServiceProtocol {
     private(set) var isExpired = false
 
     private let userDefaultsService: UserDefaultsServiceProtocol
+    private let localStorageCleaner: LocalStorageCleanerProtocol
 
-    init(userDefaultsService: UserDefaultsServiceProtocol) {
+    init(userDefaultsService: UserDefaultsServiceProtocol, localStorageCleaner: LocalStorageCleanerProtocol) {
         self.userDefaultsService = userDefaultsService
+        self.localStorageCleaner = localStorageCleaner
     }
 
     var isLoggedIn: Bool { currentUser != nil }
@@ -53,9 +57,13 @@ final class SessionService: SessionServiceProtocol {
         isRestored = true
     }
 
-    /// Сохраняет пользователя и открывает сессию.
+    /// Очищает локальную БД, сохраняет пользователя и открывает сессию.
+    /// БД уже очищалась при завершении прошлой сессии, но при истечении сессии (2003) экраны не дожидаются
+    /// своих записей в БД — запись, начатая до очистки, могла завершиться после неё. Повторная очистка при входе
+    /// гарантирует, что новый пользователь не увидит данных прежнего.
     /// - Parameter user: пользователь из ответа `/auth/signup` или `/auth/login`.
     func start(user: User) async {
+        await clearLocalStorage()
         currentUser = user
         isExpired = false
         await userDefaultsService.setCurrentUser(user)
@@ -70,8 +78,11 @@ final class SessionService: SessionServiceProtocol {
         await userDefaultsService.setCurrentUser(user)
     }
 
-    /// Удаляет пользователя из памяти и `UserDefaults`.
+    /// Очищает локальную БД, затем удаляет пользователя из памяти и `UserDefaults`.
+    /// БД — кэш данных этого пользователя: следующий пользователь на устройстве не должен увидеть чужие переписки.
+    /// Ошибка очистки не блокирует выход, но логируется.
     func end() async {
+        await clearLocalStorage()
         currentUser = nil
         await userDefaultsService.setCurrentUser(nil)
     }
@@ -87,5 +98,14 @@ final class SessionService: SessionServiceProtocol {
 
     func acknowledgeExpiration() {
         isExpired = false
+    }
+
+    /// Очищает локальную БД. Ошибка не блокирует ни вход, ни выход, но логируется.
+    private func clearLocalStorage() async {
+        do {
+            try await localStorageCleaner.clearAll()
+        } catch {
+            Logger.storage.error("Не удалось очистить локальную БД: \(String(describing: error), privacy: .public)")
+        }
     }
 }

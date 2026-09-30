@@ -22,7 +22,7 @@ final class ProfileViewModelTests: XCTestCase {
         filesService = FilesServiceMock()
         imageFileStore = ImageFileStoreMock()
         userDefaultsService = UserDefaultsServiceMock(currentUser: storedUser)
-        sessionService = SessionService(userDefaultsService: userDefaultsService)
+        sessionService = SessionService(userDefaultsService: userDefaultsService, localStorageCleaner: LocalStorageCleanerMock())
         await sessionService.restore()
         sut = makeSUT(isCameraAvailable: true)
     }

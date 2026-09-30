@@ -18,7 +18,7 @@ final class AppRouterTests: XCTestCase {
     ) -> AppRouter {
         let defaults = UserDefaultsServiceMock(currentUser: storedUser, language: storedLanguage)
         return AppRouter(
-            sessionService: SessionService(userDefaultsService: defaults),
+            sessionService: SessionService(userDefaultsService: defaults, localStorageCleaner: LocalStorageCleanerMock()),
             localizationService: LocalizationService(userDefaultsService: defaults, systemLanguage: .ru),
             minimumSplashDuration: minimumSplashDuration
         )
@@ -61,7 +61,7 @@ final class AppRouterTests: XCTestCase {
     /// Ожидание: корень следует за состоянием сессии: auth → chats → auth → chats → auth.
     func test_root_followsSessionChanges() async {
         let defaults = UserDefaultsServiceMock()
-        let session = SessionService(userDefaultsService: defaults)
+        let session = SessionService(userDefaultsService: defaults, localStorageCleaner: LocalStorageCleanerMock())
         let sut = AppRouter(
             sessionService: session,
             localizationService: LocalizationService(userDefaultsService: defaults, systemLanguage: .ru),

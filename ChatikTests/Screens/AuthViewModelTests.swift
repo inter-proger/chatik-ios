@@ -17,7 +17,7 @@ final class AuthViewModelTests: XCTestCase {
         super.setUp()
         networkService = NetworkServiceMock()
         userDefaultsService = UserDefaultsServiceMock()
-        sessionService = SessionService(userDefaultsService: userDefaultsService)
+        sessionService = SessionService(userDefaultsService: userDefaultsService, localStorageCleaner: LocalStorageCleanerMock())
         localizationService = LocalizationService(userDefaultsService: userDefaultsService, systemLanguage: .ru)
     }
 

@@ -217,6 +217,26 @@ final class CreateSingleConversationViewModelTests: XCTestCase {
         XCTAssertTrue(usersService.requests.isEmpty)
     }
 
+    /// Кейс: в поле поиска введён новый текст, но пауза перед поиском ещё идёт — а на экране показан один из последних
+    /// пользователей прежней выдачи.
+    /// Ожидание: следующая страница запрошена под запрос, по которому загружен список, — иначе к нему дописались бы
+    /// результаты другого поиска с курсором от прежнего.
+    func test_prefetchNextPage_duringSearchDebounce_usesListedQuery() async throws {
+        usersService.stubbedPages = [
+            .success(makePage(ids: Array(2...31))),
+            .success(makePage(ids: [32], hasNext: false)),
+        ]
+        sut.searchText = "iv"
+        await sut.loadFirstPage()
+
+        sut.searchText = "ivan"
+        sut.prefetchNextPageIfNeeded(currentUser: try XCTUnwrap(sut.users.last))
+        await waitUntilNextPageLoaded()
+
+        XCTAssertEqual(usersService.requests.map(\.query), ["iv", "iv"])
+        XCTAssertEqual(sut.users.last?.id, 32)
+    }
+
     /// Кейс: выбранный пользователь есть в результатах нового поиска.
     /// Ожидание: выбор сохраняется.
     func test_search_selectedUserListed_keepsSelection() async throws {

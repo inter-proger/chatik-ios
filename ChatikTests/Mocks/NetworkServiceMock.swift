@@ -14,9 +14,13 @@ final class NetworkServiceMock: NetworkServiceProtocol {
     private(set) var requestedEndpoints: [Endpoint] = []
     private(set) var uploadedFiles: [MultipartFile] = []
     private(set) var clearSessionCookiesCallCount = 0
+    /// Вызывается внутри `request` до возврата результата — пока вызывающий гарантированно в состоянии загрузки.
+    /// `@MainActor`, чтобы из хука можно было читать состояние ViewModel и вызывать её методы.
+    var onRequest: (@MainActor () async -> Void)?
 
     func request<T: Decodable>(_ endpoint: Endpoint) async throws -> T {
         requestedEndpoints.append(endpoint)
+        await onRequest?()
         let value = try stubbedResult.get()
         guard let typed = value as? T else {
             throw NetworkError.decoding("NetworkServiceMock: stubbed \(type(of: value)), expected \(T.self)")

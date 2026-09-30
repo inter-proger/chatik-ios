@@ -8,6 +8,8 @@
 "chat_list.title" = "Chats";
 "chat_list.profile" = "Profile";
 "chat_list.logout" = "Log Out";
+"chat_list.logout.confirm_title" = "Log out of your account?";
+"chat_list.logout.cancel" = "Cancel";
 "chat_list.empty" = "No chats yet";
 "chat_list.create" = "New Chat";
 "chat_list.create.single" = "Direct Message";

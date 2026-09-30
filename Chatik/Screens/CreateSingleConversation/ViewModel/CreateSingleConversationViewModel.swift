@@ -7,17 +7,14 @@ import Foundation
 
 /// Состояние экрана создания личного диалога: постраничный список пользователей с поиском,
 /// выбор собеседника и создание переписки с ним.
+///
+/// Список пользователей хранит `PaginatedList`: он же отбрасывает ответы устаревших поисковых запросов,
+/// не допускает дубликатов и продолжает выдачу по курсору `maxId`.
 @MainActor
 @Observable
 final class CreateSingleConversationViewModel {
-    /// Пользователи для выбора собеседника; текущий пользователь в список не попадает.
-    private(set) var users: [UserRowDisplayModel] = []
     /// Выбранный собеседник. `nil` — никто не выбран, кнопка «Создать» неактивна.
     private(set) var selectedUserId: Int?
-    /// `true`, пока грузится первая страница (при открытии, поиске или pull-to-refresh).
-    private(set) var isLoadingFirstPage = false
-    /// `true`, пока грузится следующая страница.
-    private(set) var isLoadingNextPage = false
     /// `true`, пока выполняется запрос создания переписки.
     private(set) var isCreating = false
     /// Содержимое поля поиска.
@@ -27,19 +24,13 @@ final class CreateSingleConversationViewModel {
 
     /// Размер страницы списка пользователей.
     static let pageSize = 30
-    /// За сколько пользователей до конца списка начинает грузиться следующая страница.
-    private let prefetchThreshold = 5
     /// Пауза после ввода в поле поиска, прежде чем уйдёт запрос.
     private let searchDebounce: Duration
 
-    /// `maxId` для запроса следующей страницы.
-    private var nextMaxId: Int?
-    private var hasMorePages = true
-    /// Номер актуальной загрузки списка. Растёт при каждой загрузке первой страницы: ответы,
-    /// пришедшие для прежнего номера (старый поисковый запрос), отбрасываются.
-    private var listGeneration = 0
-    private var nextPageTask: Task<Void, Never>?
-
+    private let list = PaginatedList<UserRowDisplayModel>()
+    /// Поисковый запрос, под который загружен текущий список. Следующие страницы продолжают именно его:
+    /// `searchText` во время паузы перед поиском уже новый, а курсор `maxId` — ещё от прежней выдачи.
+    private var listedQuery = ""
     private let usersService: UsersServiceProtocol
     private let conversationService: ConversationServiceProtocol
     private let sessionService: SessionServiceProtocol
@@ -65,15 +56,30 @@ final class CreateSingleConversationViewModel {
         self.searchDebounce = searchDebounce
     }
 
-    /// `true`, если выбран собеседник и переписка ещё не создаётся.
-    var isCreateButtonEnabled: Bool {
-        guard !isCreating else { return false }
-        return selectedUserId != nil
+    /// Пользователи для выбора собеседника; текущий пользователь в список не попадает.
+    var users: [UserRowDisplayModel] {
+        list.items
+    }
+
+    /// `true`, пока грузится первая страница (при открытии, поиске или pull-to-refresh).
+    var isLoadingFirstPage: Bool {
+        list.isLoadingFirstPage
+    }
+
+    /// `true`, пока грузится следующая страница.
+    var isLoadingNextPage: Bool {
+        list.isLoadingNextPage
     }
 
     /// `true`, если загружать нечего: список пуст и первая страница не грузится.
     var isEmpty: Bool {
-        users.isEmpty && !isLoadingFirstPage
+        list.isEmpty
+    }
+
+    /// `true`, если выбран собеседник и переписка ещё не создаётся.
+    var isCreateButtonEnabled: Bool {
+        guard !isCreating else { return false }
+        return selectedUserId != nil
     }
 
     // MARK: - Список
@@ -92,54 +98,57 @@ final class CreateSingleConversationViewModel {
     /// Загружает список заново с первой страницы (pull-to-refresh, смена поискового запроса).
     /// Прежний список остаётся на экране до ответа; выбор собеседника сохраняется, если он есть в новом списке.
     func loadFirstPage() async {
-        nextPageTask?.cancel()
-        isLoadingNextPage = false
-        listGeneration += 1
-        let generation = listGeneration
-        isLoadingFirstPage = true
-        // Флаг снимает только актуальная загрузка: если за время запроса началась новая, флаг принадлежит ей.
-        defer { if generation == listGeneration { isLoadingFirstPage = false } }
-
-        do {
-            let page = try await usersService.fetchUsers(query: searchText, maxId: nil, count: Self.pageSize)
-            guard generation == listGeneration else { return }
-            users = []
-            apply(page)
+        let query = searchText
+        let outcome = await list.refresh { context in try await loadPage(context, query: query) }
+        if case .applied = outcome {
+            listedQuery = query
             keepSelectionIfListed()
-        } catch {
-            // Список остаётся прежним, но пагинация к нему больше не относится: следующая страница ушла бы
-            // с `maxId` от прошлого запроса и дописала бы к списку результаты другого поиска.
-            guard generation == listGeneration else { return }
-            hasMorePages = false
-            nextMaxId = nil
-            show(error, generation: generation)
         }
+        show(outcome)
     }
 
     /// Начинает загрузку следующей страницы, если показан один из последних пользователей списка.
+    /// Страница запрашивается под запрос, по которому загружен список, а не под текущий текст поля поиска.
     /// - Parameter user: пользователь, который появился на экране.
     func prefetchNextPageIfNeeded(currentUser user: UserRowDisplayModel) {
-        guard hasMorePages, !isLoadingFirstPage, !isLoadingNextPage else { return }
-        guard let index = users.firstIndex(where: { $0.id == user.id }) else { return }
-        guard index >= users.count - prefetchThreshold else { return }
-        isLoadingNextPage = true
-        nextPageTask = Task { await loadNextPage() }
+        let query = listedQuery
+        list.prefetchNextPageIfNeeded(
+            currentItem: user,
+            load: { context in try await self.loadPage(context, query: query) },
+            onOutcome: show
+        )
     }
 
-    /// Загружает следующую страницу и дописывает её к списку.
-    /// Флаг загрузки поднимает вызывающий (`prefetchNextPageIfNeeded`) — до старта задачи,
-    /// чтобы повторные появления строк на экране не запускали вторую загрузку.
-    func loadNextPage() async {
-        let generation = listGeneration
-        defer { if generation == listGeneration { isLoadingNextPage = false } }
+    /// Запрашивает страницу пользователей и приводит её к строкам списка,
+    /// исключая текущего пользователя — переписку с самим собой создать нельзя.
+    /// - Parameters:
+    ///   - context: курсор `maxId` предыдущей страницы; для первой страницы — `nil`.
+    ///   - query: поисковый запрос.
+    private func loadPage(
+        _ context: PaginationContext,
+        query: String
+    ) async throws -> PaginatedListPage<UserRowDisplayModel> {
+        let page = try await usersService.fetchUsers(query: query, maxId: context.cursor, count: Self.pageSize)
+        let currentUserId = sessionService.currentUser?.userId
+        return PaginatedListPage(
+            items: page.users.filter { $0.userId != currentUserId }.map(UserRowDisplayModel.init),
+            hasNext: page.hasNext,
+            nextCursor: page.nextMaxId
+        )
+    }
 
-        do {
-            let page = try await usersService.fetchUsers(query: searchText, maxId: nextMaxId, count: Self.pageSize)
-            guard generation == listGeneration else { return }
-            apply(page)
-        } catch {
-            show(error, generation: generation)
-        }
+    /// Показывает сообщение, если загрузка страницы не удалась. Устаревшие ответы игнорируются.
+    /// - Parameter outcome: итог загрузки страницы.
+    private func show(_ outcome: PaginationOutcome) {
+        guard case .failed(let error) = outcome else { return }
+        errorMessage = ErrorMessages.message(for: error)
+    }
+
+    /// Сбрасывает выбор, если выбранного пользователя нет в новом списке, — чтобы нельзя было создать
+    /// переписку с тем, кого не видно на экране.
+    private func keepSelectionIfListed() {
+        guard let selectedUserId, !list.contains(id: selectedUserId) else { return }
+        self.selectedUserId = nil
     }
 
     // MARK: - Выбор и создание
@@ -177,34 +186,5 @@ final class CreateSingleConversationViewModel {
         } catch {
             errorMessage = ErrorMessages.message(for: error)
         }
-    }
-
-    // MARK: - Private
-
-    /// Дописывает страницу к списку, исключив текущего пользователя, и запоминает, есть ли ещё страницы.
-    /// - Parameter page: ответ сервера.
-    private func apply(_ page: UsersPage) {
-        let currentUserId = sessionService.currentUser?.userId
-        users += page.users
-            .filter { $0.userId != currentUserId }
-            .map(UserRowDisplayModel.init)
-        nextMaxId = page.nextMaxId
-        hasMorePages = page.hasNext
-    }
-
-    /// Сбрасывает выбор, если выбранного пользователя нет в новом списке, — чтобы нельзя было создать
-    /// переписку с тем, кого не видно на экране.
-    private func keepSelectionIfListed() {
-        guard let selectedUserId, !users.contains(where: { $0.id == selectedUserId }) else { return }
-        self.selectedUserId = nil
-    }
-
-    /// Показывает ошибку загрузки, если она относится к актуальному списку и загрузка не была отменена.
-    /// - Parameters:
-    ///   - error: ошибка сервиса.
-    ///   - generation: номер загрузки, в которой произошла ошибка.
-    private func show(_ error: Error, generation: Int) {
-        guard generation == listGeneration, !Task.isCancelled else { return }
-        errorMessage = ErrorMessages.message(for: error)
     }
 }

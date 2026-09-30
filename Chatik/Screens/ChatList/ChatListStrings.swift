@@ -13,6 +13,8 @@ enum ChatListStrings {
     static var title: String { localized("chat_list.title") }
     static var profile: String { localized("chat_list.profile") }
     static var logout: String { localized("chat_list.logout") }
+    static var logoutConfirmationTitle: String { localized("chat_list.logout.confirm_title") }
+    static var logoutCancel: String { localized("chat_list.logout.cancel") }
     static var empty: String { localized("chat_list.empty") }
     static var rowUntitled: String { localized("chat_list.row.untitled") }
     static var create: String { localized("chat_list.create") }

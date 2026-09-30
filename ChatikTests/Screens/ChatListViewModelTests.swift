@@ -293,6 +293,63 @@ final class ChatListViewModelTests: XCTestCase {
         XCTAssertEqual(router.presentedSheet, .createSingleConversation)
     }
 
+    // MARK: - Выход
+
+    /// Кейс: нажатие на кнопку «Выйти».
+    /// Ожидание: показан попап подтверждения, сам выход не запускается.
+    func test_didTapLogout_presentsConfirmation() {
+        sut.didTapLogout()
+
+        XCTAssertTrue(sut.isLogoutConfirmationPresented)
+        XCTAssertTrue(networkService.requestedEndpoints.isEmpty)
+    }
+
+    /// Кейс: нажатие на кнопку «Выйти», пока выход уже выполняется.
+    /// Ожидание: повторный попап не показывается.
+    func test_didTapLogout_whileLoggingOut_doesNotPresentConfirmation() async {
+        let sut: ChatListViewModel = sut
+        var isPresentedDuringLogout = true
+        networkService.stubbedResult = .success(EmptyResponse())
+        networkService.onRequest = {
+            sut.didTapLogout()
+            isPresentedDuringLogout = sut.isLogoutConfirmationPresented
+        }
+
+        await sut.logout()
+
+        XCTAssertFalse(isPresentedDuringLogout)
+    }
+
+    /// Кейс: подтверждение в попапе.
+    /// Ожидание: запрос выхода уходит на сервер, сессия завершается.
+    func test_confirmLogout_startsLogout() async {
+        networkService.stubbedResult = .success(EmptyResponse())
+        sut.didTapLogout()
+
+        sut.didTapConfirmLogout()
+        await yieldUntil { !sessionService.isLoggedIn }
+
+        XCTAssertFalse(sessionService.isLoggedIn)
+    }
+
+    /// Кейс: подтверждение в попапе, пока выход уже выполняется.
+    /// Ожидание: повторный запрос не уходит — даже если дать ему время дойти до сети.
+    func test_confirmLogout_whileLoggingOut_doesNotStartAgain() async {
+        let sut: ChatListViewModel = sut
+        let repeatedRequest = expectation(description: "Повторный запрос выхода")
+        repeatedRequest.isInverted = true
+        networkService.stubbedResult = .success(EmptyResponse())
+        networkService.onRequest = { [unowned self] in
+            networkService.onRequest = { repeatedRequest.fulfill() }
+            sut.didTapConfirmLogout()
+        }
+
+        await sut.logout()
+        await fulfillment(of: [repeatedRequest], timeout: 0.2)
+
+        XCTAssertEqual(networkService.requestedEndpoints.count, 1)
+    }
+
     /// Кейс: сервер успешно завершил сессию.
     /// Ожидание: сессия завершена, пользователь удалён из `UserDefaults`, ошибки нет.
     func test_logout_success_endsSession() async {

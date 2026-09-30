@@ -38,6 +38,10 @@ struct ChatListView: View {
         } message: { message in
             Text(message)
         }
+        .alert(ChatListStrings.logoutConfirmationTitle, isPresented: $viewModel.isLogoutConfirmationPresented) {
+            Button(ChatListStrings.logoutCancel, role: .cancel) {}
+            Button(ChatListStrings.logout, role: .destructive, action: viewModel.didTapConfirmLogout)
+        }
     }
 
     /// Прелоадер первой страницы или сообщение о пустом списке поверх списка.

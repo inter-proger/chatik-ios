@@ -5,7 +5,8 @@
 
 import SwiftUI
 
-/// Экран списка чатов. Пока — заглушка с кнопками профиля, создания диалога и выхода.
+/// Экран списка чатов: список переписок с бесшовной подгрузкой страниц, кнопки профиля,
+/// создания диалога и выхода.
 struct ChatListView: View {
     @State private var viewModel: ChatListViewModel
 
@@ -14,23 +15,39 @@ struct ChatListView: View {
     }
 
     var body: some View {
-        Text(ChatListStrings.empty)
-            .foregroundStyle(.secondary)
-            .navigationTitle(ChatListStrings.title)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    profileButton
-                }
-                ToolbarItemGroup(placement: .topBarTrailing) {
-                    logoutButton
-                    createMenu
-                }
+        ConversationsListView(
+            conversations: viewModel.conversations,
+            isLoadingNextPage: viewModel.isLoadingNextPage,
+            onAppear: viewModel.prefetchNextPageIfNeeded
+        )
+        .overlay { stateOverlay }
+        .refreshable { await viewModel.loadFirstPage() }
+        .task { await viewModel.loadFirstPage() }
+        .navigationTitle(ChatListStrings.title)
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                profileButton
             }
-            .alert(CommonStrings.errorTitle, isPresented: $viewModel.errorMessage.isPresent(), presenting: viewModel.errorMessage) { _ in
-                Button(CommonStrings.ok, role: .cancel) {}
-            } message: { message in
-                Text(message)
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                logoutButton
+                createMenu
             }
+        }
+        .alert(CommonStrings.errorTitle, isPresented: $viewModel.errorMessage.isPresent(), presenting: viewModel.errorMessage) { _ in
+            Button(CommonStrings.ok, role: .cancel) {}
+        } message: { message in
+            Text(message)
+        }
+    }
+
+    /// Прелоадер первой страницы или сообщение о пустом списке поверх списка.
+    @ViewBuilder
+    private var stateOverlay: some View {
+        if viewModel.isLoadingFirstPage && viewModel.conversations.isEmpty {
+            ProgressView()
+        } else if viewModel.isEmpty {
+            ContentUnavailableView(ChatListStrings.empty, systemImage: "bubble.left.and.bubble.right")
+        }
     }
 
     /// Кнопка открытия профиля в виде аватарки текущего пользователя.

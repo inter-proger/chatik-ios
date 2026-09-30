@@ -39,6 +39,7 @@ enum PreviewDependencies {
         ChatListViewModel(
             authService: AuthServicePreviewMock(logoutResult: logoutResult),
             sessionService: sessionService,
+            conversationService: ConversationServicePreviewMock(),
             router: ChatListRouter()
         )
     }
@@ -158,7 +159,28 @@ final class ConversationServicePreviewMock: ConversationServiceProtocol {
 
     func fetchConversations(offset: Int?, count: Int?) async throws -> ConversationsPage {
         try await Task.sleep(for: delay)
-        return ConversationsPage(conversations: [], hasNext: false)
+        guard offset == nil else { return ConversationsPage(conversations: [], hasNext: false) }
+        return ConversationsPage(
+            conversations: [
+                Conversation(
+                    conversationId: 1,
+                    type: .single,
+                    memberIds: [1, 2],
+                    name: nil,
+                    avatar: nil,
+                    opponentUser: User(userId: 2, login: "maria", name: "Мария Иванова", avatar: nil)
+                ),
+                Conversation(
+                    conversationId: 2,
+                    type: .group,
+                    memberIds: [1, 2, 3],
+                    name: "Команда",
+                    avatar: nil,
+                    opponentUser: nil
+                ),
+            ],
+            hasNext: false
+        )
     }
 }
 

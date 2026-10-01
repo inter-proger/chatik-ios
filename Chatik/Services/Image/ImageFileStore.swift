@@ -12,7 +12,7 @@ protocol ImageFileStoreProtocol: Sendable {
     /// в JPEG в исходном разрешении и записывается во временный файл. Файл, не уложившийся в лимит числа
     /// пикселей или размера, заменяется уменьшенной JPEG-копией. Работа выполняется вне main thread.
     func storeForUpload(_ image: PickedImage) async throws -> ImageFile
-    /// Удаляет временный файл после загрузки. Отсутствие файла — не ошибка.
+    /// Удаляет временный файл после загрузки — в фоне, не дожидаясь. Отсутствие файла — не ошибка.
     func remove(_ file: ImageFile)
 }
 
@@ -73,10 +73,14 @@ final class ImageFileStore: ImageFileStoreProtocol, Sendable {
         }.value
     }
 
-    /// Удаляет файл; ошибка удаления (в том числе отсутствие файла) игнорируется.
+    /// Удаляет файл в фоновой задаче: вызывается с main (из ViewModel), а работа с диском его не блокирует.
+    /// Ошибка удаления (в том числе отсутствие файла) игнорируется.
     /// - Parameter file: временный файл, созданный для загрузки.
     func remove(_ file: ImageFile) {
-        try? FileManager.default.removeItem(at: file.url)
+        let url = file.url
+        Task.detached(priority: .utility) {
+            try? FileManager.default.removeItem(at: url)
+        }
     }
 
     // MARK: - Private

@@ -47,6 +47,20 @@ final class CoreDataStackTests: XCTestCase {
         XCTAssertEqual(conversations, [.groupStub])
     }
 
+    /// Кейс: storage-сервис работает через контейнер, хранилище которого открывается в фоне; запрос пришёл сразу.
+    /// Ожидание: запрос дожидается открытия хранилища — запись и чтение проходят без ошибок.
+    func test_backgroundLoadedContainer_waitsForStoresBeforeQueries() async throws {
+        let storeURL = storeURL!
+        let storage = ConversationStorageService(container: BackgroundLoadedContainer {
+            CoreDataStack.makeContainer(storeURL: storeURL)
+        })
+
+        try await storage.save(conversation: .groupStub)
+
+        let conversations = try await storage.fetchAll()
+        XCTAssertEqual(conversations, [.groupStub])
+    }
+
     /// Кейс: хранилище создано первой версией модели (собеседник переписки — связь с `UserEntity`, без `cachedAt`).
     /// Ожидание: при открытии текущей версией данные мигрированы, а не удалены: переписки и пользователи на месте,
     /// `opponentUserId` и `cachedAt` пусты — в первой версии их не было.

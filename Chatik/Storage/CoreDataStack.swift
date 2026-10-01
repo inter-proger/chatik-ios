@@ -7,7 +7,7 @@ import CoreData
 import os
 
 /// Фабрика контейнеров CoreData. Контейнер передаётся в storage-сервисы через `init`
-/// (в приложении — из `DIContainer`).
+/// (в приложении — из `DIContainer`, открывается в фоне через `BackgroundLoadedContainer`).
 enum CoreDataStack {
     /// Модель загружается один раз на процесс и переиспользуется всеми контейнерами: иначе в тестах
     /// несколько моделей претендуют на одни и те же классы Entity.
@@ -74,13 +74,57 @@ enum CoreDataStack {
     }
 }
 
-extension NSPersistentContainer {
+/// Источник контейнера CoreData для storage-сервисов: готовый контейнер (тесты, превью) или контейнер,
+/// хранилища которого открываются в фоне (приложение).
+protocol PersistentContainerProvider {
+    /// Контейнер с открытыми хранилищами; если открытие ещё идёт — дожидается его.
+    func loadedContainer() async -> NSPersistentContainer
+}
+
+extension PersistentContainerProvider {
+    /// Выполняет блок в новом фоновом контексте.
+    /// - Parameter block: чтение из контекста.
+    func performRead<T>(_ block: @escaping (NSManagedObjectContext) throws -> T) async throws -> T {
+        try await loadedContainer().performBackgroundTask(block)
+    }
+
     /// Выполняет блок в новом фоновом контексте с политикой слияния «новые данные побеждают».
     /// - Parameter block: работа с контекстом; `save()` вызывается внутри блока.
     func performWrite<T>(_ block: @escaping (NSManagedObjectContext) throws -> T) async throws -> T {
-        try await performBackgroundTask { context in
+        try await loadedContainer().performBackgroundTask { context in
             context.mergePolicy = NSMergeByPropertyObjectTrumpMergePolicy
             return try block(context)
         }
+    }
+}
+
+/// Контейнер, созданный с уже открытыми хранилищами, отдаёт сам себя.
+extension NSPersistentContainer: PersistentContainerProvider {
+    func loadedContainer() async -> NSPersistentContainer {
+        self
+    }
+}
+
+/// Контейнер, хранилища которого открываются в фоновой задаче: открытие SQLite (а при сбое — пересоздание
+/// хранилища и миграция) не блокирует main при старте приложения. Запросы к БД, пришедшие раньше, дожидаются открытия.
+///
+/// `@unchecked Sendable`: единственное состояние — задача открытия; контейнер после открытия используется
+/// только через `performBackgroundTask`, безопасный для вызова из любого потока.
+final class BackgroundLoadedContainer: PersistentContainerProvider, @unchecked Sendable {
+    /// Обёртка, чтобы вернуть контейнер из фоновой задачи: `NSPersistentContainer` не объявлен `Sendable`.
+    private struct Loaded: @unchecked Sendable {
+        let container: NSPersistentContainer
+    }
+
+    private let loading: Task<Loaded, Never>
+
+    /// Сразу начинает открывать контейнер в фоне.
+    /// - Parameter makeContainer: создаёт контейнер и синхронно открывает его хранилища.
+    init(_ makeContainer: @escaping @Sendable () -> NSPersistentContainer) {
+        loading = Task.detached(priority: .userInitiated) { Loaded(container: makeContainer()) }
+    }
+
+    func loadedContainer() async -> NSPersistentContainer {
+        await loading.value.container
     }
 }

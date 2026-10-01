@@ -30,7 +30,8 @@ final class DIContainer {
     let messageTextValidator: MessageTextValidatorProtocol
 
     private init() {
-        let storageContainer = CoreDataStack.makeContainer()
+        // Хранилище открывается в фоне: открытие SQLite и возможная миграция не задерживают первый кадр.
+        let storageContainer = BackgroundLoadedContainer { CoreDataStack.makeContainer() }
         let userDefaultsService = UserDefaultsService()
         let sessionService = SessionService(
             userDefaultsService: userDefaultsService,

@@ -59,16 +59,20 @@ final class NetworkService: NetworkServiceProtocol {
     }
 
     /// Выполняет запрос к API, проверяет HTTP-статус и общую обёртку `{status, response, errorCode}`.
+    /// `@concurrent`: сборка запроса, логирование и декодирование JSON идут в пуле потоков, а не на акторе
+    /// вызывающего — иначе вызов из ViewModel выполнял бы их на main.
     /// - Parameter endpoint: описание запроса (path, метод, параметры, заголовки).
     /// - Returns: декодированное поле `response`.
     /// - Throws: `NetworkError` при транспортной ошибке, неверном HTTP-статусе,
     ///   `status = 0` от сервера или ошибке декодирования.
+    @concurrent
     func request<T: Decodable>(_ endpoint: Endpoint) async throws -> T {
         try await send(makeURLRequest(for: endpoint), for: endpoint)
     }
 
     /// Загружает файл через `multipart/form-data` из временного файла с телом; обработка ответа такая же,
     /// как у `request(_:)`. Временный файл удаляется после отправки независимо от результата.
+    /// `@concurrent`: тело (с копией загружаемого файла) пишется на диск в пуле потоков, а не на main.
     /// - Parameters:
     ///   - endpoint: описание запроса; `parameters` уходят текстовыми полями формы.
     ///   - file: файл, который уходит файловой частью формы.
@@ -76,6 +80,7 @@ final class NetworkService: NetworkServiceProtocol {
     /// - Returns: декодированное поле `response`.
     /// - Throws: `NetworkError.unsupportedMethod`, если `endpoint.method != .post`, и `NetworkError.fileAccess`,
     ///   если тело не удалось собрать на диске — в обоих случаях запрос не отправляется.
+    @concurrent
     func upload<T: Decodable>(
         _ endpoint: Endpoint,
         file: MultipartFile,

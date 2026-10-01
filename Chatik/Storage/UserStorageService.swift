@@ -33,13 +33,13 @@ protocol UserStorageServiceProtocol: Sendable {
 
 /// Хранилище пользователей в CoreData. Все операции выполняются в фоновых контекстах.
 ///
-/// `@unchecked Sendable`: единственное состояние — `NSPersistentContainer`, который не объявлен `Sendable`,
+/// `@unchecked Sendable`: единственное состояние — источник `NSPersistentContainer`, который не объявлен `Sendable`,
 /// но используется только через `performBackgroundTask`, безопасный для вызова из любого потока;
 /// `viewContext` и другие контексты, привязанные к потоку, не используются.
 final class UserStorageService: UserStorageServiceProtocol, @unchecked Sendable {
-    private let container: NSPersistentContainer
+    private let container: PersistentContainerProvider
 
-    init(container: NSPersistentContainer) {
+    init(container: PersistentContainerProvider) {
         self.container = container
     }
 
@@ -70,7 +70,7 @@ final class UserStorageService: UserStorageServiceProtocol, @unchecked Sendable 
 
     /// Возвращает всех сохранённых пользователей; записи с битыми данными пропускаются.
     func fetchAll() async throws -> [User] {
-        try await container.performBackgroundTask { context in
+        try await container.performRead { context in
             try context.fetch(UserEntity.makeFetchRequest()).compactMap(User.init(entity:))
         }
     }
@@ -78,7 +78,7 @@ final class UserStorageService: UserStorageServiceProtocol, @unchecked Sendable 
     /// Ищет пользователя по идентификатору.
     /// - Parameter id: идентификатор искомого пользователя.
     func find(byId id: Int) async throws -> User? {
-        try await container.performBackgroundTask { context in
+        try await container.performRead { context in
             try context.fetch(UserEntity.makeFetchRequest(id: id)).first.flatMap(User.init(entity:))
         }
     }
@@ -87,7 +87,7 @@ final class UserStorageService: UserStorageServiceProtocol, @unchecked Sendable 
     /// - Parameter ids: идентификаторы искомых пользователей.
     /// - Returns: найденные пользователи со временем получения, в произвольном порядке.
     func findStored(byIds ids: [Int]) async throws -> [StoredUser] {
-        try await container.performBackgroundTask { context in
+        try await container.performRead { context in
             try UserEntity.fetchById(ids: ids, in: context).values.compactMap { entity in
                 User(entity: entity).map { StoredUser(user: $0, cachedAt: entity.cachedAt ?? .distantPast) }
             }

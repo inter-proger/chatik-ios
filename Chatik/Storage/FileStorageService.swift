@@ -20,9 +20,9 @@ protocol FileStorageServiceProtocol {
 
 /// Хранилище файлов в CoreData. Все операции выполняются в фоновых контекстах.
 final class FileStorageService: FileStorageServiceProtocol {
-    private let container: NSPersistentContainer
+    private let container: PersistentContainerProvider
 
-    init(container: NSPersistentContainer) {
+    init(container: PersistentContainerProvider) {
         self.container = container
     }
 
@@ -44,7 +44,7 @@ final class FileStorageService: FileStorageServiceProtocol {
 
     /// Возвращает все сохранённые файлы; записи с битыми данными пропускаются.
     func fetchAll() async throws -> [RemoteFile] {
-        try await container.performBackgroundTask { context in
+        try await container.performRead { context in
             try context.fetch(FileEntity.makeFetchRequest()).compactMap(RemoteFile.init(entity:))
         }
     }
@@ -52,7 +52,7 @@ final class FileStorageService: FileStorageServiceProtocol {
     /// Ищет файл по идентификатору.
     /// - Parameter id: идентификатор искомого файла.
     func find(byId id: Int) async throws -> RemoteFile? {
-        try await container.performBackgroundTask { context in
+        try await container.performRead { context in
             try context.fetch(FileEntity.makeFetchRequest(id: id)).first.flatMap(RemoteFile.init(entity:))
         }
     }

@@ -231,15 +231,16 @@ final class ImageFileStoreTests: XCTestCase {
     // MARK: - Удаление
 
     /// Кейс: удаление существующего временного файла, затем повторное удаление.
-    /// Ожидание: файл удалён; повторный вызов для отсутствующего файла не падает.
-    func test_remove_deletesFileAndIgnoresMissing() throws {
+    /// Ожидание: файл удалён (в фоне, поэтому проверка ждёт); повторный вызов для отсутствующего файла не падает.
+    @MainActor
+    func test_remove_deletesFileAndIgnoresMissing() async throws {
         let url = try TemporaryFile.make(Data([0xFF, 0xD8]), fileExtension: "jpg")
         let file = ImageFile(url: url, type: .jpeg)
 
         sut.remove(file)
         sut.remove(file)
 
-        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+        await waitUntil { !FileManager.default.fileExists(atPath: url.path) }
     }
 
     // MARK: - Helpers

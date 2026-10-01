@@ -27,9 +27,9 @@ protocol ConversationStorageServiceProtocol {
 /// собеседник хранится только как id, сами пользователи — в кэше пользователей. Все операции выполняются
 /// в фоновых контекстах.
 final class ConversationStorageService: ConversationStorageServiceProtocol {
-    private let container: NSPersistentContainer
+    private let container: PersistentContainerProvider
 
-    init(container: NSPersistentContainer) {
+    init(container: PersistentContainerProvider) {
         self.container = container
     }
 
@@ -84,7 +84,7 @@ final class ConversationStorageService: ConversationStorageServiceProtocol {
     /// Выбирает переписки по убыванию `conversationId`, пропуская записи с битыми данными.
     /// - Parameter limit: максимальное число записей; `nil` — без ограничения.
     private func fetch(limit: Int?) async throws -> [Conversation] {
-        try await container.performBackgroundTask { context in
+        try await container.performRead { context in
             let request = ConversationEntity.makeFetchRequest()
             request.sortDescriptors = [NSSortDescriptor(key: ConversationEntity.idKey, ascending: false)]
             request.fetchLimit = limit ?? 0
@@ -95,7 +95,7 @@ final class ConversationStorageService: ConversationStorageServiceProtocol {
     /// Ищет переписку по идентификатору.
     /// - Parameter id: идентификатор искомой переписки.
     func find(byId id: Int) async throws -> Conversation? {
-        try await container.performBackgroundTask { context in
+        try await container.performRead { context in
             try context.fetch(ConversationEntity.makeFetchRequest(id: id)).first.flatMap(Conversation.init(entity:))
         }
     }

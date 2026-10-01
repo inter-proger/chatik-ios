@@ -36,6 +36,7 @@ enum ErrorMessages {
         case NetworkError.Code.invalidPassword: return CommonStrings.errorInvalidPassword
         case NetworkError.Code.invalidName: return CommonStrings.errorInvalidName
         case NetworkError.Code.invalidParameters: return CommonStrings.errorInvalidParameters
+        case NetworkError.Code.invalidText: return CommonStrings.errorInvalidText
         case NetworkError.Code.loginAlreadyTaken: return CommonStrings.errorLoginAlreadyTaken
         case NetworkError.Code.wrongCredentials: return CommonStrings.errorWrongCredentials
         case NetworkError.Code.unauthorized: return CommonStrings.errorUnauthorized
@@ -46,6 +47,10 @@ enum ErrorMessages {
         case NetworkError.Code.fileSaveFailed: return CommonStrings.errorFileSaveFailed
         case NetworkError.Code.userNotFound: return CommonStrings.errorUserNotFound
         case NetworkError.Code.conversationWithSelf: return CommonStrings.errorConversationWithSelf
+        case NetworkError.Code.conversationNotFound: return CommonStrings.errorConversationNotFound
+        case NetworkError.Code.messageNotFound: return CommonStrings.errorMessageNotFound
+        case NetworkError.Code.messageBlockNotFound: return CommonStrings.errorMessageBlockNotFound
+        case NetworkError.Code.messageEditForbidden: return CommonStrings.errorMessageEditForbidden
         case NetworkError.Code.internalServerError: return CommonStrings.errorInternalServer
         default: return CommonStrings.errorUnknown
         }

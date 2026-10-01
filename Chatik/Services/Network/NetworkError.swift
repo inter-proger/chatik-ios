@@ -57,6 +57,7 @@ extension NetworkError {
         static let invalidPassword = 1002
         static let invalidName = 1003
         static let invalidParameters = 1004
+        static let invalidText = 1005
         static let loginAlreadyTaken = 2001
         static let wrongCredentials = 2002
         static let unauthorized = 2003
@@ -67,6 +68,10 @@ extension NetworkError {
         static let fileSaveFailed = 3005
         static let userNotFound = 4001
         static let conversationWithSelf = 5001
+        static let conversationNotFound = 5002
+        static let messageNotFound = 6001
+        static let messageBlockNotFound = 6002
+        static let messageEditForbidden = 6003
         /// Внутренняя ошибка сервера; приходит с HTTP-статусом 500.
         static let internalServerError = 9001
     }

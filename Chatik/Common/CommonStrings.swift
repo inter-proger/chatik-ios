@@ -20,6 +20,7 @@ enum CommonStrings {
     static var errorInvalidPassword: String { localized("common.error.api.invalid_password") }
     static var errorInvalidName: String { localized("common.error.api.invalid_name") }
     static var errorInvalidParameters: String { localized("common.error.api.invalid_parameters") }
+    static var errorInvalidText: String { localized("common.error.api.invalid_text") }
     static var errorLoginAlreadyTaken: String { localized("common.error.api.login_already_taken") }
     static var errorWrongCredentials: String { localized("common.error.api.wrong_credentials") }
     static var errorUnauthorized: String { localized("common.error.api.unauthorized") }
@@ -30,6 +31,10 @@ enum CommonStrings {
     static var errorFileSaveFailed: String { localized("common.error.api.file_save_failed") }
     static var errorUserNotFound: String { localized("common.error.api.user_not_found") }
     static var errorConversationWithSelf: String { localized("common.error.api.conversation_with_self") }
+    static var errorConversationNotFound: String { localized("common.error.api.conversation_not_found") }
+    static var errorMessageNotFound: String { localized("common.error.api.message_not_found") }
+    static var errorMessageBlockNotFound: String { localized("common.error.api.message_block_not_found") }
+    static var errorMessageEditForbidden: String { localized("common.error.api.message_edit_forbidden") }
     static var errorInternalServer: String { localized("common.error.api.internal_server") }
 
     /// Возвращает локализованную строку по ключу из таблицы `Common`.

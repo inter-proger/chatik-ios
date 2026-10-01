@@ -19,6 +19,12 @@ enum LoginValidationError: Equatable {
     case tooLong(maxLength: Int)
 }
 
+/// Ошибка валидации текста сообщения перед отправкой или редактированием.
+enum MessageTextValidationError: Equatable {
+    case empty
+    case tooLong(maxLength: Int)
+}
+
 /// Ошибка валидации пароля при регистрации. Возвращается первая по порядку нарушенная проверка.
 enum PasswordValidationError: Equatable {
     case tooShort

@@ -16,6 +16,7 @@ final class DIContainer {
     let filesService: FilesServiceProtocol
     let usersService: UsersServiceProtocol
     let conversationService: ConversationServiceProtocol
+    let messageService: MessageServiceProtocol
     let imageFileStore: ImageFileStoreProtocol
     let fileStorage: FileStorageServiceProtocol
     let userStorage: UserStorageServiceProtocol
@@ -25,6 +26,7 @@ final class DIContainer {
     let localizationService: LocalizationServiceProtocol
     let signupValidator: SignupValidatorProtocol
     let loginValidator: LoginValidatorProtocol
+    let messageTextValidator: MessageTextValidatorProtocol
 
     private init() {
         let storageContainer = CoreDataStack.makeContainer()
@@ -44,11 +46,13 @@ final class DIContainer {
         self.filesService = FilesService(networkService: networkService)
         self.usersService = UsersService(networkService: networkService)
         self.conversationService = ConversationService(networkService: networkService)
+        self.messageService = MessageService(networkService: networkService)
         self.imageFileStore = ImageFileStore()
         self.fileStorage = FileStorageService(container: storageContainer)
         self.userStorage = UserStorageService(container: storageContainer)
         self.conversationStorage = ConversationStorageService(container: storageContainer)
         self.signupValidator = SignupValidator()
         self.loginValidator = LoginValidator()
+        self.messageTextValidator = MessageTextValidator()
     }
 }

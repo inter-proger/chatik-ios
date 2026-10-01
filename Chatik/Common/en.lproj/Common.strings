@@ -15,6 +15,7 @@
 "common.error.api.invalid_password" = "Invalid password";
 "common.error.api.invalid_name" = "Invalid name";
 "common.error.api.invalid_parameters" = "Invalid request parameters";
+"common.error.api.invalid_text" = "The message must be from 1 to 4096 characters long";
 "common.error.api.login_already_taken" = "This username is already taken";
 "common.error.api.wrong_credentials" = "Wrong username or password";
 "common.error.api.unauthorized" = "Session expired. Please log in again";
@@ -25,5 +26,9 @@
 "common.error.api.file_save_failed" = "Failed to save the file. Please try again";
 "common.error.api.user_not_found" = "User not found";
 "common.error.api.conversation_with_self" = "You cannot start a conversation with yourself";
+"common.error.api.conversation_not_found" = "Conversation not found";
+"common.error.api.message_not_found" = "Message not found";
+"common.error.api.message_block_not_found" = "Messages not found";
+"common.error.api.message_edit_forbidden" = "You can only edit your own messages";
 
 "common.error.api.internal_server" = "Server error. Please try again later";

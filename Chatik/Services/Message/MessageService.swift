@@ -44,7 +44,8 @@ final class MessageService: MessageServiceProtocol {
     /// Отправляет сообщение через `POST /messages/send`.
     /// - Parameters:
     ///   - conversationId: переписка, в которую уходит сообщение.
-    ///   - text: текст; после обрезки пробелов должен быть длиной 1–4096 символов (иначе ошибка 1005).
+    ///   - text: текст; после обрезки краевых пробелов и невидимых символов (см. `MessageTextValidator`) должен быть
+    ///     длиной 1–4096 символов, иначе ошибка 1005.
     /// - Returns: созданное сообщение.
     func send(conversationId: Int, text: String) async throws -> Message {
         let response: MessageResponse = try await networkService.request(MessageEndpoint.send(conversationId: conversationId, text: text))
@@ -55,7 +56,8 @@ final class MessageService: MessageServiceProtocol {
     /// - Parameters:
     ///   - messageId: сообщение текущего пользователя; чужое — ошибка 6003.
     ///   - newText: новый текст с теми же ограничениями, что и при отправке.
-    /// - Returns: сообщение с `isEdited == true` и новым `updatedAt`.
+    /// - Returns: сообщение с `isEdited == true` и новым `updatedAt`. Если текст после обрезки совпал с текущим,
+    ///   сервер сообщение не меняет и возвращает его как есть — `isEdited` и `updatedAt` прежние.
     func edit(messageId: Int, newText: String) async throws -> Message {
         let response: MessageResponse = try await networkService.request(MessageEndpoint.edit(messageId: messageId, newText: newText))
         return response.message

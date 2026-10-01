@@ -5,7 +5,9 @@
 
 import Foundation
 
-protocol NetworkServiceProtocol {
+/// `Sendable`: сетевой слой общий для всех сервисов и вызывается из любых потоков и акторов
+/// (экраны — с main actor, кэш пользователей — из своего actor).
+protocol NetworkServiceProtocol: Sendable {
     /// Выполняет запрос и возвращает содержимое поля `response` успешного ответа.
     func request<T: Decodable>(_ endpoint: Endpoint) async throws -> T
     /// Загружает файл POST-запросом с телом `multipart/form-data`: параметры эндпоинта уходят текстовыми полями,
@@ -24,6 +26,7 @@ final class NetworkService: NetworkServiceProtocol {
     /// Куда складываются временные файлы с телами загрузок; каждый удаляется сразу после отправки.
     private let bodyDirectory: URL
     private let onUnauthorized: (@Sendable () async -> Void)?
+    private let onActions: (@Sendable ([APIAction]) async -> Void)?
     private let decoder = JSONDecoder()
 
     /// - Parameters:
@@ -35,18 +38,24 @@ final class NetworkService: NetworkServiceProtocol {
     ///   - onUnauthorized: вызывается, когда запрос (кроме `Endpoint.terminatesSession`) вернул код 2003 —
     ///     сессия недействительна. Cookie сессии к этому моменту уже очищены; ошибка пробрасывается
     ///     вызывающему только после завершения обработчика, чтобы к её обработке сессия уже была закрыта.
+    ///   - onActions: получает указания клиенту (`actions`) из успешного ответа, если они есть и запрос их
+    ///     не исключает (`Endpoint.dispatchesActions`). Данные метода возвращаются вызывающему только после
+    ///     завершения обработчика: например, пользователи, упомянутые в ответе, к этому моменту обычно уже в кэше
+    ///     (сколько ждать их загрузки, решает обработчик — см. `APIActionDispatcher`).
     init(
         session: URLSession = .shared,
         baseURL: URL = AppConfig.baseURL,
         cookieStorage: HTTPCookieStorage = .shared,
         bodyDirectory: URL = FileManager.default.temporaryDirectory,
-        onUnauthorized: (@Sendable () async -> Void)? = nil
+        onUnauthorized: (@Sendable () async -> Void)? = nil,
+        onActions: (@Sendable ([APIAction]) async -> Void)? = nil
     ) {
         self.session = session
         self.baseURL = baseURL
         self.cookieStorage = cookieStorage
         self.bodyDirectory = bodyDirectory
         self.onUnauthorized = onUnauthorized
+        self.onActions = onActions
     }
 
     /// Выполняет запрос к API, проверяет HTTP-статус и общую обёртку `{status, response, errorCode}`.
@@ -109,7 +118,9 @@ final class NetworkService: NetworkServiceProtocol {
             throw NetworkError.invalidResponse(statusCode: statusCode)
         }
         await handleUnauthorizedIfNeeded(apiResponse, for: endpoint)
-        return try unwrap(apiResponse)
+        let payload = try unwrap(apiResponse)
+        await handleActionsIfNeeded(apiResponse, for: endpoint)
+        return payload
     }
 
     /// Выполняет запрос, оборачивая `URLError` в `NetworkError.transport`; прочие ошибки пробрасываются как есть.
@@ -262,6 +273,13 @@ final class NetworkService: NetworkServiceProtocol {
         guard !apiResponse.isSuccess, apiResponse.errorCode == NetworkError.Code.unauthorized else { return }
         clearSessionCookies()
         await onUnauthorized?()
+    }
+
+    /// Передаёт обработчику указания клиенту из успешного ответа. Без указаний обработчик не вызывается,
+    /// для запросов с `dispatchesActions == false` — тоже.
+    private func handleActionsIfNeeded<T: Decodable>(_ apiResponse: APIResponse<T>, for endpoint: Endpoint) async {
+        guard endpoint.dispatchesActions, !apiResponse.actions.isEmpty else { return }
+        await onActions?(apiResponse.actions)
     }
 
     /// Разбирает общую обёртку: при `status = 0` бросает `NetworkError.api`, иначе возвращает `response`.

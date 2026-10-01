@@ -10,14 +10,14 @@ final class ConversationsPageTests: XCTestCase {
     private let decoder = JSONDecoder()
 
     /// Кейс: страница из документации с одной личной перепиской.
-    /// Ожидание: переписка разобрана вместе с собеседником, `hasNext` — из ответа.
+    /// Ожидание: переписка разобрана вместе с id собеседника, `hasNext` — из ответа.
     func test_decode_readsConversationsAndHasNext() throws {
         let json = """
         {
           "conversations": [
             {
               "conversationId": 1, "type": "single", "memberIds": [1, 2], "name": null, "avatar": null,
-              "opponentUser": { "userId": 2, "login": "petr", "name": "Petr Sidorov", "avatar": null }
+              "opponentUserId": 2
             }
           ],
           "hasNext": false
@@ -27,7 +27,7 @@ final class ConversationsPageTests: XCTestCase {
         let page = try decoder.decode(ConversationsPage.self, from: Data(json.utf8))
 
         XCTAssertEqual(page.conversations.map(\.conversationId), [1])
-        XCTAssertEqual(page.conversations.first?.opponentUser?.login, "petr")
+        XCTAssertEqual(page.conversations.first?.opponentUserId, 2)
         XCTAssertFalse(page.hasNext)
     }
 
@@ -74,6 +74,6 @@ final class ConversationsPageTests: XCTestCase {
     /// Групповая переписка с указанным идентификатором.
     /// - Parameter id: идентификатор переписки.
     private func makeConversation(id: Int) -> Conversation {
-        Conversation(conversationId: id, type: .group, memberIds: [1], name: "Группа", avatar: nil, opponentUser: nil)
+        Conversation(conversationId: id, type: .group, memberIds: [1], name: "Группа", avatar: nil, opponentUserId: nil)
     }
 }

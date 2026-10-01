@@ -85,4 +85,40 @@ final class UsersServiceTests: XCTestCase {
             XCTAssertEqual(error as? NetworkError, .api(code: 1004))
         }
     }
+
+    /// Кейс: запрос пользователей по списку id.
+    /// Ожидание: GET /users/getBatch, id через запятую в порядке запроса; пачка возвращена без изменений.
+    func test_fetchUsersByIds_requestsGetBatchWithCommaSeparatedIds() async throws {
+        let expected = UsersBatch(users: [.stub], notFoundIds: [999])
+        networkService.stubbedResult = .success(expected)
+
+        let batch = try await sut.fetchUsers(ids: [2, 1, 999])
+
+        XCTAssertEqual(batch, expected)
+        let endpoint = try XCTUnwrap(networkService.requestedEndpoints.first)
+        XCTAssertEqual(endpoint.path, "/users/getBatch")
+        XCTAssertEqual(endpoint.method, .get)
+        XCTAssertEqual(endpoint.parameters, ["userIds": "2,1,999"])
+    }
+
+    /// Кейс: сервер отклонил список id (пустой или длиннее 100).
+    /// Ожидание: ошибка 1004 пробрасывается наружу без изменений.
+    func test_fetchUsersByIds_propagatesApiError() async {
+        networkService.stubbedResult = .failure(NetworkError.api(code: NetworkError.Code.invalidParameters))
+
+        do {
+            _ = try await sut.fetchUsers(ids: [])
+            XCTFail("Expected error")
+        } catch {
+            XCTAssertEqual(error as? NetworkError, .api(code: 1004))
+        }
+    }
+
+    /// Кейс: эндпоинты пользователей — постраничный список и пачка по id.
+    /// Ожидание: actions из ответа выполняются для списка, но не для пачки — её вызывает сам кэш пользователей
+    /// при выполнении action `users`.
+    func test_dispatchesActions_disabledOnlyForGetBatch() {
+        XCTAssertTrue(UsersEndpoint.getList(query: nil, maxId: nil, count: nil).dispatchesActions)
+        XCTAssertFalse(UsersEndpoint.getBatch(userIds: [1]).dispatchesActions)
+    }
 }

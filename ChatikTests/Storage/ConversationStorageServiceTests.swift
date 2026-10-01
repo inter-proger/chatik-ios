@@ -25,9 +25,10 @@ final class ConversationStorageServiceTests: XCTestCase {
 
     // MARK: - Сохранение
 
-    /// Кейс: сохранены личная переписка (с собеседником) и групповая (с названием и аватаром).
-    /// Ожидание: обе читаются из БД без потерь; собеседник и аватар попали в хранилища пользователей и файлов.
-    func test_saveConversations_roundTripsAndStoresNestedData() async throws {
+    /// Кейс: сохранены личная переписка (с id собеседника) и групповая (с названием и аватаром).
+    /// Ожидание: обе читаются из БД без потерь, включая `opponentUserId`; аватар попал в хранилище файлов,
+    /// а пользователей переписка не создаёт — они живут в кэше пользователей.
+    func test_saveConversations_roundTripsAndStoresAvatar() async throws {
         try await sut.save(conversations: [.singleStub, .groupStub])
 
         let groupFound = try await sut.find(byId: Conversation.groupStub.id)
@@ -36,7 +37,8 @@ final class ConversationStorageServiceTests: XCTestCase {
         let files = try await FileStorageService(container: container).fetchAll()
         XCTAssertEqual(groupFound, .groupStub)
         XCTAssertEqual(singleFound, .singleStub)
-        XCTAssertEqual(users, [try XCTUnwrap(Conversation.singleStub.opponentUser)])
+        XCTAssertEqual(singleFound?.opponentUserId, 2)
+        XCTAssertTrue(users.isEmpty)
         XCTAssertEqual(files, [.stub])
     }
 
@@ -51,15 +53,15 @@ final class ConversationStorageServiceTests: XCTestCase {
         XCTAssertEqual(conversations.map(\.name), ["Новое название"])
     }
 
-    /// Кейс: две переписки с одним и тем же собеседником.
-    /// Ожидание: собеседник сохранён одной записью.
-    func test_saveConversations_sharedOpponent_storedOnce() async throws {
-        let opponent = User(userId: 5, login: "anna", name: "Anna", avatar: nil)
+    /// Кейс: личная переписка пересохранена группой — у неё больше нет собеседника.
+    /// Ожидание: `opponentUserId` в БД обнулён, а не остался от прежней версии.
+    func test_save_opponentRemoved_clearsOpponentId() async throws {
+        try await sut.save(conversation: makeSingle(id: 1, opponentUserId: 5))
 
-        try await sut.save(conversations: [makeSingle(id: 1, opponent: opponent), makeSingle(id: 2, opponent: opponent)])
+        try await sut.save(conversation: makeGroup(id: 1))
 
-        let users = try await UserStorageService(container: container).fetchAll()
-        XCTAssertEqual(users, [opponent])
+        let found = try await sut.find(byId: 1)
+        XCTAssertNil(found?.opponentUserId)
     }
 
     /// Кейс: переписки сохранены вразнобой.
@@ -111,17 +113,17 @@ final class ConversationStorageServiceTests: XCTestCase {
         XCTAssertEqual(conversations, [.groupStub])
     }
 
-    /// Кейс: личная переписка удалена по `conversationId`.
-    /// Ожидание: переписки нет в БД, собеседник остался в хранилище пользователей.
-    func test_delete_keepsOpponent() async throws {
-        try await sut.save(conversation: .singleStub)
+    /// Кейс: групповая переписка с аватаром удалена по `conversationId`.
+    /// Ожидание: переписки нет в БД, аватар остался в хранилище файлов.
+    func test_delete_keepsAvatar() async throws {
+        try await sut.save(conversation: .groupStub)
 
-        try await sut.delete(byId: Conversation.singleStub.id)
+        try await sut.delete(byId: Conversation.groupStub.id)
 
-        let found = try await sut.find(byId: Conversation.singleStub.id)
-        let users = try await UserStorageService(container: container).fetchAll()
+        let found = try await sut.find(byId: Conversation.groupStub.id)
+        let files = try await FileStorageService(container: container).fetchAll()
         XCTAssertNil(found)
-        XCTAssertEqual(users.count, 1)
+        XCTAssertEqual(files, [.stub])
     }
 
     // MARK: - Страницы
@@ -191,14 +193,14 @@ final class ConversationStorageServiceTests: XCTestCase {
     ///   - id: идентификатор переписки.
     ///   - name: название группы.
     private func makeGroup(id: Int, name: String = "Группа") -> Conversation {
-        Conversation(conversationId: id, type: .group, memberIds: [1, 2, 3], name: name, avatar: nil, opponentUser: nil)
+        Conversation(conversationId: id, type: .group, memberIds: [1, 2, 3], name: name, avatar: nil, opponentUserId: nil)
     }
 
     /// Личная переписка с указанным собеседником.
     /// - Parameters:
     ///   - id: идентификатор переписки.
-    ///   - opponent: собеседник.
-    private func makeSingle(id: Int, opponent: User) -> Conversation {
-        Conversation(conversationId: id, type: .single, memberIds: [1, opponent.userId], name: nil, avatar: nil, opponentUser: opponent)
+    ///   - opponentUserId: id собеседника.
+    private func makeSingle(id: Int, opponentUserId: Int) -> Conversation {
+        Conversation(conversationId: id, type: .single, memberIds: [1, opponentUserId], name: nil, avatar: nil, opponentUserId: opponentUserId)
     }
 }

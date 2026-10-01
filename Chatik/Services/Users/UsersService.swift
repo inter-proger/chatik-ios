@@ -5,11 +5,14 @@
 
 import Foundation
 
-protocol UsersServiceProtocol {
+/// `Sendable`: сервис вызывают и экраны с main actor, и кэш пользователей из своего actor.
+protocol UsersServiceProtocol: Sendable {
     /// Возвращает страницу списка пользователей по возрастанию `userId`.
     /// Параметры передаются явно: значения по умолчанию в требовании протокола Swift не поддерживает,
     /// а объявленные только в реализации через протокол всё равно не работают.
     func fetchUsers(query: String?, maxId: Int?, count: Int?) async throws -> UsersPage
+    /// Возвращает пользователей по списку id.
+    func fetchUsers(ids: [Int]) async throws -> UsersBatch
 }
 
 final class UsersService: UsersServiceProtocol {
@@ -29,6 +32,14 @@ final class UsersService: UsersServiceProtocol {
     /// - Returns: страница пользователей; если их меньше, чем `count`, — страниц больше нет.
     func fetchUsers(query: String?, maxId: Int?, count: Int?) async throws -> UsersPage {
         try await networkService.request(UsersEndpoint.getList(query: Self.filter(from: query), maxId: maxId, count: count))
+    }
+
+    /// Загружает пользователей через `GET /users/getBatch`.
+    /// - Parameter ids: от 1 до `UsersEndpoint.batchLimit` id; повторы сервер игнорирует. Больше — ошибка 1004,
+    ///   поэтому длинный список вызывающий делит на пачки.
+    /// - Returns: найденные пользователи и id, для которых пользователя нет.
+    func fetchUsers(ids: [Int]) async throws -> UsersBatch {
+        try await networkService.request(UsersEndpoint.getBatch(userIds: ids))
     }
 
     /// Приводит фильтр к виду, в котором его ждёт сервер: пустой ввод — отсутствие параметра.

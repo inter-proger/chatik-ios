@@ -14,7 +14,7 @@ extension Conversation {
         memberIds: [1, 2],
         name: nil,
         avatar: nil,
-        opponentUser: User(userId: 2, login: "petr", name: "Petr Sidorov", avatar: nil)
+        opponentUserId: 2
     )
 
     /// Групповая переписка с названием и аватаром — типовой элемент списка переписок.
@@ -24,6 +24,6 @@ extension Conversation {
         memberIds: [1, 2, 3],
         name: "Команда",
         avatar: .stub,
-        opponentUser: nil
+        opponentUserId: nil
     )
 }

@@ -14,6 +14,7 @@ final class ChatListViewModelTests: XCTestCase {
     private var sessionService: SessionService!
     private var conversationService: ConversationServiceMock!
     private var conversationStorage: ConversationStorageServiceMock!
+    private var userCache: UserCacheServiceMock!
     private var router: ChatListRouter!
     private var sut: ChatListViewModel!
 
@@ -25,12 +26,14 @@ final class ChatListViewModelTests: XCTestCase {
         await sessionService.restore()
         conversationService = ConversationServiceMock()
         conversationStorage = ConversationStorageServiceMock()
+        userCache = UserCacheServiceMock()
         router = ChatListRouter()
         sut = ChatListViewModel(
             authService: AuthService(networkService: networkService),
             sessionService: sessionService,
             conversationService: conversationService,
             conversationStorage: conversationStorage,
+            userCache: userCache,
             router: router
         )
     }
@@ -204,6 +207,48 @@ final class ChatListViewModelTests: XCTestCase {
         await yieldUntil { [unowned self] in !conversationStorage.savedConversations.isEmpty }
 
         XCTAssertEqual(conversationStorage.savedConversations, [.singleStub])
+    }
+
+    // MARK: - Собеседники
+
+    /// Кейс: загружена личная переписка, её собеседник уже есть в кэше пользователей.
+    /// Ожидание: заголовок строки — имя собеседника из кэша.
+    func test_conversations_opponentInCache_usesCachedName() async {
+        userCache.users[2] = .loaded(User(userId: 2, login: "petr", name: "Petr Sidorov", avatar: nil))
+        conversationService.stubbedPages = [.success(ConversationsPage(conversations: [.singleStub], hasNext: false))]
+
+        await sut.loadFirstPage()
+
+        XCTAssertEqual(sut.conversations.first?.title, "Petr Sidorov")
+        XCTAssertEqual(sut.conversations.first?.isTitlePlaceholder, false)
+    }
+
+    /// Кейс: собеседник догрузился в кэш уже после того, как список показан с заглушкой.
+    /// Ожидание: экран узнаёт об изменении через Observation, строка показывает имя без перезагрузки списка.
+    func test_conversations_opponentLoadedLater_updatesRow() async {
+        conversationService.stubbedPages = [.success(ConversationsPage(conversations: [.singleStub], hasNext: false))]
+        await sut.loadFirstPage()
+        XCTAssertEqual(sut.conversations.first?.isTitlePlaceholder, true)
+        let changed = ObservationFlag()
+        withObservationTracking { _ = sut.conversations } onChange: { changed.isSet = true }
+
+        userCache.users[2] = .loaded(User(userId: 2, login: "petr", name: "Petr Sidorov", avatar: nil))
+
+        XCTAssertTrue(changed.isSet)
+        XCTAssertEqual(sut.conversations.first?.title, "Petr Sidorov")
+        XCTAssertEqual(conversationService.requests.count, 1)
+    }
+
+    /// Кейс: экран открывается, в локальной БД есть личная и групповая переписки.
+    /// Ожидание: кэшу пользователей передан собеседник личной переписки — у ответа БД нет action `users`.
+    func test_loadFirstPage_withCache_loadsCachedOpponents() async {
+        conversationStorage.stubbedConversations = .success([.singleStub, .groupStub])
+        conversationService.stubbedPages = [.success(ConversationsPage(conversations: [], hasNext: false))]
+
+        await sut.loadFirstPage()
+        await yieldUntil { [unowned self] in !userCache.loadRequests.isEmpty }
+
+        XCTAssertEqual(userCache.loadRequests, [[2]])
     }
 
     // MARK: - Следующие страницы
@@ -577,7 +622,7 @@ final class ChatListViewModelTests: XCTestCase {
                 memberIds: [1, id + 1000],
                 name: nil,
                 avatar: nil,
-                opponentUser: User(userId: id + 1000, login: "user\(id)", name: "User \(id)", avatar: nil)
+                opponentUserId: id + 1000
             )
         }
     }
@@ -586,4 +631,9 @@ final class ChatListViewModelTests: XCTestCase {
     private func waitUntilNextPageLoaded(file: StaticString = #filePath, line: UInt = #line) async {
         await yieldUntil(file: file, line: line) { [unowned self] in !sut.isLoadingNextPage }
     }
+}
+
+/// Флаг срабатывания `onChange` из `withObservationTracking`.
+private final class ObservationFlag: @unchecked Sendable {
+    var isSet = false
 }

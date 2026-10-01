@@ -14,6 +14,10 @@ enum PreviewDependencies {
     static let userDefaultsService = UserDefaultsServicePreviewMock()
     static let sessionService = makeSessionService(userDefaultsService: userDefaultsService)
     static let localizationService = LocalizationService(userDefaultsService: userDefaultsService, systemLanguage: .ru)
+    static let userCache = UserCacheService(
+        usersService: UsersServicePreviewMock(),
+        userStorage: UserStorageService(container: storageContainer)
+    )
 
     /// ViewModel экрана авторизации над моками.
     /// - Parameters:
@@ -40,8 +44,9 @@ enum PreviewDependencies {
         ChatListViewModel(
             authService: AuthServicePreviewMock(logoutResult: logoutResult),
             sessionService: sessionService,
-            conversationService: ConversationServicePreviewMock(),
+            conversationService: ConversationServicePreviewMock(userCache: userCache),
             conversationStorage: ConversationStorageService(container: storageContainer),
+            userCache: userCache,
             router: ChatListRouter()
         )
     }
@@ -146,52 +151,57 @@ final class UsersServicePreviewMock: UsersServiceProtocol {
         }
         return UsersPage(users: found, nextMaxId: found.last?.userId, hasNext: false)
     }
+
+    func fetchUsers(ids: [Int]) async throws -> UsersBatch {
+        try await Task.sleep(for: delay)
+        let found = users.filter { ids.contains($0.userId) }
+        return UsersBatch(users: found, notFoundIds: ids.filter { id in !found.contains { $0.userId == id } })
+    }
 }
 
 /// Мок сервиса переписок для превью: «создаёт» переписку с задержкой.
 final class ConversationServicePreviewMock: ConversationServiceProtocol {
     private let delay: Duration
+    /// Кэш, которому мок передаёт участников переписок, как сетевой слой передаёт action `users`.
+    /// `nil` — участники никуда не передаются.
+    private let userCache: UserCacheServiceProtocol?
 
-    init(delay: Duration = .seconds(1.5)) {
+    init(delay: Duration = .seconds(1.5), userCache: UserCacheServiceProtocol? = nil) {
         self.delay = delay
+        self.userCache = userCache
     }
 
     func createSingle(userId: Int) async throws -> Conversation {
         try await Task.sleep(for: delay)
-        return Conversation(
+        let conversation = Conversation(
             conversationId: 1,
             type: .single,
             memberIds: [1, userId],
             name: nil,
             avatar: nil,
-            opponentUser: User(userId: userId, login: "user\(userId)", name: "Пользователь \(userId)", avatar: nil)
+            opponentUserId: userId
         )
+        await sendUsersAction(for: [conversation])
+        return conversation
     }
 
     func fetchConversations(offset: Int?, count: Int?) async throws -> ConversationsPage {
         try await Task.sleep(for: delay)
         guard offset == nil else { return ConversationsPage(conversations: [], hasNext: false) }
-        return ConversationsPage(
-            conversations: [
-                Conversation(
-                    conversationId: 1,
-                    type: .single,
-                    memberIds: [1, 2],
-                    name: nil,
-                    avatar: nil,
-                    opponentUser: User(userId: 2, login: "maria", name: "Мария Иванова", avatar: nil)
-                ),
-                Conversation(
-                    conversationId: 2,
-                    type: .group,
-                    memberIds: [1, 2, 3],
-                    name: "Команда",
-                    avatar: nil,
-                    opponentUser: nil
-                ),
-            ],
-            hasNext: false
-        )
+        let conversations = [
+            Conversation(conversationId: 1, type: .single, memberIds: [1, 2], name: nil, avatar: nil, opponentUserId: 2),
+            Conversation(conversationId: 2, type: .group, memberIds: [1, 2, 3], name: "Команда", avatar: nil, opponentUserId: nil),
+        ]
+        await sendUsersAction(for: conversations)
+        return ConversationsPage(conversations: conversations, hasNext: false)
+    }
+
+    /// Передаёт участников переписок в кэш и ждёт загрузки отсутствующих — как `APIActionDispatcher`.
+    /// - Parameter conversations: переписки из «ответа».
+    private func sendUsersAction(for conversations: [Conversation]) async {
+        guard let userCache else { return }
+        let ids = Array(Set(conversations.flatMap(\.memberIds))).sorted()
+        await userCache.loadUsers(ids: ids)
     }
 }
 

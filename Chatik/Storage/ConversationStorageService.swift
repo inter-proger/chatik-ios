@@ -6,9 +6,9 @@
 import CoreData
 
 protocol ConversationStorageServiceProtocol {
-    /// Сохраняет переписку вместе с собеседником и аватаром (upsert по `conversationId`).
+    /// Сохраняет переписку вместе с аватаром (upsert по `conversationId`).
     func save(conversation: Conversation) async throws
-    /// Сохраняет список переписок вместе с собеседниками и аватарами одним фоновым контекстом.
+    /// Сохраняет список переписок вместе с аватарами одним фоновым контекстом.
     func save(conversations: [Conversation]) async throws
     /// Сохраняет страницу списка переписок и удаляет из БД переписки, которые пропали с сервера
     /// в покрытом страницей диапазоне.
@@ -23,8 +23,9 @@ protocol ConversationStorageServiceProtocol {
     func delete(byId id: Int) async throws
 }
 
-/// Хранилище переписок в CoreData. Переписка сохраняется вместе с собеседником и аватаром — они попадают
-/// в хранилища пользователей и файлов. Все операции выполняются в фоновых контекстах.
+/// Хранилище переписок в CoreData. Переписка сохраняется вместе с аватаром — он попадает в хранилище файлов;
+/// собеседник хранится только как id, сами пользователи — в кэше пользователей. Все операции выполняются
+/// в фоновых контекстах.
 final class ConversationStorageService: ConversationStorageServiceProtocol {
     private let container: NSPersistentContainer
 
@@ -99,7 +100,7 @@ final class ConversationStorageService: ConversationStorageServiceProtocol {
         }
     }
 
-    /// Удаляет переписку по идентификатору. Собеседник и аватар остаются в своих хранилищах.
+    /// Удаляет переписку по идентификатору. Аватар остаётся в хранилище файлов.
     /// - Parameter id: идентификатор удаляемой переписки.
     func delete(byId id: Int) async throws {
         try await container.performWrite { context in

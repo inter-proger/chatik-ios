@@ -64,4 +64,28 @@ final class MessageTextValidatorTests: XCTestCase {
         XCTAssertEqual(text.count, 600)
         XCTAssertEqual(sut.validate(text), .tooLong(maxLength: MessageTextValidator.maxLength))
     }
+
+    /// Кейс: строки только из юникодных пробелов и невидимых символов — NBSP, zero-width space и joiner, BOM.
+    /// Ожидание: ошибка `.empty` — сервер обрезает их по краям так же, как обычные пробелы.
+    func test_validate_onlyInvisibleCharacters_returnsEmpty() {
+        let texts = [
+            "\u{00A0}",
+            "\u{200B}",
+            "\u{200D}",
+            "\u{FEFF}",
+            " \u{200B}\u{00A0}\u{FEFF}\n",
+        ]
+
+        for text in texts {
+            XCTAssertEqual(sut.validate(text), .empty, text.debugDescription)
+        }
+    }
+
+    /// Кейс: текст на лимите, окружённый невидимыми символами.
+    /// Ожидание: валиден — невидимые символы по краям не считаются в длину.
+    func test_validate_surroundingInvisibleCharacters_notCounted() {
+        let text = "\u{FEFF}\u{200B}" + String(repeating: "a", count: MessageTextValidator.maxLength) + "\u{200D}\u{00A0}"
+
+        XCTAssertNil(sut.validate(text))
+    }
 }

@@ -277,6 +277,66 @@ final class NetworkServiceTests: XCTestCase {
         XCTAssertEqual(cookieStorage.cookies(for: baseURL)?.count, 1)
     }
 
+    // MARK: - Actions
+
+    /// Кейс: успешный ответ с action `users`.
+    /// Ожидание: обработчик `onActions` получил его и завершился до того, как данные метода вернулись вызывающему.
+    func test_successResponseWithActions_passesThemToHandlerBeforeReturning() async throws {
+        let recorder = ActionsRecorder()
+        sut = makeSUT(onActions: { actions in
+            try? await Task.sleep(for: .milliseconds(50))
+            recorder.received.append(actions)
+        })
+        _ = stub(status: 200, json: #"{"status":1,"response":{},"actions":[{"type":"users","data":{"userIds":[1,2]}}]}"#)
+
+        let _: EmptyResponse = try await sut.request(TestEndpoint(path: "/items", method: .get, parameters: [:], headers: nil))
+
+        XCTAssertEqual(recorder.received, [[.users(userIds: [1, 2])]])
+    }
+
+    /// Кейс: успешный ответ без actions и ответ с одними неизвестными actions.
+    /// Ожидание: обработчик `onActions` не вызывается — передавать нечего.
+    func test_responseWithoutKnownActions_doesNotNotifyHandler() async throws {
+        let recorder = ActionsRecorder()
+        sut = makeSUT(onActions: { recorder.received.append($0) })
+        let endpoint = TestEndpoint(path: "/items", method: .get, parameters: [:], headers: nil)
+
+        _ = stub(status: 200, json: #"{"status":1,"response":{}}"#)
+        let _: EmptyResponse = try await sut.request(endpoint)
+        _ = stub(status: 200, json: #"{"status":1,"response":{},"actions":[{"type":"typing","data":{}}]}"#)
+        let _: EmptyResponse = try await sut.request(endpoint)
+
+        XCTAssertTrue(recorder.received.isEmpty)
+    }
+
+    /// Кейс: ответ с ошибкой, в котором (вопреки формату) есть actions.
+    /// Ожидание: обработчик `onActions` не вызывается — указания выполняются только для успешного ответа.
+    func test_errorResponse_doesNotNotifyActionsHandler() async {
+        let recorder = ActionsRecorder()
+        sut = makeSUT(onActions: { recorder.received.append($0) })
+        _ = stub(status: 200, json: #"{"status":0,"errorCode":2002,"actions":[{"type":"users","data":{"userIds":[1]}}]}"#)
+
+        await assertThrows(NetworkError.api(code: 2002)) {
+            let _: EmptyResponse = try await sut.request(TestEndpoint(path: "/items", method: .get, parameters: [:], headers: nil))
+        }
+
+        XCTAssertTrue(recorder.received.isEmpty)
+    }
+
+    /// Кейс: успешный ответ с action `users` на запрос, который сам выполняет actions (`dispatchesActions == false`).
+    /// Ожидание: обработчик `onActions` не вызывается, данные метода возвращены.
+    func test_endpointNotDispatchingActions_doesNotNotifyHandler() async throws {
+        let recorder = ActionsRecorder()
+        sut = makeSUT(onActions: { recorder.received.append($0) })
+        _ = stub(status: 200, json: #"{"status":1,"response":{},"actions":[{"type":"users","data":{"userIds":[1]}}]}"#)
+        let endpoint = TestEndpoint(path: "/items", method: .get, parameters: [:], headers: nil, dispatchesActions: false)
+
+        let response: EmptyResponse = try await sut.request(endpoint)
+
+        XCTAssertEqual(response, EmptyResponse())
+        XCTAssertTrue(recorder.received.isEmpty)
+    }
+
     // MARK: - Cookies
 
     /// Кейс: в хранилище есть cookie для домена baseURL.
@@ -292,14 +352,18 @@ final class NetworkServiceTests: XCTestCase {
 
     // MARK: - Helpers
 
-    /// Создаёт сервис над стабом `URLSession` с собственной директорией тел и обработчиком 2003.
-    private func makeSUT(onUnauthorized: (@Sendable () async -> Void)? = nil) -> NetworkService {
+    /// Создаёт сервис над стабом `URLSession` с собственной директорией тел, обработчиками 2003 и actions.
+    private func makeSUT(
+        onUnauthorized: (@Sendable () async -> Void)? = nil,
+        onActions: (@Sendable ([APIAction]) async -> Void)? = nil
+    ) -> NetworkService {
         NetworkService(
             session: URLProtocolStub.makeSession(),
             baseURL: baseURL,
             cookieStorage: cookieStorage,
             bodyDirectory: bodyDirectory,
-            onUnauthorized: onUnauthorized
+            onUnauthorized: onUnauthorized,
+            onActions: onActions
         )
     }
 
@@ -372,9 +436,15 @@ private final class UnauthorizedFlag: @unchecked Sendable {
     var isCalled = false
 }
 
+/// Actions, полученные обработчиком `onActions` из `@Sendable`-замыкания.
+private final class ActionsRecorder: @unchecked Sendable {
+    var received: [[APIAction]] = []
+}
+
 private struct TestEndpoint: Endpoint {
     let path: String
     let method: HTTPMethod
     let parameters: [String: String]
     let headers: [String: String]?
+    var dispatchesActions = true
 }

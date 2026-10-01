@@ -11,6 +11,9 @@ import os
 ///
 /// Список переписок хранит `PaginatedList`: он же отбрасывает устаревшие ответы, не допускает дубликатов
 /// и считает сдвиг для следующей страницы. ViewModel остаётся владельцем запроса и текстов ошибок.
+///
+/// Список хранит переписки, а не строки: собеседник берётся из кэша пользователей при каждом чтении
+/// `conversations`, поэтому строка обновляется сама, когда собеседник догрузится.
 @MainActor
 @Observable
 final class ChatListViewModel {
@@ -24,7 +27,7 @@ final class ChatListViewModel {
     /// Размер страницы списка переписок.
     static let pageSize = 30
 
-    private let list = PaginatedList<ChatRowDisplayModel>()
+    private let list = PaginatedList<Conversation>()
     /// Идущие загрузки первой страницы — хранятся, чтобы отменить их и дождаться при выходе. Обычно одна;
     /// несколько — пока заменённая загрузка (pull-to-refresh поверх открытия) ещё не завершилась после отмены.
     private var firstPageTasks: Set<Task<PaginationOutcome, Never>> = []
@@ -34,6 +37,7 @@ final class ChatListViewModel {
     private let sessionService: SessionServiceProtocol
     private let conversationService: ConversationServiceProtocol
     private let conversationStorage: ConversationStorageServiceProtocol
+    private let userCache: UserCacheServiceProtocol
     private let router: ChatListRouter
 
     init(
@@ -41,18 +45,23 @@ final class ChatListViewModel {
         sessionService: SessionServiceProtocol,
         conversationService: ConversationServiceProtocol,
         conversationStorage: ConversationStorageServiceProtocol,
+        userCache: UserCacheServiceProtocol,
         router: ChatListRouter
     ) {
         self.authService = authService
         self.sessionService = sessionService
         self.conversationService = conversationService
         self.conversationStorage = conversationStorage
+        self.userCache = userCache
         self.router = router
     }
 
-    /// Переписки текущего пользователя, сначала самые новые.
+    /// Переписки текущего пользователя, сначала самые новые. Собеседники читаются из кэша пользователей —
+    /// Observation отслеживает это чтение, и строки перерисуются, когда собеседники загрузятся.
     var conversations: [ChatRowDisplayModel] {
-        list.items
+        list.items.map { conversation in
+            ChatRowDisplayModel(conversation: conversation, opponent: conversation.opponentUserId.map(userCache.user(id:)))
+        }
     }
 
     /// `true`, пока грузится первая страница (при открытии экрана и pull-to-refresh).
@@ -96,14 +105,15 @@ final class ChatListViewModel {
     /// Начинает загрузку следующей страницы, если показана одна из последних переписок списка.
     /// - Parameter conversation: переписка, которая появилась на экране.
     func prefetchNextPageIfNeeded(currentConversation conversation: ChatRowDisplayModel) {
-        list.prefetchNextPageIfNeeded(currentItem: conversation, load: loadPage, onOutcome: show)
+        guard let item = list.items.first(where: { $0.id == conversation.id }) else { return }
+        list.prefetchNextPageIfNeeded(currentItem: item, load: loadPage, onOutcome: show)
     }
 
     /// Добавляет только что созданную переписку в начало списка. Если она там уже есть — не дублирует:
     /// повторный `createSingle` с тем же собеседником возвращает уже существующую переписку.
     /// - Parameter conversation: переписка, с которой завершился экран создания.
     func didCreateConversation(_ conversation: Conversation) {
-        list.insertIfAbsent(ChatRowDisplayModel(conversation: conversation))
+        list.insertIfAbsent(conversation)
         let previousSave = createdConversationSaveTask
         createdConversationSaveTask = Task {
             await previousSave?.value
@@ -111,9 +121,10 @@ final class ChatListViewModel {
         }
     }
 
-    /// Запрашивает страницу переписок, сохраняет её в локальную БД и приводит к строкам списка.
+    /// Запрашивает страницу переписок и сохраняет её в локальную БД. Собеседников кэш пользователей
+    /// дозагружает сам — по action `users` из того же ответа.
     /// - Parameter context: сколько переписок уже получено — от этого числа идёт сдвиг выдачи.
-    private func loadPage(_ context: PaginationContext) async throws -> PaginatedListPage<ChatRowDisplayModel> {
+    private func loadPage(_ context: PaginationContext) async throws -> PaginatedListPage<Conversation> {
         let page = try await conversationService.fetchConversations(
             offset: context.isFirstPage ? nil : context.loadedCount,
             count: Self.pageSize
@@ -122,17 +133,21 @@ final class ChatListViewModel {
         // она может попасть туда уже после очистки.
         try Task.checkCancellation()
         await savePage(page, isFirstPage: context.isFirstPage)
-        return PaginatedListPage(items: page.conversations.map(ChatRowDisplayModel.init), hasNext: page.hasNext)
+        return PaginatedListPage(items: page.conversations, hasNext: page.hasNext)
     }
 
     // MARK: - Локальная БД
 
-    /// Читает переписки из локальной БД для показа до ответа сервера. Ошибка чтения не показывается
-    /// пользователю — список просто дождётся сервера.
-    /// - Returns: строки списка; пустой массив, если БД пуста или не прочиталась.
-    private func loadCachedConversations() async -> [ChatRowDisplayModel] {
+    /// Читает переписки из локальной БД для показа до ответа сервера и запускает загрузку их собеседников:
+    /// у ответа БД нет action `users`. Список не ждёт собеседников — пока их нет, строки показывают заглушку.
+    /// Ошибка чтения не показывается пользователю — список просто дождётся сервера.
+    /// - Returns: переписки; пустой массив, если БД пуста или не прочиталась.
+    private func loadCachedConversations() async -> [Conversation] {
         do {
-            return try await conversationStorage.fetchLatest(limit: Self.pageSize).map(ChatRowDisplayModel.init)
+            let conversations = try await conversationStorage.fetchLatest(limit: Self.pageSize)
+            let opponentIds = conversations.compactMap(\.opponentUserId)
+            Task { await userCache.loadUsers(ids: opponentIds) }
+            return conversations
         } catch {
             Logger.storage.error("Не удалось прочитать переписки из БД: \(String(describing: error), privacy: .public)")
             return []

@@ -25,3 +25,25 @@ extension XCTestCase {
         XCTAssertTrue(condition(), "Условие не выполнилось за \(attempts) итераций", file: file, line: line)
     }
 }
+
+extension XCTestCase {
+    /// Ждёт, пока `condition` не выполнится, проверяя его на main actor каждые 5 мс. Нужен там, где состояние
+    /// меняет работа вне главного потока (actor), — уступок main actor для неё недостаточно. Ограничен по времени:
+    /// при регрессии тест упадёт, а не зависнет.
+    /// - Parameters:
+    ///   - timeout: сколько ждать, прежде чем считать условие невыполненным.
+    ///   - condition: условие, которого ждём.
+    @MainActor
+    func waitUntil(
+        timeout: Duration = .seconds(2),
+        file: StaticString = #filePath,
+        line: UInt = #line,
+        _ condition: () -> Bool
+    ) async {
+        let deadline = ContinuousClock.now + timeout
+        while !condition(), ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertTrue(condition(), "Условие не выполнилось за \(timeout)", file: file, line: line)
+    }
+}

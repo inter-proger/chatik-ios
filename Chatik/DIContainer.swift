@@ -15,6 +15,7 @@ final class DIContainer {
     let profileService: ProfileServiceProtocol
     let filesService: FilesServiceProtocol
     let usersService: UsersServiceProtocol
+    let userCache: UserCacheServiceProtocol
     let conversationService: ConversationServiceProtocol
     let messageService: MessageServiceProtocol
     let imageFileStore: ImageFileStoreProtocol
@@ -35,8 +36,12 @@ final class DIContainer {
             userDefaultsService: userDefaultsService,
             localStorageCleaner: LocalStorageCleaner(container: storageContainer)
         )
+        let actionDispatcher = APIActionDispatcher()
         // Код 2003 от любого запроса завершает сессию — приложение само переключится на экран авторизации.
-        let networkService = NetworkService(onUnauthorized: { await sessionService.expire() })
+        let networkService = NetworkService(
+            onUnauthorized: { await sessionService.expire() },
+            onActions: { await actionDispatcher.dispatch($0) }
+        )
         self.userDefaultsService = userDefaultsService
         self.sessionService = sessionService
         self.localizationService = LocalizationService(userDefaultsService: userDefaultsService)
@@ -44,12 +49,17 @@ final class DIContainer {
         self.authService = AuthService(networkService: networkService)
         self.profileService = ProfileService(networkService: networkService)
         self.filesService = FilesService(networkService: networkService)
-        self.usersService = UsersService(networkService: networkService)
+        let usersService = UsersService(networkService: networkService)
+        let userStorage = UserStorageService(container: storageContainer)
+        let userCache = UserCacheService(usersService: usersService, userStorage: userStorage)
+        actionDispatcher.userCache = userCache
+        self.usersService = usersService
+        self.userCache = userCache
         self.conversationService = ConversationService(networkService: networkService)
         self.messageService = MessageService(networkService: networkService)
         self.imageFileStore = ImageFileStore()
         self.fileStorage = FileStorageService(container: storageContainer)
-        self.userStorage = UserStorageService(container: storageContainer)
+        self.userStorage = userStorage
         self.conversationStorage = ConversationStorageService(container: storageContainer)
         self.signupValidator = SignupValidator()
         self.loginValidator = LoginValidator()

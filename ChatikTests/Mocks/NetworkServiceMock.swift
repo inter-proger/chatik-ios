@@ -7,7 +7,9 @@ import Foundation
 @testable import Chatik
 
 /// Мок сетевого слоя: возвращает заранее заданный результат и запоминает вызовы.
-final class NetworkServiceMock: NetworkServiceProtocol {
+/// `@unchecked Sendable`: мок используется тестами последовательно — вызов и проверка разделены `await`,
+/// одновременного доступа к его состоянию нет.
+final class NetworkServiceMock: NetworkServiceProtocol, @unchecked Sendable {
     var stubbedResult: Result<Any, Error> = .failure(NetworkError.missingResponse)
     /// Значения прогресса, которые `upload` сообщает перед возвратом результата.
     var stubbedUploadProgress: [Double] = []

@@ -15,6 +15,7 @@ struct ChatRowView: View {
                 .frame(width: 48, height: 48)
             Text(conversation.title)
                 .foregroundStyle(.primary)
+                .redacted(reason: conversation.isTitlePlaceholder ? .placeholder : [])
             Spacer()
         }
         .contentShape(Rectangle())
@@ -25,5 +26,6 @@ struct ChatRowView: View {
     List {
         ChatRowView(conversation: ChatRowDisplayModel(id: 1, title: "Иван Петров", avatarURL: nil))
         ChatRowView(conversation: ChatRowDisplayModel(id: 2, title: "Команда", avatarURL: nil))
+        ChatRowView(conversation: ChatRowDisplayModel(id: 3, title: "Загрузка…", isTitlePlaceholder: true, avatarURL: nil))
     }
 }

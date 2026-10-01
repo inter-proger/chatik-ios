@@ -16,3 +16,9 @@
 
 /* Row title when a conversation has neither a name nor an opponent */
 "chat_list.row.untitled" = "Untitled";
+
+/* Row title while the opponent is not loaded yet; shown redacted as a placeholder */
+"chat_list.row.loading" = "Loading…";
+
+/* Row title when the opponent no longer exists on the server */
+"chat_list.row.deleted_user" = "Deleted user";

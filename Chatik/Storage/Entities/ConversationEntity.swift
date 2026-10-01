@@ -14,7 +14,8 @@ final class ConversationEntity: NSManagedObject, StorageEntity {
     @NSManaged var memberIds: Data?
     @NSManaged var name: String?
     @NSManaged var avatar: FileEntity?
-    @NSManaged var opponentUser: UserEntity?
+    /// Id собеседника; `nil` — собеседника нет (группа).
+    @NSManaged var opponentUserId: NSNumber?
 
     static let idKey = "conversationId"
 
@@ -24,30 +25,24 @@ final class ConversationEntity: NSManagedObject, StorageEntity {
     /// - Parameters:
     ///   - conversation: источник данных.
     ///   - avatar: уже сохранённая в том же контексте запись аватара группы; `nil` — аватара нет.
-    ///   - opponentUser: уже сохранённая в том же контексте запись собеседника; `nil` — собеседника нет.
-    func update(from conversation: Conversation, avatar: FileEntity?, opponentUser: UserEntity?) {
+    func update(from conversation: Conversation, avatar: FileEntity?) {
         conversationId = Int64(conversation.conversationId)
         type = conversation.type.rawValue
         memberIds = try? JSONEncoder().encode(conversation.memberIds)
         name = conversation.name
         self.avatar = avatar
-        self.opponentUser = opponentUser
+        opponentUserId = conversation.opponentUserId.map { NSNumber(value: $0) }
     }
 
-    /// Сохраняет переписки вместе с собеседниками и аватарами в контексте (upsert по `conversationId`),
+    /// Сохраняет переписки вместе с аватарами в контексте (upsert по `conversationId`),
     /// не вызывая `save()`.
     /// - Parameters:
     ///   - conversations: сырые структуры переписок.
     ///   - context: фоновый контекст записи.
     static func upsert(_ conversations: [Conversation], in context: NSManagedObjectContext) throws {
         let avatarsById = try FileEntity.upsert(conversations.compactMap(\.avatar), in: context)
-        let usersById = try UserEntity.upsert(conversations.compactMap(\.opponentUser), in: context)
         _ = try upsert(conversations, id: \.conversationId, in: context) { entity, conversation in
-            entity.update(
-                from: conversation,
-                avatar: conversation.avatar.flatMap { avatarsById[$0.fileId] },
-                opponentUser: conversation.opponentUser.flatMap { usersById[$0.userId] }
-            )
+            entity.update(from: conversation, avatar: conversation.avatar.flatMap { avatarsById[$0.fileId] })
         }
     }
 }
@@ -55,7 +50,7 @@ final class ConversationEntity: NSManagedObject, StorageEntity {
 extension Conversation {
     /// Собирает структуру из Entity.
     /// - Parameter entity: запись CoreData.
-    /// - Returns: `nil`, если в записи или в связанных записях (аватар, собеседник) нет обязательных полей.
+    /// - Returns: `nil`, если в записи или в связанной записи аватара нет обязательных полей.
     init?(entity: ConversationEntity) {
         guard let rawType = entity.type,
               let memberIdsData = entity.memberIds,
@@ -65,18 +60,13 @@ extension Conversation {
             guard let file = RemoteFile(entity: avatarEntity) else { return nil }
             avatar = file
         }
-        var opponentUser: User?
-        if let opponentEntity = entity.opponentUser {
-            guard let user = User(entity: opponentEntity) else { return nil }
-            opponentUser = user
-        }
         self.init(
             conversationId: Int(entity.conversationId),
             type: ConversationType(rawValue: rawType) ?? .unknown,
             memberIds: memberIds,
             name: entity.name,
             avatar: avatar,
-            opponentUser: opponentUser
+            opponentUserId: entity.opponentUserId?.intValue
         )
     }
 }

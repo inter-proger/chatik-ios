@@ -122,4 +122,56 @@ final class UserStorageServiceTests: XCTestCase {
         let found = try await sut.find(byId: User.stub.userId)
         XCTAssertNil(found)
     }
+
+    /// Кейс: пользователи сохранены с временем получения, поиск по списку id, часть которых есть в БД, часть — нет.
+    /// Ожидание: возвращены только найденные пользователи вместе с сохранённым временем получения.
+    func test_findStored_returnsOnlyStoredUsersWithCachedAt() async throws {
+        let anna = User(userId: 2, login: "anna", name: "Anna", avatar: nil)
+        let cachedAt = Date(timeIntervalSince1970: 1_790_846_400)
+        try await sut.save(users: [.stub, anna], cachedAt: cachedAt)
+
+        let found = try await sut.findStored(byIds: [2, 1, 999])
+
+        XCTAssertEqual(
+            found.sorted { $0.user.userId < $1.user.userId },
+            [StoredUser(user: .stub, cachedAt: cachedAt), StoredUser(user: anna, cachedAt: cachedAt)]
+        )
+    }
+
+    /// Кейс: пользователь сохранён повторно — данные получены с сервера заново.
+    /// Ожидание: время получения обновлено.
+    func test_save_again_updatesCachedAt() async throws {
+        try await sut.save(users: [.stub], cachedAt: Date(timeIntervalSince1970: 100))
+
+        try await sut.save(users: [.stub], cachedAt: Date(timeIntervalSince1970: 200))
+
+        let found = try await sut.findStored(byIds: [User.stub.userId])
+        XCTAssertEqual(found.map(\.cachedAt), [Date(timeIntervalSince1970: 200)])
+    }
+
+    /// Кейс: в БД есть запись пользователя без времени получения.
+    /// Ожидание: она читается с `.distantPast` — кэш сочтёт её устаревшей и обновит.
+    func test_findStored_withoutCachedAt_isDistantPast() async throws {
+        try await container.performWrite { context in
+            let entity = UserEntity(context: context)
+            entity.userId = 1
+            entity.login = "ivan"
+            entity.name = "Ivan"
+            try context.save()
+        }
+
+        let found = try await sut.findStored(byIds: [1])
+
+        XCTAssertEqual(found.map(\.cachedAt), [.distantPast])
+    }
+
+    /// Кейс: поиск по пустому списку id.
+    /// Ожидание: пустой результат без ошибки.
+    func test_findStored_emptyIds_returnsEmpty() async throws {
+        try await sut.save(user: .stub)
+
+        let found = try await sut.findStored(byIds: [])
+
+        XCTAssertTrue(found.isEmpty)
+    }
 }

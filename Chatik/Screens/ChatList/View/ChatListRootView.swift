@@ -20,6 +20,7 @@ struct ChatListRootView: View {
             sessionService: DIContainer.shared.sessionService,
             conversationService: DIContainer.shared.conversationService,
             conversationStorage: DIContainer.shared.conversationStorage,
+            userCache: DIContainer.shared.userCache,
             router: router
         ))
     }

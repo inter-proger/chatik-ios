@@ -15,8 +15,13 @@ protocol Endpoint {
     /// `true`, если запрос сам завершает сессию (например, `/auth/logout`): код 2003 в его ответе означает,
     /// что сессии уже нет, и не должен трактоваться глобальным обработчиком как её истечение.
     var terminatesSession: Bool { get }
+    /// `true`, если `actions` из ответа передаются на выполнение. `false` — для запросов, которые сами выполняют
+    /// actions: например, `/users/getBatch` загружает пользователей для action `users`, и action `users` в его же
+    /// ответе заставил бы загрузку ждать саму себя.
+    var dispatchesActions: Bool { get }
 }
 
 extension Endpoint {
     var terminatesSession: Bool { false }
+    var dispatchesActions: Bool { true }
 }

@@ -38,14 +38,23 @@ struct ChatListRootView: View {
                             sessionService: DIContainer.shared.sessionService,
                             isCameraAvailable: UIImagePickerController.isSourceTypeAvailable(.camera)
                         ))
+                    case let .conversation(conversation):
+                        ChatView(viewModel: ChatViewModel(
+                            conversation: conversation,
+                            messageService: DIContainer.shared.messageService,
+                            messageStorage: DIContainer.shared.messageStorage,
+                            sessionService: DIContainer.shared.sessionService,
+                            userCache: DIContainer.shared.userCache,
+                            localizationService: DIContainer.shared.localizationService,
+                            messageTextValidator: DIContainer.shared.messageTextValidator
+                        ))
                     }
                 }
         }
         .sheet(item: $router.presentedSheet) { sheet in
             switch sheet {
             case .createSingleConversation:
-                // Переход в переписку появится вместе с её экраном; пока созданная переписка просто
-                // добавляется в список чатов, а лист закрывается — как и при отмене.
+                // Созданная переписка добавляется в список чатов и открывается; при отмене лист просто закрывается.
                 CreateSingleConversationRootView(onFinish: { conversation in
                     if let conversation {
                         viewModel.didCreateConversation(conversation)

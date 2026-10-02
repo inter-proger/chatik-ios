@@ -22,6 +22,7 @@ final class DIContainer {
     let fileStorage: FileStorageServiceProtocol
     let userStorage: UserStorageServiceProtocol
     let conversationStorage: ConversationStorageServiceProtocol
+    let messageStorage: MessageStorageServiceProtocol
     let userDefaultsService: UserDefaultsServiceProtocol
     let sessionService: SessionServiceProtocol
     let localizationService: LocalizationServiceProtocol
@@ -62,6 +63,7 @@ final class DIContainer {
         self.fileStorage = FileStorageService(container: storageContainer)
         self.userStorage = userStorage
         self.conversationStorage = ConversationStorageService(container: storageContainer)
+        self.messageStorage = MessageStorageService(container: storageContainer)
         self.signupValidator = SignupValidator()
         self.loginValidator = LoginValidator()
         self.messageTextValidator = MessageTextValidator()

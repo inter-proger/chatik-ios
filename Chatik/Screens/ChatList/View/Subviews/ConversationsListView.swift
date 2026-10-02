@@ -10,12 +10,15 @@ struct ConversationsListView: View {
     let conversations: [ChatRowDisplayModel]
     let isLoadingNextPage: Bool
     let onAppear: (ChatRowDisplayModel) -> Void
+    let onSelect: (ChatRowDisplayModel) -> Void
 
     var body: some View {
         List {
             ForEach(conversations) { conversation in
-                ChatRowView(conversation: conversation)
-                    .onAppear { onAppear(conversation) }
+                Button { onSelect(conversation) } label: {
+                    ChatRowView(conversation: conversation)
+                }
+                .onAppear { onAppear(conversation) }
             }
             if isLoadingNextPage {
                 ProgressView()
@@ -34,6 +37,7 @@ struct ConversationsListView: View {
             ChatRowDisplayModel(id: 2, title: "Команда", avatarURL: nil),
         ],
         isLoadingNextPage: false,
-        onAppear: { _ in }
+        onAppear: { _ in },
+        onSelect: { _ in }
     )
 }

@@ -51,6 +51,25 @@ enum PreviewDependencies {
         )
     }
 
+    /// ViewModel экрана переписки над моками. У превью собственная сессия — видно деление на входящие и исходящие.
+    /// - Parameter conversation: открытая переписка; по умолчанию — групповая, с именами отправителей.
+    static func chatViewModel(
+        conversation: Conversation = Conversation(conversationId: 2, type: .group, memberIds: [1, 2, 3], name: "Команда", avatar: nil, opponentUserId: nil)
+    ) -> ChatViewModel {
+        let user = User(userId: 1, login: "ivan", name: "Иван Петров", avatar: nil)
+        let sessionService = makeSessionService(userDefaultsService: UserDefaultsServicePreviewMock(currentUser: user))
+        Task { await sessionService.restore() }
+        return ChatViewModel(
+            conversation: conversation,
+            messageService: MessageServicePreviewMock(),
+            messageStorage: MessageStorageService(container: storageContainer),
+            sessionService: sessionService,
+            userCache: userCache,
+            localizationService: localizationService,
+            messageTextValidator: MessageTextValidator()
+        )
+    }
+
     /// Сессия над заданным хранилищем настроек; при выходе очищается БД превью, а не приложения.
     /// - Parameter userDefaultsService: хранилище настроек превью.
     static func makeSessionService(userDefaultsService: UserDefaultsServiceProtocol) -> SessionService {
@@ -202,6 +221,50 @@ final class ConversationServicePreviewMock: ConversationServiceProtocol {
         guard let userCache else { return }
         let ids = Array(Set(conversations.flatMap(\.memberIds))).sorted()
         await userCache.loadUsers(ids: ids)
+    }
+}
+
+/// Мок сервиса сообщений для превью: отдаёт одну страницу сообщений и «отправляет» сообщения с задержкой.
+final class MessageServicePreviewMock: MessageServiceProtocol {
+    private let delay: Duration
+
+    init(delay: Duration = .seconds(1)) {
+        self.delay = delay
+    }
+
+    func fetchMessages(conversationId: Int, blockId: Int?) async throws -> MessagesPage {
+        try await Task.sleep(for: delay)
+        guard blockId == nil else { return MessagesPage(messages: [], nextBlockId: nil, hasNext: false) }
+        let texts = ["Привет всем!", "Привет! Во сколько созвон?", "Давайте в 15:00", "Подходит", "Договорились"]
+        let messages = texts.enumerated().map { index, text in
+            makeMessage(id: index + 1, conversationId: conversationId, senderId: index % 3 + 1, text: text)
+        }
+        return MessagesPage(messages: messages.reversed(), nextBlockId: nil, hasNext: false)
+    }
+
+    func fetchBlock(blockId: Int) async throws -> [Message] {
+        try await Task.sleep(for: delay)
+        return []
+    }
+
+    func send(conversationId: Int, text: String) async throws -> Message {
+        try await Task.sleep(for: delay)
+        return makeMessage(id: Int.random(in: 100...10_000), conversationId: conversationId, senderId: 1, text: text)
+    }
+
+    func edit(messageId: Int, newText: String) async throws -> Message {
+        try await Task.sleep(for: delay)
+        return makeMessage(id: messageId, conversationId: 1, senderId: 1, text: newText)
+    }
+
+    /// Собирает текстовое сообщение, отправленное только что.
+    /// - Parameters:
+    ///   - id: идентификатор сообщения.
+    ///   - conversationId: переписка.
+    ///   - senderId: отправитель.
+    ///   - text: текст.
+    private func makeMessage(id: Int, conversationId: Int, senderId: Int, text: String) -> Message {
+        Message(messageId: id, conversationId: conversationId, blockId: 1, senderId: senderId, type: .text, text: text, isEdited: false, createdAt: Date(), updatedAt: Date())
     }
 }
 

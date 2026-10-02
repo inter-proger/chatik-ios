@@ -6,7 +6,7 @@
 import Foundation
 
 /// Тип файла на сервере. Список будет расширяться: неизвестные значения читаются как `.other`.
-enum RemoteFileType: String, Codable, Equatable {
+enum RemoteFileType: String, Codable, Hashable {
     case image
     case other
 
@@ -17,7 +17,7 @@ enum RemoteFileType: String, Codable, Equatable {
 }
 
 /// Объект `File` из API — файл, загруженный на сервер.
-struct RemoteFile: Codable, Equatable {
+struct RemoteFile: Codable, Hashable {
     let fileId: Int
     let type: RemoteFileType
     let url: URL

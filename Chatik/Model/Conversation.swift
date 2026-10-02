@@ -7,7 +7,7 @@ import Foundation
 
 /// Тип переписки. Список будет расширяться: неизвестные значения читаются как `.unknown`,
 /// чтобы новый тип с сервера не ломал разбор всего списка.
-enum ConversationType: String, Decodable, Equatable {
+enum ConversationType: String, Decodable, Hashable {
     /// Личная переписка двух пользователей: без названия и аватара.
     case single
     /// Групповая переписка: может иметь название и аватар.
@@ -22,7 +22,8 @@ enum ConversationType: String, Decodable, Equatable {
 }
 
 /// Объект `Conversation` из API — переписка, в которой состоит текущий пользователь.
-struct Conversation: Decodable, Equatable, Identifiable {
+/// `Hashable` — переписка передаётся в маршрут навигации к экрану чата.
+struct Conversation: Decodable, Hashable, Identifiable {
     let conversationId: Int
     let type: ConversationType
     /// Идентификаторы участников по возрастанию.

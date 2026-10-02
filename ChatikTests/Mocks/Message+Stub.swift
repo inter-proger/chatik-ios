@@ -33,3 +33,25 @@ extension Message {
         updatedAt: Date(timeIntervalSince1970: 1_790_846_460)
     )
 }
+
+extension Message {
+    /// Текстовое сообщение с заданными полями; остальные — как у `stub`.
+    /// - Parameters:
+    ///   - id: `messageId`.
+    ///   - conversationId: переписка.
+    ///   - senderId: отправитель.
+    ///   - text: текст.
+    static func make(id: Int, conversationId: Int = 1, senderId: Int = 1, text: String = "Привет!") -> Message {
+        Message(
+            messageId: id,
+            conversationId: conversationId,
+            blockId: 1,
+            senderId: senderId,
+            type: .text,
+            text: text,
+            isEdited: false,
+            createdAt: stub.createdAt,
+            updatedAt: stub.updatedAt
+        )
+    }
+}

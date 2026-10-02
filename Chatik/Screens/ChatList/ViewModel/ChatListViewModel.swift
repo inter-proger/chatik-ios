@@ -109,11 +109,12 @@ final class ChatListViewModel {
         list.prefetchNextPageIfNeeded(currentItem: item, load: loadPage, onOutcome: show)
     }
 
-    /// Добавляет только что созданную переписку в начало списка. Если она там уже есть — не дублирует:
-    /// повторный `createSingle` с тем же собеседником возвращает уже существующую переписку.
+    /// Добавляет только что созданную переписку в начало списка и открывает её. Если она в списке уже есть —
+    /// не дублирует: повторный `createSingle` с тем же собеседником возвращает уже существующую переписку.
     /// - Parameter conversation: переписка, с которой завершился экран создания.
     func didCreateConversation(_ conversation: Conversation) {
         list.insertIfAbsent(conversation)
+        router.showConversation(conversation)
         let previousSave = createdConversationSaveTask
         createdConversationSaveTask = Task {
             await previousSave?.value
@@ -188,6 +189,13 @@ final class ChatListViewModel {
     /// Обработчик кнопки-аватара: открывает экран профиля.
     func didTapProfile() {
         router.showProfile()
+    }
+
+    /// Обработчик тапа по строке списка: открывает переписку.
+    /// - Parameter row: строка, по которой тапнули.
+    func didSelectConversation(_ row: ChatRowDisplayModel) {
+        guard let conversation = list.items.first(where: { $0.id == row.id }) else { return }
+        router.showConversation(conversation)
     }
 
     /// Обработчик пункта «Личный диалог» меню создания: открывает экран создания личного диалога.

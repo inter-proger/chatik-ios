@@ -18,7 +18,8 @@ struct ChatListView: View {
         ConversationsListView(
             conversations: viewModel.conversations,
             isLoadingNextPage: viewModel.isLoadingNextPage,
-            onAppear: viewModel.prefetchNextPageIfNeeded
+            onAppear: viewModel.prefetchNextPageIfNeeded,
+            onSelect: viewModel.didSelectConversation
         )
         .overlay { stateOverlay }
         .refreshable { await viewModel.loadFirstPage() }

@@ -1,0 +1,28 @@
+/*
+  Chat.strings
+  Chatik
+
+  Conversation screen strings.
+*/
+
+"chat.empty" = "No messages yet";
+"chat.input.placeholder" = "Message";
+"chat.send" = "Send";
+
+/* Hint below the input when the text exceeds the server limit; %d is the limit */
+"chat.input.too_long" = "Message must be at most %d characters";
+
+/* Mark next to the time of an edited message */
+"chat.message.edited" = "edited";
+
+/* Text shown instead of a message whose type the app cannot display yet */
+"chat.message.unsupported" = "Unsupported message";
+
+/* Title when a conversation has neither a name nor an opponent */
+"chat.title.untitled" = "Untitled";
+
+/* Opponent or sender name while the user is not loaded yet; shown redacted as a placeholder */
+"chat.user.loading" = "Loading…";
+
+/* Opponent or sender name when the user no longer exists on the server */
+"chat.user.deleted" = "Deleted user";

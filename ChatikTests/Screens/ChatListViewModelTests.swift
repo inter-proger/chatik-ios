@@ -200,6 +200,33 @@ final class ChatListViewModelTests: XCTestCase {
         XCTAssertNil(sut.errorMessage)
     }
 
+    /// Кейс: экран создания завершился созданной перепиской.
+    /// Ожидание: переписка открыта — в стеке навигации экран чата.
+    func test_didCreateConversation_opensConversation() {
+        sut.didCreateConversation(.singleStub)
+
+        XCTAssertEqual(router.path.count, 1)
+    }
+
+    /// Кейс: тап по строке загруженной переписки.
+    /// Ожидание: открыт экран этой переписки.
+    func test_didSelectConversation_opensConversation() async throws {
+        conversationService.stubbedPages = [.success(ConversationsPage(conversations: [.singleStub, .groupStub], hasNext: false))]
+        await sut.loadFirstPage()
+
+        sut.didSelectConversation(try XCTUnwrap(sut.conversations.last))
+
+        XCTAssertEqual(router.path, NavigationPath([ChatListRoute.conversation(.groupStub)]))
+    }
+
+    /// Кейс: тап по строке, переписки которой уже нет в списке (список успел обновиться).
+    /// Ожидание: ничего не открывается.
+    func test_didSelectConversation_unknownRow_doesNothing() {
+        sut.didSelectConversation(ChatRowDisplayModel(id: 999, title: "", avatarURL: nil))
+
+        XCTAssertTrue(router.path.isEmpty)
+    }
+
     /// Кейс: создана новая переписка.
     /// Ожидание: она сохранена в БД — чтобы была в списке и без сети.
     func test_didCreateConversation_savesToStorage() async {

@@ -8,6 +8,7 @@ import SwiftUI
 /// Экраны, доступные из списка чатов.
 enum ChatListRoute: Hashable {
     case profile
+    case conversation(Conversation)
 }
 
 /// Экраны, показываемые модально поверх списка чатов.
@@ -28,6 +29,12 @@ final class ChatListRouter {
     /// Открывает экран профиля текущего пользователя.
     func showProfile() {
         path.append(ChatListRoute.profile)
+    }
+
+    /// Открывает экран переписки.
+    /// - Parameter conversation: переписка, которую нужно показать.
+    func showConversation(_ conversation: Conversation) {
+        path.append(ChatListRoute.conversation(conversation))
     }
 
     /// Открывает экран создания личного диалога.

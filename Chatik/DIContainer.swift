@@ -29,6 +29,10 @@ final class DIContainer {
     let signupValidator: SignupValidatorProtocol
     let loginValidator: LoginValidatorProtocol
     let messageTextValidator: MessageTextValidatorProtocol
+    let globalService: GlobalServiceProtocol
+    let realtimeService: RealtimeServiceProtocol
+    /// Держит наблюдение за сетью, пока жив контейнер: при появлении сети WebSocket переподключается сразу.
+    private let networkPathMonitor: NetworkPathMonitor
 
     private init() {
         // Хранилище открывается в фоне: открытие SQLite и возможная миграция не задерживают первый кадр.
@@ -62,10 +66,26 @@ final class DIContainer {
         self.imageFileStore = ImageFileStore()
         self.fileStorage = FileStorageService(container: storageContainer)
         self.userStorage = userStorage
-        self.conversationStorage = ConversationStorageService(container: storageContainer)
-        self.messageStorage = MessageStorageService(container: storageContainer)
+        let conversationStorage = ConversationStorageService(container: storageContainer)
+        let messageStorage = MessageStorageService(container: storageContainer)
+        self.conversationStorage = conversationStorage
+        self.messageStorage = messageStorage
         self.signupValidator = SignupValidator()
         self.loginValidator = LoginValidator()
         self.messageTextValidator = MessageTextValidator()
+        let globalService = GlobalService(networkService: networkService)
+        let realtimeService = RealtimeService(
+            globalService: globalService,
+            connectionFactory: URLSessionWebSocketConnectionFactory(),
+            sessionService: sessionService,
+            conversationStorage: conversationStorage,
+            messageStorage: messageStorage,
+            userCache: userCache
+        )
+        self.globalService = globalService
+        self.realtimeService = realtimeService
+        self.networkPathMonitor = NetworkPathMonitor { [weak realtimeService] in
+            realtimeService?.networkDidBecomeAvailable()
+        }
     }
 }

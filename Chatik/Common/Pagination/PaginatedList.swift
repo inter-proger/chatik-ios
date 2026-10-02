@@ -14,6 +14,7 @@ import Foundation
 /// - показывает сохранённые локально элементы, пока грузится первая страница (если владелец передал кэш);
 /// - отбрасывает ответы устаревших загрузок (пользователь потянул refresh или сменил поисковый запрос);
 /// - отменяет начатую подгрузку следующей страницы при загрузке первой;
+/// - сверяет начало списка с сервером, не сбрасывая подгруженные дальше страницы (`syncFirstPage`);
 /// - не допускает дубликатов: при постраничной выдаче список на сервере может сдвинуться между запросами;
 /// - считает, сколько элементов получено с сервера, отдельно от `items` — вставленные локально
 ///   (например, только что созданная переписка) сдвиг следующей страницы не смещают.
@@ -88,6 +89,34 @@ final class PaginatedList<Item: Identifiable> where Item.ID: Hashable {
         // Пока дочитывался кэш, могла начаться новая загрузка — тогда итог этой уже не актуален.
         guard generation == self.generation else { return .superseded }
         return outcome
+    }
+
+    /// Сверяет начало списка с сервером, не сбрасывая подгруженные дальше страницы: например, после
+    /// переподключения к WebSocket, когда события могли потеряться. Флаг загрузки первой страницы не поднимается,
+    /// идущие загрузки не отменяются.
+    ///
+    /// Страница вклеивается в начало списка, если стыкуется с ним (её последний элемент уже есть в списке);
+    /// элементы списка, которых в ней нет, остаются после неё, пагинация продолжается с прежнего места.
+    /// Иначе (между страницей и списком мог образоваться разрыв, страница последняя или идёт `refresh`
+    /// с ещё не пришедшим ответом) список заменяется страницей, как при `refresh`.
+    /// - Parameter load: загрузчик страницы.
+    /// - Returns: что делать владельцу — ошибка, успех или ответ устарел. При ошибке список не меняется.
+    @discardableResult
+    func syncFirstPage(load: Load) async -> PaginationOutcome {
+        let generation = generation
+        do {
+            let page = try await load(PaginationContext(loadedCount: 0, cursor: nil))
+            guard generation == self.generation else { return .superseded }
+            guard !isLoadingFirstPage, canPrepend(page) else {
+                replace(with: page)
+                return .applied
+            }
+            prepend(page)
+            return .applied
+        } catch {
+            guard generation == self.generation else { return .superseded }
+            return .failed(error)
+        }
     }
 
     /// Начинает подгрузку следующей страницы, если показан один из последних элементов списка.
@@ -176,6 +205,40 @@ final class PaginatedList<Item: Identifiable> where Item.ID: Hashable {
             hasMorePages = false
             return .failed(error)
         }
+    }
+
+    /// Можно ли вклеить первую страницу в начало списка: за ней есть ещё элементы, и её последний элемент уже
+    /// в списке — значит, между страницей и остальным списком нет разрыва.
+    /// - Parameter page: свежая первая страница.
+    private func canPrepend(_ page: PaginatedListPage<Item>) -> Bool {
+        guard page.hasNext, let last = page.items.last else { return false }
+        return contains(id: last.id)
+    }
+
+    /// Ставит первую страницу в начало списка; элементы списка, которых в ней нет, остаются после неё. Сдвиг
+    /// следующей страницы растёт на число новых элементов, курсор и признак следующей страницы не меняются:
+    /// продолжение выдачи — от прежнего конца списка.
+    /// - Parameter page: свежая первая страница, стыкующаяся со списком.
+    private func prepend(_ page: PaginatedListPage<Item>) {
+        let listedIds = Set(items.map(\.id))
+        let pageIds = Set(page.items.map(\.id))
+        loadedCount += page.items.filter { !listedIds.contains($0.id) }.count
+        items = page.items + items.filter { !pageIds.contains($0.id) }
+    }
+
+    /// Заменяет список первой страницей вне `refresh`. Становится актуальной загрузкой: идущие `refresh`
+    /// и подгрузка следующей страницы отменяются, их ответы отбрасываются как устаревшие, а кэш больше не показывается.
+    /// - Parameter page: свежая первая страница.
+    private func replace(with page: PaginatedListPage<Item>) {
+        nextPageTask?.cancel()
+        isLoadingNextPage = false
+        isLoadingFirstPage = false
+        generation += 1
+        appliedFirstPageGeneration = generation
+        items = []
+        loadedCount = 0
+        cursor = nil
+        apply(page)
     }
 
     /// Начинает читать кэш, если он передан и список пуст (открытие экрана). При непустом списке кэш не нужен:

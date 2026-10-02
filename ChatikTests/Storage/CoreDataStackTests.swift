@@ -106,6 +106,27 @@ final class CoreDataStackTests: XCTestCase {
         XCTAssertEqual(messages.map(\.id), [1])
     }
 
+    /// Кейс: хранилище создано третьей версией модели (у переписки нет `updatedAt`).
+    /// Ожидание: при открытии текущей версией переписка на месте, а её `updatedAt` — 1970 год: любая версия
+    /// с сервера новее и перезапишет её.
+    func test_makeContainer_thirdModelVersion_migratesConversationsWithOldestUpdatedAt() async throws {
+        try makeStore(modelVersion: "Chatik 3") { context in
+            let conversation = NSEntityDescription.insertNewObject(forEntityName: "ConversationEntity", into: context)
+            conversation.setValue(Conversation.groupStub.id, forKey: "conversationId")
+            conversation.setValue("group", forKey: "type")
+            conversation.setValue(try JSONEncoder().encode([1, 2, 3]), forKey: "memberIds")
+            conversation.setValue("Старое", forKey: "name")
+        }
+
+        let storage = ConversationStorageService(container: CoreDataStack.makeContainer(storeURL: storeURL))
+        let migrated = try await storage.fetchAll()
+        try await storage.save(conversation: .groupStub.with(updatedAt: Date(timeIntervalSince1970: 1)))
+
+        let updated = try await storage.fetchAll()
+        XCTAssertEqual(migrated.map(\.updatedAt), [Date(timeIntervalSince1970: 0)])
+        XCTAssertEqual(updated.map(\.name), ["Команда"])
+    }
+
     // MARK: - Helpers
 
     /// Создаёт по адресу `storeURL` хранилище указанной прежней версии модели, заполняет его и закрывает.

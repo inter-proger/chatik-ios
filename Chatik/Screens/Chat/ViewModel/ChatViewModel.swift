@@ -12,6 +12,10 @@ import os
 /// по курсору `nextBlockId`. Каждая полученная страница и каждое отправленное сообщение сохраняются в локальную БД,
 /// и при открытии экрана до ответа сервера (или вместо него, если сети нет) показываются сообщения из БД.
 ///
+/// Сообщения, полученные помимо страниц, — отправленные с экрана и пришедшие событиями WebSocket — хранятся
+/// отдельно (`liveMessages`) и накладываются на список при отображении: из двух версий одного сообщения
+/// показывается версия с большим `updatedAt`.
+///
 /// Тексты и DisplayModel собираются в `ChatViewModel+Texts`.
 @MainActor
 @Observable
@@ -28,9 +32,10 @@ final class ChatViewModel {
 
     let conversation: Conversation
     let list = PaginatedList<Message>(prefetchThreshold: 10)
-    /// Отправленные с этого экрана сообщения, сначала самые новые. Показываются, пока они новее всех сообщений
-    /// `list`: загрузка первой страницы, ответ на которую сервер собрал до отправки, иначе заменила бы список без них.
-    private(set) var sentMessages: [Message] = []
+    /// Сообщения, полученные помимо страниц (отправленные с экрана, пришедшие событиями WebSocket), по `messageId` —
+    /// последняя известная версия каждого. Хранятся отдельно от `list`: обновление первой страницы, ответ на которую
+    /// сервер собрал раньше, иначе заменило бы список без них или откатило бы правку.
+    private(set) var liveMessages: [Int: Message] = [:]
     let sessionService: SessionServiceProtocol
     let userCache: UserCacheServiceProtocol
     let localizationService: LocalizationServiceProtocol
@@ -38,6 +43,7 @@ final class ChatViewModel {
     let now: () -> Date
     private let messageService: MessageServiceProtocol
     private let messageStorage: MessageStorageServiceProtocol
+    private let realtimeService: RealtimeServiceProtocol
 
     /// - Parameters:
     ///   - conversation: открытая переписка.
@@ -47,6 +53,7 @@ final class ChatViewModel {
     ///   - userCache: кэш пользователей — имена собеседника и отправителей.
     ///   - localizationService: язык форматирования времени.
     ///   - messageTextValidator: проверка текста перед отправкой.
+    ///   - realtimeService: события WebSocket — новые и отредактированные сообщения.
     ///   - now: текущее время; подменяется в тестах форматирования.
     init(
         conversation: Conversation,
@@ -56,6 +63,7 @@ final class ChatViewModel {
         userCache: UserCacheServiceProtocol,
         localizationService: LocalizationServiceProtocol,
         messageTextValidator: MessageTextValidatorProtocol,
+        realtimeService: RealtimeServiceProtocol,
         now: @escaping () -> Date = { Date() }
     ) {
         self.conversation = conversation
@@ -65,6 +73,7 @@ final class ChatViewModel {
         self.userCache = userCache
         self.localizationService = localizationService
         self.messageTextValidator = messageTextValidator
+        self.realtimeService = realtimeService
         self.now = now
     }
 
@@ -78,6 +87,13 @@ final class ChatViewModel {
     /// при перерисовке во время обновления), и запрос оборвался бы, показав ошибку вместо новых сообщений.
     func loadFirstPage() async {
         let task = Task { await list.refresh(cached: loadCachedMessages, load: loadPage) }
+        show(await task.value)
+    }
+
+    /// Сверяет самые новые сообщения с сервером, не сбрасывая подгруженную историю: лента прокручена назад —
+    /// загруженные страницы и позиция остаются на месте. Идущая загрузка первой страницы не прерывается.
+    func syncFirstPage() async {
+        let task = Task { await list.syncFirstPage(load: loadPage) }
         show(await task.value)
     }
 
@@ -123,12 +139,45 @@ final class ChatViewModel {
         do {
             let text = messageText
             let message = try await messageService.send(conversationId: conversation.conversationId, text: text)
-            sentMessages.insert(message, at: 0)
+            applyLive(message)
             messageText = ""
             await save([message])
         } catch {
             errorMessage = ErrorMessages.message(for: error)
         }
+    }
+
+    // MARK: - События WebSocket
+
+    /// Применяет события реального времени, пока задачу не отменят. После (пере)подключения самые новые
+    /// сообщения сверяются через REST: события, пришедшие без соединения, потеряны.
+    func observeRealtimeEvents() async {
+        for await event in realtimeService.events() {
+            handle(event)
+        }
+    }
+
+    /// Применяет одно событие реального времени. Сообщения уже сохранены в БД сервисом WebSocket; сообщения
+    /// других переписок пропускаются.
+    /// - Parameter event: событие.
+    func handle(_ event: RealtimeEvent) {
+        switch event {
+        case .connected:
+            Task { await syncFirstPage() }
+        case let .messageReceived(message), let .messageEdited(message):
+            guard message.conversationId == conversation.conversationId else { return }
+            applyLive(message)
+        case .conversationCreated:
+            break
+        }
+    }
+
+    /// Запоминает версию сообщения, полученную помимо страниц, если она не старше уже известной. Повторное
+    /// применение той же версии (событие о собственном отправленном сообщении) ничего не меняет.
+    /// - Parameter message: сообщение из ответа `/messages/send` или события WebSocket.
+    private func applyLive(_ message: Message) {
+        guard liveMessages[message.id].map(message.isNotOlder(than:)) ?? true else { return }
+        liveMessages[message.id] = message
     }
 
     // MARK: - Локальная БД
@@ -160,12 +209,13 @@ final class ChatViewModel {
         }
     }
 
-    /// Запускает загрузку отправителей, если их имена показываются (групповая переписка). Список не ждёт
-    /// загрузки — пока отправителя нет, вместо имени показывается заглушка.
+    /// Запускает загрузку отправителей — для их имён и аватаров. Текущий пользователь не запрашивается: он берётся
+    /// из сессии. Список не ждёт загрузки — пока отправителя нет, вместо имени показывается заглушка.
     /// - Parameter messages: сообщения, отправители которых нужны.
     private func loadSenders(of messages: [Message]) {
-        guard conversation.type == .group, !messages.isEmpty else { return }
-        let senderIds = Array(Set(messages.map(\.senderId))).sorted()
+        let currentUserId = sessionService.currentUser?.userId
+        let senderIds = Set(messages.map(\.senderId)).filter { $0 != currentUserId }.sorted()
+        guard !senderIds.isEmpty else { return }
         Task { await userCache.loadUsers(ids: senderIds) }
     }
 }

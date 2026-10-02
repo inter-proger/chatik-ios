@@ -16,6 +16,9 @@ final class ConversationEntity: NSManagedObject, StorageEntity {
     @NSManaged var avatar: FileEntity?
     /// Id собеседника; `nil` — собеседника нет (группа).
     @NSManaged var opponentUserId: NSNumber?
+    /// Время изменения полей переписки. Записям, сохранённым до появления поля, миграция проставляет 1970 год:
+    /// любая версия с сервера их новее.
+    @NSManaged var updatedAt: Date?
 
     static let idKey = "conversationId"
 
@@ -32,16 +35,26 @@ final class ConversationEntity: NSManagedObject, StorageEntity {
         name = conversation.name
         self.avatar = avatar
         opponentUserId = conversation.opponentUserId.map { NSNumber(value: $0) }
+        updatedAt = conversation.updatedAt
+    }
+
+    /// `true`, если в записи версия переписки новее `conversation`: такую запись перезаписывать нельзя —
+    /// событие WebSocket могло прийти раньше ответа REST с более старыми данными.
+    /// - Parameter conversation: версия, которую собираются сохранить.
+    func isNewer(than conversation: Conversation) -> Bool {
+        guard let updatedAt else { return false }
+        return updatedAt > conversation.updatedAt
     }
 
     /// Сохраняет переписки вместе с аватарами в контексте (upsert по `conversationId`),
-    /// не вызывая `save()`.
+    /// не вызывая `save()`. Запись, в которой версия новее сохраняемой, не меняется.
     /// - Parameters:
     ///   - conversations: сырые структуры переписок.
     ///   - context: фоновый контекст записи.
     static func upsert(_ conversations: [Conversation], in context: NSManagedObjectContext) throws {
         let avatarsById = try FileEntity.upsert(conversations.compactMap(\.avatar), in: context)
         _ = try upsert(conversations, id: \.conversationId, in: context) { entity, conversation in
+            guard !entity.isNewer(than: conversation) else { return }
             entity.update(from: conversation, avatar: conversation.avatar.flatMap { avatarsById[$0.fileId] })
         }
     }
@@ -54,7 +67,8 @@ extension Conversation {
     init?(entity: ConversationEntity) {
         guard let rawType = entity.type,
               let memberIdsData = entity.memberIds,
-              let memberIds = try? JSONDecoder().decode([Int].self, from: memberIdsData) else { return nil }
+              let memberIds = try? JSONDecoder().decode([Int].self, from: memberIdsData),
+              let updatedAt = entity.updatedAt else { return nil }
         var avatar: RemoteFile?
         if let avatarEntity = entity.avatar {
             guard let file = RemoteFile(entity: avatarEntity) else { return nil }
@@ -66,7 +80,8 @@ extension Conversation {
             memberIds: memberIds,
             name: entity.name,
             avatar: avatar,
-            opponentUserId: entity.opponentUserId?.intValue
+            opponentUserId: entity.opponentUserId?.intValue,
+            updatedAt: updatedAt
         )
     }
 }

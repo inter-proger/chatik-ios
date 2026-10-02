@@ -54,7 +54,7 @@ final class ChatRowDisplayModelTests: XCTestCase {
     /// Кейс: у переписки нет ни названия, ни собеседника — например, тип неизвестен клиенту.
     /// Ожидание: заголовок — запасной текст, строка не выглядит пустой.
     func test_init_withoutNameAndOpponent_usesUntitledTitle() {
-        let conversation = Conversation(conversationId: 1, type: .unknown, memberIds: [1, 2], name: nil, avatar: nil, opponentUserId: nil)
+        let conversation = Conversation(conversationId: 1, type: .unknown, memberIds: [1, 2], name: nil, avatar: nil, opponentUserId: nil, updatedAt: Date(timeIntervalSince1970: 1_790_846_400))
 
         XCTAssertEqual(ChatRowDisplayModel(conversation: conversation, opponent: nil).title, ChatListStrings.rowUntitled)
     }
@@ -63,7 +63,7 @@ final class ChatRowDisplayModelTests: XCTestCase {
     /// Ожидание: для строки берётся полноразмерный URL.
     func test_init_withoutSmallCopy_usesFullURL() {
         let avatar = RemoteFile(fileId: 1, type: .image, url: RemoteFile.stub.url, size: 1, filename: "a.jpg", fileExtension: "jpg", smallURL: nil)
-        let conversation = Conversation(conversationId: 1, type: .group, memberIds: [1, 2], name: "Группа", avatar: avatar, opponentUserId: nil)
+        let conversation = Conversation(conversationId: 1, type: .group, memberIds: [1, 2], name: "Группа", avatar: avatar, opponentUserId: nil, updatedAt: Date(timeIntervalSince1970: 1_790_846_400))
 
         XCTAssertEqual(ChatRowDisplayModel(conversation: conversation, opponent: nil).avatarURL, RemoteFile.stub.url)
     }

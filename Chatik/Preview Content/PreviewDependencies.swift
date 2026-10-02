@@ -18,6 +18,7 @@ enum PreviewDependencies {
         usersService: UsersServicePreviewMock(),
         userStorage: UserStorageService(container: storageContainer)
     )
+    static let realtimeService = RealtimeServicePreviewMock()
 
     /// ViewModel экрана авторизации над моками.
     /// - Parameters:
@@ -31,6 +32,7 @@ enum PreviewDependencies {
             mode: mode,
             authService: AuthServicePreviewMock(authResult: authResult),
             sessionService: sessionService,
+            realtimeService: realtimeService,
             localizationService: localizationService,
             signupValidator: SignupValidator(),
             loginValidator: LoginValidator(),
@@ -47,6 +49,7 @@ enum PreviewDependencies {
             conversationService: ConversationServicePreviewMock(userCache: userCache),
             conversationStorage: ConversationStorageService(container: storageContainer),
             userCache: userCache,
+            realtimeService: realtimeService,
             router: ChatListRouter()
         )
     }
@@ -54,7 +57,7 @@ enum PreviewDependencies {
     /// ViewModel экрана переписки над моками. У превью собственная сессия — видно деление на входящие и исходящие.
     /// - Parameter conversation: открытая переписка; по умолчанию — групповая, с именами отправителей.
     static func chatViewModel(
-        conversation: Conversation = Conversation(conversationId: 2, type: .group, memberIds: [1, 2, 3], name: "Команда", avatar: nil, opponentUserId: nil)
+        conversation: Conversation = Conversation(conversationId: 2, type: .group, memberIds: [1, 2, 3], name: "Команда", avatar: nil, opponentUserId: nil, updatedAt: Date())
     ) -> ChatViewModel {
         let user = User(userId: 1, login: "ivan", name: "Иван Петров", avatar: nil)
         let sessionService = makeSessionService(userDefaultsService: UserDefaultsServicePreviewMock(currentUser: user))
@@ -66,7 +69,8 @@ enum PreviewDependencies {
             sessionService: sessionService,
             userCache: userCache,
             localizationService: localizationService,
-            messageTextValidator: MessageTextValidator()
+            messageTextValidator: MessageTextValidator(),
+            realtimeService: realtimeService
         )
     }
 
@@ -198,7 +202,8 @@ final class ConversationServicePreviewMock: ConversationServiceProtocol {
             memberIds: [1, userId],
             name: nil,
             avatar: nil,
-            opponentUserId: userId
+            opponentUserId: userId,
+            updatedAt: Date()
         )
         await sendUsersAction(for: [conversation])
         return conversation
@@ -208,8 +213,8 @@ final class ConversationServicePreviewMock: ConversationServiceProtocol {
         try await Task.sleep(for: delay)
         guard offset == nil else { return ConversationsPage(conversations: [], hasNext: false) }
         let conversations = [
-            Conversation(conversationId: 1, type: .single, memberIds: [1, 2], name: nil, avatar: nil, opponentUserId: 2),
-            Conversation(conversationId: 2, type: .group, memberIds: [1, 2, 3], name: "Команда", avatar: nil, opponentUserId: nil),
+            Conversation(conversationId: 1, type: .single, memberIds: [1, 2], name: nil, avatar: nil, opponentUserId: 2, updatedAt: Date()),
+            Conversation(conversationId: 2, type: .group, memberIds: [1, 2, 3], name: "Команда", avatar: nil, opponentUserId: nil, updatedAt: Date()),
         ]
         await sendUsersAction(for: conversations)
         return ConversationsPage(conversations: conversations, hasNext: false)
@@ -323,6 +328,18 @@ final class AuthServicePreviewMock: AuthServiceProtocol {
     func logout() async throws {
         try await Task.sleep(for: delay)
         try logoutResult.get()
+    }
+}
+
+/// Соединение с WebSocket для превью: никуда не подключается, событий не присылает.
+@MainActor
+final class RealtimeServicePreviewMock: RealtimeServiceProtocol {
+    func start() {}
+
+    func stop() async {}
+
+    func events() -> AsyncStream<RealtimeEvent> {
+        AsyncStream { _ in }
     }
 }
 

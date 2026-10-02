@@ -61,6 +61,9 @@ extension NetworkError {
         static let loginAlreadyTaken = 2001
         static let wrongCredentials = 2002
         static let unauthorized = 2003
+        /// Токен подключения к WebSocket не найден, истёк, использован, отозван или чужой.
+        /// Приходит только в WS `auth` / `connectionError`.
+        static let websocketTokenInvalid = 2004
         static let fileMissing = 3001
         static let fileTooLarge = 3002
         static let fileNotImage = 3003

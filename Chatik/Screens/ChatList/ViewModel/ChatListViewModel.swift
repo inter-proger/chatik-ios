@@ -14,6 +14,9 @@ import os
 ///
 /// Список хранит переписки, а не строки: собеседник берётся из кэша пользователей при каждом чтении
 /// `conversations`, поэтому строка обновляется сама, когда собеседник догрузится.
+///
+/// Переписки из событий WebSocket хранятся отдельно от `PaginatedList` (`liveConversations`) и накладываются
+/// на него при отображении: обновление списка, ответ на которое сервер собрал раньше события, иначе стёрло бы их.
 @MainActor
 @Observable
 final class ChatListViewModel {
@@ -28,8 +31,11 @@ final class ChatListViewModel {
     static let pageSize = 30
 
     private let list = PaginatedList<Conversation>()
-    /// Идущие загрузки первой страницы — хранятся, чтобы отменить их и дождаться при выходе. Обычно одна;
-    /// несколько — пока заменённая загрузка (pull-to-refresh поверх открытия) ещё не завершилась после отмены.
+    /// Переписки, пришедшие событиями WebSocket, по `conversationId` — последняя известная версия каждой.
+    private var liveConversations: [Int: Conversation] = [:]
+    /// Идущие загрузки и сверки первой страницы — хранятся, чтобы отменить их и дождаться при выходе. Обычно одна;
+    /// несколько — пока заменённая загрузка (pull-to-refresh поверх открытия) ещё не завершилась после отмены
+    /// или поверх загрузки идёт сверка после подключения к WebSocket.
     private var firstPageTasks: Set<Task<PaginationOutcome, Never>> = []
     /// Последнее начатое сохранение созданной переписки; следующие сохранения выстраиваются за ним.
     private var createdConversationSaveTask: Task<Void, Never>?
@@ -38,6 +44,7 @@ final class ChatListViewModel {
     private let conversationService: ConversationServiceProtocol
     private let conversationStorage: ConversationStorageServiceProtocol
     private let userCache: UserCacheServiceProtocol
+    private let realtimeService: RealtimeServiceProtocol
     private let router: ChatListRouter
 
     init(
@@ -46,6 +53,7 @@ final class ChatListViewModel {
         conversationService: ConversationServiceProtocol,
         conversationStorage: ConversationStorageServiceProtocol,
         userCache: UserCacheServiceProtocol,
+        realtimeService: RealtimeServiceProtocol,
         router: ChatListRouter
     ) {
         self.authService = authService
@@ -53,15 +61,36 @@ final class ChatListViewModel {
         self.conversationService = conversationService
         self.conversationStorage = conversationStorage
         self.userCache = userCache
+        self.realtimeService = realtimeService
         self.router = router
     }
 
     /// Переписки текущего пользователя, сначала самые новые. Собеседники читаются из кэша пользователей —
     /// Observation отслеживает это чтение, и строки перерисуются, когда собеседники загрузятся.
     var conversations: [ChatRowDisplayModel] {
-        list.items.map { conversation in
+        displayedConversations.map { conversation in
             ChatRowDisplayModel(conversation: conversation, opponent: conversation.opponentUserId.map(userCache.user(id:)))
         }
+    }
+
+    /// Переписки списка с наложенными событиями WebSocket: версия из события заменяет переписку списка, если она
+    /// не старше; новые переписки, которых нет в списке, встают в начало, если они новее всех переписок списка.
+    /// Более старые лежат за пределами загруженных страниц и придут на своё место при прокрутке.
+    private var displayedConversations: [Conversation] {
+        let listedIds = Set(list.items.map(\.id))
+        let newestListedId = listedIds.max()
+        let fresh = liveConversations.values
+            .filter { conversation in
+                guard !listedIds.contains(conversation.id) else { return false }
+                guard let newestListedId else { return true }
+                return conversation.id > newestListedId
+            }
+            .sorted { $0.id > $1.id }
+        let listed = list.items.map { conversation in
+            guard let live = liveConversations[conversation.id], live.isNotOlder(than: conversation) else { return conversation }
+            return live
+        }
+        return fresh + listed
     }
 
     /// `true`, пока грузится первая страница (при открытии экрана и pull-to-refresh).
@@ -74,9 +103,9 @@ final class ChatListViewModel {
         list.isLoadingNextPage
     }
 
-    /// `true`, если загружать нечего: список пуст и первая страница не грузится.
+    /// `true`, если показывать нечего: список пуст, первая страница не грузится и событий о новых переписках не было.
     var isEmpty: Bool {
-        list.isEmpty
+        list.isEmpty && liveConversations.isEmpty
     }
 
     /// URL аватара текущего пользователя для кнопки профиля: уменьшенная копия, если она есть.
@@ -96,6 +125,17 @@ final class ChatListViewModel {
     func loadFirstPage() async {
         firstPageTasks.forEach { $0.cancel() }
         let task = Task { await list.refresh(cached: loadCachedConversations, load: loadPage) }
+        firstPageTasks.insert(task)
+        let outcome = await task.value
+        firstPageTasks.remove(task)
+        show(outcome)
+    }
+
+    /// Сверяет начало списка с сервером, не сбрасывая подгруженные дальше страницы. Идущую загрузку первой
+    /// страницы (открытие экрана) не отменяет — её ответ не пропадает зря. Задача хранится вместе с загрузками
+    /// первой страницы, чтобы выход мог её отменить и дождаться.
+    func syncFirstPage() async {
+        let task = Task { await list.syncFirstPage(load: loadPage) }
         firstPageTasks.insert(task)
         let outcome = await task.value
         firstPageTasks.remove(task)
@@ -184,6 +224,30 @@ final class ChatListViewModel {
         errorMessage = ErrorMessages.message(for: error)
     }
 
+    // MARK: - События WebSocket
+
+    /// Применяет события реального времени, пока задачу не отменят. После (пере)подключения начало списка
+    /// сверяется через REST: события, пришедшие без соединения, потеряны.
+    func observeRealtimeEvents() async {
+        for await event in realtimeService.events() {
+            handle(event)
+        }
+    }
+
+    /// Применяет одно событие реального времени. Переписка уже сохранена в БД сервисом WebSocket.
+    /// - Parameter event: событие.
+    func handle(_ event: RealtimeEvent) {
+        switch event {
+        case .connected:
+            Task { await syncFirstPage() }
+        case let .conversationCreated(conversation):
+            guard liveConversations[conversation.id].map(conversation.isNotOlder(than:)) ?? true else { return }
+            liveConversations[conversation.id] = conversation
+        case .messageReceived, .messageEdited:
+            break
+        }
+    }
+
     // MARK: - Навигация
 
     /// Обработчик кнопки-аватара: открывает экран профиля.
@@ -194,7 +258,7 @@ final class ChatListViewModel {
     /// Обработчик тапа по строке списка: открывает переписку.
     /// - Parameter row: строка, по которой тапнули.
     func didSelectConversation(_ row: ChatRowDisplayModel) {
-        guard let conversation = list.items.first(where: { $0.id == row.id }) else { return }
+        guard let conversation = displayedConversations.first(where: { $0.id == row.id }) else { return }
         router.showConversation(conversation)
     }
 
@@ -221,10 +285,16 @@ final class ChatListViewModel {
     /// Завершает сессию на сервере и локально; приложение переключится на экран авторизации.
     /// Если сервер ответил «не авторизован», сессии уже нет — завершаем локально без сообщения об ошибке.
     /// При прочих ошибках показывает сообщение и остаётся на экране — загрузки списка не прерываются.
+    ///
+    /// Соединение с WebSocket закрывается до запроса: сервер закроет соединения сессии с кодом 4003, и по ещё
+    /// текущему соединению это выглядело бы как истечение сессии. Закрытие дожидается записей событий в БД —
+    /// они не попадут туда после очистки. После запроса работа с сервером начинается заново: после выхода
+    /// `/global/start` подключаться не даст, а при ошибке выхода соединение восстановится.
     func logout() async {
         isLoggingOut = true
         defer { isLoggingOut = false }
 
+        await realtimeService.stop()
         do {
             try await authService.logout()
             await endSession()
@@ -233,6 +303,7 @@ final class ChatListViewModel {
         } catch {
             errorMessage = ErrorMessages.message(for: error)
         }
+        realtimeService.start()
     }
 
     /// Отменяет загрузки списка, дожидается записей в БД и только затем завершает сессию: иначе страница,

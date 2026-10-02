@@ -15,6 +15,7 @@ final class ChatListViewModelTests: XCTestCase {
     private var conversationService: ConversationServiceMock!
     private var conversationStorage: ConversationStorageServiceMock!
     private var userCache: UserCacheServiceMock!
+    private var realtimeService: RealtimeServiceMock!
     private var router: ChatListRouter!
     private var sut: ChatListViewModel!
 
@@ -27,6 +28,7 @@ final class ChatListViewModelTests: XCTestCase {
         conversationService = ConversationServiceMock()
         conversationStorage = ConversationStorageServiceMock()
         userCache = UserCacheServiceMock()
+        realtimeService = RealtimeServiceMock()
         router = ChatListRouter()
         sut = ChatListViewModel(
             authService: AuthService(networkService: networkService),
@@ -34,6 +36,7 @@ final class ChatListViewModelTests: XCTestCase {
             conversationService: conversationService,
             conversationStorage: conversationStorage,
             userCache: userCache,
+            realtimeService: realtimeService,
             router: router
         )
     }
@@ -435,6 +438,119 @@ final class ChatListViewModelTests: XCTestCase {
         XCTAssertEqual(sut.conversations.map(\.id), [Conversation.singleStub.id])
     }
 
+    // MARK: - События WebSocket
+
+    /// Кейс: список показан, событием пришла новая переписка.
+    /// Ожидание: она встала в начало списка; список не пуст.
+    func test_conversationCreated_addsToStart() async {
+        conversationService.stubbedPages = [.success(ConversationsPage(conversations: makeConversations(ids: [2, 1]), hasNext: false))]
+        await sut.loadFirstPage()
+
+        sut.handle(.conversationCreated(makeConversations(ids: [3])[0]))
+
+        XCTAssertEqual(sut.conversations.map(\.id), [3, 2, 1])
+    }
+
+    /// Кейс: список пуст, событием пришла новая переписка.
+    /// Ожидание: переписка показана, экран не считается пустым.
+    func test_conversationCreated_emptyList_isShown() async {
+        conversationService.stubbedPages = [.success(ConversationsPage(conversations: [], hasNext: false))]
+        await sut.loadFirstPage()
+
+        sut.handle(.conversationCreated(.singleStub))
+
+        XCTAssertEqual(sut.conversations.map(\.id), [Conversation.singleStub.id])
+        XCTAssertFalse(sut.isEmpty)
+    }
+
+    /// Кейс: переписка пришла событием, затем обновление списка вернуло страницу, собранную до её создания.
+    /// Ожидание: переписка из события остаётся в начале списка.
+    func test_conversationCreated_survivesOlderRefresh() async {
+        conversationService.stubbedPages = [
+            .success(ConversationsPage(conversations: makeConversations(ids: [1]), hasNext: false)),
+            .success(ConversationsPage(conversations: makeConversations(ids: [1]), hasNext: false)),
+        ]
+        await sut.loadFirstPage()
+        sut.handle(.conversationCreated(makeConversations(ids: [2])[0]))
+
+        await sut.loadFirstPage()
+
+        XCTAssertEqual(sut.conversations.map(\.id), [2, 1])
+    }
+
+    /// Кейс: событие о переписке, которая уже есть в списке (создана с этого устройства).
+    /// Ожидание: дубликата нет.
+    func test_conversationCreated_alreadyListed_doesNotDuplicate() async {
+        conversationService.stubbedPages = [.success(ConversationsPage(conversations: [.singleStub], hasNext: false))]
+        await sut.loadFirstPage()
+
+        sut.handle(.conversationCreated(.singleStub))
+
+        XCTAssertEqual(sut.conversations.map(\.id), [Conversation.singleStub.id])
+    }
+
+    /// Кейс: событием пришла переписка, которой нет в списке и которая старше всех загруженных.
+    /// Ожидание: в начало она не встаёт — придёт на своё место с подгрузкой страниц.
+    func test_conversationCreated_olderThanListed_isNotShownOnTop() async {
+        conversationService.stubbedPages = [.success(ConversationsPage(conversations: makeConversations(ids: [10]), hasNext: true))]
+        await sut.loadFirstPage()
+
+        sut.handle(.conversationCreated(makeConversations(ids: [3])[0]))
+
+        XCTAssertEqual(sut.conversations.map(\.id), [10])
+    }
+
+    /// Кейс: тап по переписке, пришедшей событием.
+    /// Ожидание: она открывается.
+    func test_didSelectConversation_fromEvent_opensConversation() async {
+        sut.handle(.conversationCreated(.singleStub))
+
+        sut.didSelectConversation(sut.conversations[0])
+
+        XCTAssertEqual(router.path.count, 1)
+    }
+
+    /// Кейс: соединение с WebSocket (пере)установлено; на сервере появилась новая переписка.
+    /// Ожидание: начало списка заново запрошено с сервера.
+    func test_connected_syncsFirstPage() async {
+        conversationService.stubbedPages = [
+            .success(ConversationsPage(conversations: makeConversations(ids: [1]), hasNext: false)),
+            .success(ConversationsPage(conversations: makeConversations(ids: [2, 1]), hasNext: false)),
+        ]
+        await sut.loadFirstPage()
+
+        sut.handle(.connected)
+
+        await yieldUntil { [unowned self] in sut.conversations.map(\.id) == [2, 1] }
+        XCTAssertFalse(sut.isLoadingFirstPage)
+    }
+
+    /// Кейс: соединение установлено, пока идёт загрузка списка при открытии экрана; она отвечает раньше сверки.
+    /// Ожидание: загрузка не отменена — её ответ показан, затем поверх него применена сверка; ошибки нет.
+    func test_connected_duringFirstPageLoad_doesNotCancelIt() async {
+        let gates = [Gate(), Gate()]
+        conversationService.stubbedPages = [
+            .success(ConversationsPage(conversations: makeConversations(ids: [1]), hasNext: false)),
+            .success(ConversationsPage(conversations: makeConversations(ids: [2, 1]), hasNext: false)),
+        ]
+        conversationService.onRequest = { [unowned self] in
+            await gates[conversationService.requests.count - 1].wait()
+        }
+        let load = Task { await sut.loadFirstPage() }
+        await yieldUntil { gates[0].isWaiting }
+
+        sut.handle(.connected)
+        await yieldUntil { gates[1].isWaiting }
+        gates[0].open()
+        await load.value
+        let idsAfterLoad = sut.conversations.map(\.id)
+        gates[1].open()
+
+        await yieldUntil { [unowned self] in sut.conversations.map(\.id) == [2, 1] }
+        XCTAssertEqual(idsAfterLoad, [1])
+        XCTAssertNil(sut.errorMessage)
+    }
+
     /// Кейс: у пользователя сессии нет аватара.
     /// Ожидание: URL аватара `nil` — кнопка профиля показывает изображение по умолчанию.
     func test_avatarURL_withoutAvatar_isNil() {
@@ -568,6 +684,31 @@ final class ChatListViewModelTests: XCTestCase {
         XCTAssertEqual(sut.errorMessage, CommonStrings.errorNoConnection)
     }
 
+    /// Кейс: выход из аккаунта успешен.
+    /// Ожидание: соединение с WebSocket закрыто до запроса выхода (иначе 4003 по нему выглядел бы как истечение
+    /// сессии), а после — работа с сервером начата заново.
+    func test_logout_stopsRealtimeBeforeRequestAndStartsAfter() async {
+        networkService.stubbedResult = .success(EmptyResponse())
+        var callsDuringRequest: [String] = []
+        networkService.onRequest = { [unowned self] in callsDuringRequest = realtimeService.calls }
+
+        await sut.logout()
+
+        XCTAssertEqual(callsDuringRequest, ["stop"])
+        XCTAssertEqual(realtimeService.calls, ["stop", "start"])
+    }
+
+    /// Кейс: выход не удался из-за сети.
+    /// Ожидание: соединение с WebSocket восстанавливается — `start()` после ошибки.
+    func test_logout_failure_restartsRealtime() async {
+        networkService.stubbedResult = .failure(NetworkError.transport(URLError(.notConnectedToInternet)))
+
+        await sut.logout()
+
+        XCTAssertTrue(sessionService.isLoggedIn)
+        XCTAssertEqual(realtimeService.calls, ["stop", "start"])
+    }
+
     // MARK: - Выход во время загрузки
 
     /// Кейс: выход подтверждён, пока грузится первая страница; ответ на неё приходит уже после отмены.
@@ -649,7 +790,8 @@ final class ChatListViewModelTests: XCTestCase {
                 memberIds: [1, id + 1000],
                 name: nil,
                 avatar: nil,
-                opponentUserId: id + 1000
+                opponentUserId: id + 1000,
+                updatedAt: Date(timeIntervalSince1970: 1_790_846_400)
             )
         }
     }

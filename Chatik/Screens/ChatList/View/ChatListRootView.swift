@@ -21,6 +21,7 @@ struct ChatListRootView: View {
             conversationService: DIContainer.shared.conversationService,
             conversationStorage: DIContainer.shared.conversationStorage,
             userCache: DIContainer.shared.userCache,
+            realtimeService: DIContainer.shared.realtimeService,
             router: router
         ))
     }
@@ -46,11 +47,15 @@ struct ChatListRootView: View {
                             sessionService: DIContainer.shared.sessionService,
                             userCache: DIContainer.shared.userCache,
                             localizationService: DIContainer.shared.localizationService,
-                            messageTextValidator: DIContainer.shared.messageTextValidator
+                            messageTextValidator: DIContainer.shared.messageTextValidator,
+                            realtimeService: DIContainer.shared.realtimeService
                         ))
                     }
                 }
         }
+        // События слушает корневой контейнер, а не экран списка: экран «исчезает», пока поверх открыта переписка,
+        // а список должен оставаться актуальным.
+        .task { await viewModel.observeRealtimeEvents() }
         .sheet(item: $router.presentedSheet) { sheet in
             switch sheet {
             case .createSingleConversation:

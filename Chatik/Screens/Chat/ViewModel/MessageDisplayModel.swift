@@ -14,22 +14,28 @@ struct MessageDisplayModel: Identifiable, Equatable {
     let isUnsupported: Bool
     /// `true` — сообщение отправил текущий пользователь.
     let isOutgoing: Bool
-    /// Имя отправителя — только у входящих сообщений групповой переписки. `nil` — имя не показывается.
-    let senderName: String?
-    /// `true` — отправитель ещё не загружен: вместо `senderName` показывается заглушка.
-    let isSenderPlaceholder: Bool
+    /// Отправитель — только у первого сообщения серии подряд от одного отправителя: рядом с ним показываются
+    /// аватар и имя. `nil` — сообщение продолжает серию, на месте аватара пустой отступ.
+    let sender: MessageSenderDisplayModel?
     /// Время отправки: только время для сегодняшних сообщений, иначе дата и время.
     let time: String
     /// Пометка «изменено»; `nil` — сообщение не редактировалось.
     let editedLabel: String?
 }
 
+/// Отправитель сообщения в готовом для отображения виде.
+struct MessageSenderDisplayModel: Equatable {
+    let name: String
+    /// `true` — отправитель ещё не загружен: вместо `name` показывается заглушка.
+    let isPlaceholder: Bool
+    /// Уменьшенная копия аватара; `nil` — показывается изображение по умолчанию.
+    let avatarURL: URL?
+}
+
 /// Как показать сообщение — общие для всех сообщений экрана параметры.
 struct MessageDisplayContext {
     /// Текущий пользователь: его сообщения показываются исходящими. `nil` — сессии нет, все сообщения входящие.
     let currentUserId: Int?
-    /// `true` — переписка групповая: у входящих сообщений показывается имя отправителя.
-    let showsSenderNames: Bool
     /// Язык форматирования времени.
     let locale: Locale
     /// Календарь (с часовым поясом), по которому определяется «сегодня».
@@ -42,34 +48,20 @@ extension MessageDisplayModel {
     /// Собирает сообщение для отображения.
     /// - Parameters:
     ///   - message: сообщение из ответа сервера или БД.
-    ///   - sender: отправитель из кэша пользователей; `nil` — имя отправителя не нужно.
+    ///   - sender: отправитель из кэша пользователей; `nil` — сообщение продолжает серию, аватар и имя не нужны.
     ///   - context: общие параметры отображения.
     @MainActor
     init(message: Message, sender: CachedUser?, context: MessageDisplayContext) {
-        let isOutgoing = message.senderId == context.currentUserId
-        let showsSender = context.showsSenderNames && !isOutgoing
         let isUnsupported = message.type == .unknown
         self.init(
             id: message.id,
             text: isUnsupported ? ChatStrings.messageUnsupported : message.text,
             isUnsupported: isUnsupported,
-            isOutgoing: isOutgoing,
-            senderName: showsSender ? Self.senderName(for: sender) : nil,
-            isSenderPlaceholder: showsSender && sender == .pending,
+            isOutgoing: message.senderId == context.currentUserId,
+            sender: sender.map(MessageSenderDisplayModel.init(cachedUser:)),
             time: Self.formattedTime(message.createdAt, context: context),
             editedLabel: message.isEdited ? ChatStrings.messageEdited : nil
         )
-    }
-
-    /// Имя отправителя по состоянию в кэше.
-    /// - Parameter sender: отправитель из кэша; `nil` — неизвестен.
-    @MainActor
-    private static func senderName(for sender: CachedUser?) -> String {
-        switch sender {
-        case let .loaded(user): return user.name
-        case .pending, nil: return ChatStrings.userLoading
-        case .notFound: return ChatStrings.userDeleted
-        }
     }
 
     /// Форматирует время отправки: сегодняшнее — только время, в этом году — день, месяц и время,
@@ -86,5 +78,22 @@ extension MessageDisplayModel {
             return date.formatted(style.year())
         }
         return date.formatted(style)
+    }
+}
+
+extension MessageSenderDisplayModel {
+    /// Собирает отправителя по состоянию в кэше: загруженный — имя и аватар, загружается — заглушка,
+    /// удалён — текст об удалённом пользователе.
+    /// - Parameter cachedUser: отправитель из кэша пользователей.
+    @MainActor
+    init(cachedUser: CachedUser) {
+        switch cachedUser {
+        case let .loaded(user):
+            self.init(name: user.name, isPlaceholder: false, avatarURL: user.avatar.map { $0.smallURL ?? $0.url })
+        case .pending:
+            self.init(name: ChatStrings.userLoading, isPlaceholder: true, avatarURL: nil)
+        case .notFound:
+            self.init(name: ChatStrings.userDeleted, isPlaceholder: false, avatarURL: nil)
+        }
     }
 }

@@ -75,41 +75,49 @@ final class MessageDisplayModelTests: XCTestCase {
 
     // MARK: - Отправитель
 
-    /// Кейс: входящее сообщение групповой переписки при разных состояниях отправителя в кэше.
-    /// Ожидание: загруженный — его имя, загружается — заглушка, удалён — текст об удалённом пользователе.
-    func test_init_groupIncoming_senderNameByCacheState() {
-        let cases: [(sender: CachedUser, name: String, isPlaceholder: Bool)] = [
-            (.loaded(User(userId: 2, login: "petr", name: "Petr", avatar: nil)), "Petr", false),
-            (.pending, ChatStrings.userLoading, true),
-            (.notFound, ChatStrings.userDeleted, false),
+    /// Кейс: первое сообщение серии при разных состояниях отправителя в кэше.
+    /// Ожидание: загруженный — его имя и уменьшенная копия аватара, загружается — заглушка без аватара,
+    /// удалён — текст об удалённом пользователе без аватара.
+    func test_init_firstInSeries_senderByCacheState() {
+        let avatar = RemoteFile.stub
+        let cases: [(sender: CachedUser, expected: MessageSenderDisplayModel)] = [
+            (.loaded(User(userId: 2, login: "petr", name: "Petr", avatar: avatar)), MessageSenderDisplayModel(name: "Petr", isPlaceholder: false, avatarURL: avatar.smallURL)),
+            (.pending, MessageSenderDisplayModel(name: ChatStrings.userLoading, isPlaceholder: true, avatarURL: nil)),
+            (.notFound, MessageSenderDisplayModel(name: ChatStrings.userDeleted, isPlaceholder: false, avatarURL: nil)),
         ]
 
         for testCase in cases {
-            let sut = MessageDisplayModel(message: .make(id: 1, senderId: 2), sender: testCase.sender, context: makeContext(showsSenderNames: true))
-            XCTAssertEqual(sut.senderName, testCase.name)
-            XCTAssertEqual(sut.isSenderPlaceholder, testCase.isPlaceholder)
+            let sut = MessageDisplayModel(message: .make(id: 1, senderId: 2), sender: testCase.sender, context: makeContext())
+            XCTAssertEqual(sut.sender, testCase.expected)
         }
     }
 
-    /// Кейс: исходящее сообщение групповой переписки.
-    /// Ожидание: имя отправителя не показывается.
-    func test_init_groupOutgoing_hidesSenderName() {
-        let sut = MessageDisplayModel(message: .make(id: 1, senderId: 1), sender: .pending, context: makeContext(showsSenderNames: true))
+    /// Кейс: исходящее сообщение — первое в серии.
+    /// Ожидание: имя и аватар отправителя показываются и у своего сообщения.
+    func test_init_outgoingFirstInSeries_showsSender() {
+        let user = User(userId: 1, login: "ivan", name: "Ivan", avatar: nil)
 
-        XCTAssertNil(sut.senderName)
-        XCTAssertFalse(sut.isSenderPlaceholder)
+        let sut = MessageDisplayModel(message: .make(id: 1, senderId: 1), sender: .loaded(user), context: makeContext())
+
+        XCTAssertTrue(sut.isOutgoing)
+        XCTAssertEqual(sut.sender?.name, "Ivan")
+    }
+
+    /// Кейс: сообщение продолжает серию — отправитель не передан.
+    /// Ожидание: ни имени, ни аватара.
+    func test_init_continuesSeries_hasNoSender() {
+        let sut = MessageDisplayModel(message: .make(id: 1, senderId: 2), sender: nil, context: makeContext())
+
+        XCTAssertNil(sut.sender)
     }
 
     // MARK: - Helpers
 
     /// Контекст отображения с русской локалью и часовым поясом UTC.
-    /// - Parameters:
-    ///   - currentUserId: текущий пользователь.
-    ///   - showsSenderNames: показывать ли имена отправителей.
-    private func makeContext(currentUserId: Int? = 1, showsSenderNames: Bool = false) -> MessageDisplayContext {
+    /// - Parameter currentUserId: текущий пользователь.
+    private func makeContext(currentUserId: Int? = 1) -> MessageDisplayContext {
         MessageDisplayContext(
             currentUserId: currentUserId,
-            showsSenderNames: showsSenderNames,
             locale: Locale(identifier: "ru"),
             calendar: calendar,
             now: now

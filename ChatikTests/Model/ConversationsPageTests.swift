@@ -17,7 +17,7 @@ final class ConversationsPageTests: XCTestCase {
           "conversations": [
             {
               "conversationId": 1, "type": "single", "memberIds": [1, 2], "name": null, "avatar": null,
-              "opponentUserId": 2
+              "opponentUserId": 2, "updatedAt": 1790846400
             }
           ],
           "hasNext": false
@@ -74,6 +74,6 @@ final class ConversationsPageTests: XCTestCase {
     /// Групповая переписка с указанным идентификатором.
     /// - Parameter id: идентификатор переписки.
     private func makeConversation(id: Int) -> Conversation {
-        Conversation(conversationId: id, type: .group, memberIds: [1], name: "Группа", avatar: nil, opponentUserId: nil)
+        Conversation(conversationId: id, type: .group, memberIds: [1], name: "Группа", avatar: nil, opponentUserId: nil, updatedAt: Date(timeIntervalSince1970: 1_790_846_400))
     }
 }

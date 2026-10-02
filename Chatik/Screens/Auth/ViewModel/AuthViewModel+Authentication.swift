@@ -21,8 +21,8 @@ extension AuthViewModel {
     }
 
     /// Выполняет регистрацию или вход в зависимости от режима.
-    /// При успехе открывает сессию (приложение переключится на список чатов),
-    /// при ошибке показывает всплывающее сообщение.
+    /// При успехе открывает сессию (приложение переключится на список чатов) и заново начинает работу с сервером —
+    /// `/global/start` выдаст токен WebSocket уже для этого пользователя; при ошибке показывает всплывающее сообщение.
     func performAuthentication() async {
         isLoading = true
         defer { isLoading = false }
@@ -30,6 +30,7 @@ extension AuthViewModel {
         do {
             let user = try await authenticate()
             await sessionService.start(user: user)
+            realtimeService.start()
         } catch {
             errorMessage = ErrorMessages.message(for: error)
         }

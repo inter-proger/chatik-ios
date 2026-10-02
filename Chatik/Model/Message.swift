@@ -59,3 +59,12 @@ extension Message: Decodable {
         updatedAt = Date(timeIntervalSince1970: try container.decode(TimeInterval.self, forKey: .updatedAt))
     }
 }
+
+extension Message {
+    /// `true`, если эта версия сообщения не старше `other` — её можно применять поверх `other`.
+    /// При равном `updatedAt` версии равноправны, и повторное применение ничего не меняет.
+    /// - Parameter other: уже известная версия того же сообщения.
+    func isNotOlder(than other: Message) -> Bool {
+        updatedAt >= other.updatedAt
+    }
+}

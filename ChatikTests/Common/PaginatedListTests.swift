@@ -266,6 +266,94 @@ final class PaginatedListTests: XCTestCase {
         XCTAssertEqual(sut.items.map(\.id), [1, 2])
     }
 
+    // MARK: - Сверка первой страницы
+
+    /// Кейс: загружены две страницы; свежая первая страница стыкуется со списком (её последний элемент в нём есть).
+    /// Ожидание: страница встала в начало, подгруженная история осталась, следующая страница — от прежнего конца
+    /// списка со сдвигом на число новых элементов.
+    func test_syncFirstPage_overlapping_prependsAndKeepsLoadedPages() async {
+        let recorder = ContextRecorder()
+        await sut.refresh(load: page(ids: [5, 4], hasNext: true, cursor: 4))
+        await sut.loadNextPage(load: page(ids: [3, 2], hasNext: true, cursor: 2))
+
+        let outcome = await sut.syncFirstPage(load: page(ids: [6, 5], hasNext: true, cursor: 5))
+        await sut.loadNextPage(load: page(ids: [], hasNext: false, recorder: recorder))
+
+        assertApplied(outcome)
+        XCTAssertEqual(sut.items.map(\.id), [6, 5, 4, 3, 2])
+        XCTAssertEqual(recorder.contexts, [PaginationContext(loadedCount: 5, cursor: 2)])
+    }
+
+    /// Кейс: свежая первая страница со списком не стыкуется — между ними мог образоваться разрыв.
+    /// Ожидание: список заменён страницей, пагинация продолжается от неё.
+    func test_syncFirstPage_gap_replacesList() async {
+        let recorder = ContextRecorder()
+        await sut.refresh(load: page(ids: [5, 4], hasNext: true, cursor: 4))
+
+        await sut.syncFirstPage(load: page(ids: [9, 8], hasNext: true, cursor: 8))
+        await sut.loadNextPage(load: page(ids: [], hasNext: false, recorder: recorder))
+
+        XCTAssertEqual(sut.items.map(\.id), [9, 8])
+        XCTAssertEqual(recorder.contexts, [PaginationContext(loadedCount: 2, cursor: 8)])
+    }
+
+    /// Кейс: свежая первая страница — последняя, за ней на сервере ничего нет.
+    /// Ожидание: список заменён страницей — элементов, которых в ней нет, на сервере больше нет.
+    func test_syncFirstPage_lastPage_replacesList() async {
+        await sut.refresh(load: page(ids: [5, 4, 3], hasNext: true))
+
+        await sut.syncFirstPage(load: page(ids: [6, 5], hasNext: false))
+
+        XCTAssertEqual(sut.items.map(\.id), [6, 5])
+    }
+
+    /// Кейс: сверка завершилась ошибкой.
+    /// Ожидание: наружу отдана ошибка, список не изменился.
+    func test_syncFirstPage_failure_keepsItems() async {
+        await sut.refresh(load: page(ids: [2, 1], hasNext: true))
+
+        let outcome = await sut.syncFirstPage(load: failing())
+
+        XCTAssertEqual(sut.items.map(\.id), [2, 1])
+        guard case .failed(let error) = outcome else { return XCTFail("Ожидалась ошибка, получено \(outcome)") }
+        XCTAssertEqual(error as? TestError, .any)
+    }
+
+    /// Кейс: идёт загрузка первой страницы; поверх неё сверка, ответ на которую пришёл раньше.
+    /// Ожидание: загрузка не прервана, список заменён ответом сверки; опоздавший ответ загрузки собран раньше
+    /// и отброшен, флаг загрузки снят.
+    func test_syncFirstPage_duringRefresh_replacesListAndDiscardsRefresh() async {
+        let gate = Gate()
+        var refreshOutcome: PaginationOutcome?
+        let refresh = Task { refreshOutcome = await self.sut.refresh(load: self.page(ids: [1], hasNext: false, gate: gate)) }
+        await yieldUntil { gate.isWaiting }
+
+        await sut.syncFirstPage(load: page(ids: [2, 1], hasNext: false))
+        let isLoadingAfterSync = sut.isLoadingFirstPage
+        gate.open()
+        await refresh.value
+
+        XCTAssertFalse(isLoadingAfterSync)
+        XCTAssertEqual(sut.items.map(\.id), [2, 1])
+        guard case .superseded = try? XCTUnwrap(refreshOutcome) else { return XCTFail("Ожидался superseded") }
+    }
+
+    /// Кейс: идёт сверка; поверх неё началась загрузка первой страницы.
+    /// Ожидание: опоздавший ответ сверки отброшен — в списке результат загрузки, итог сверки — `superseded`.
+    func test_syncFirstPage_refreshStartedDuringSync_isDiscarded() async {
+        let gate = Gate()
+        var syncOutcome: PaginationOutcome?
+        let sync = Task { syncOutcome = await self.sut.syncFirstPage(load: self.page(ids: [1], hasNext: false, gate: gate)) }
+        await yieldUntil { gate.isWaiting }
+
+        await sut.refresh(load: page(ids: [2], hasNext: false))
+        gate.open()
+        await sync.value
+
+        XCTAssertEqual(sut.items.map(\.id), [2])
+        guard case .superseded = try? XCTUnwrap(syncOutcome) else { return XCTFail("Ожидался superseded") }
+    }
+
     // MARK: - Кэш
 
     /// Кейс: список пуст, передан кэш; загрузка первой страницы ещё идёт.

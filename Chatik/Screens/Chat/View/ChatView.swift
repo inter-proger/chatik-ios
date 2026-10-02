@@ -28,6 +28,7 @@ struct ChatView: View {
         // Лента перевёрнута (см. `MessagesListView`), поэтому индикатор обновления появляется внизу, у новых сообщений.
         .refreshable { await viewModel.loadFirstPage() }
         .task { await viewModel.loadFirstPage() }
+        .task { await viewModel.observeRealtimeEvents() }
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .principal) {

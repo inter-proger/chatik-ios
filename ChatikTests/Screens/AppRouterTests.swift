@@ -9,6 +9,12 @@ import XCTest
 @MainActor
 final class AppRouterTests: XCTestCase {
     private let user = User(userId: 1, login: "ivan", name: "Ivan", avatar: nil)
+    private var realtimeService: RealtimeServiceMock!
+
+    override func setUp() async throws {
+        try await super.setUp()
+        realtimeService = RealtimeServiceMock()
+    }
 
     /// Создаёт роутер над сессией с заданным сохранённым пользователем и без задержки splash.
     private func makeSUT(
@@ -20,6 +26,7 @@ final class AppRouterTests: XCTestCase {
         return AppRouter(
             sessionService: SessionService(userDefaultsService: defaults, localStorageCleaner: LocalStorageCleanerMock()),
             localizationService: LocalizationService(userDefaultsService: defaults, systemLanguage: .ru),
+            realtimeService: realtimeService,
             minimumSplashDuration: minimumSplashDuration
         )
     }
@@ -65,6 +72,7 @@ final class AppRouterTests: XCTestCase {
         let sut = AppRouter(
             sessionService: session,
             localizationService: LocalizationService(userDefaultsService: defaults, systemLanguage: .ru),
+            realtimeService: realtimeService,
             minimumSplashDuration: .zero
         )
         await sut.restoreSession()
@@ -91,5 +99,42 @@ final class AppRouterTests: XCTestCase {
         await sut.restoreSession()
 
         XCTAssertEqual(sut.locale.identifier, "en")
+    }
+
+    // MARK: - WebSocket
+
+    /// Кейс: приложение запустилось, сессия восстановлена.
+    /// Ожидание: работа с сервером начата (`/global/start`) — ровно один раз.
+    func test_restoreSession_startsRealtime() async {
+        let sut = makeSUT(storedUser: user)
+
+        await sut.restoreSession()
+
+        XCTAssertEqual(realtimeService.calls, ["start"])
+    }
+
+    /// Кейс: приложение ушло в фон и вернулось; между ними — повторные переходы в то же состояние.
+    /// Ожидание: уход в фон закрывает соединение, возврат открывает заново; повторы ничего не делают.
+    func test_scenePhase_backgroundStopsAndForegroundStarts() async {
+        let sut = makeSUT(storedUser: user)
+        await sut.restoreSession()
+
+        await sut.didChangeScenePhase(isActive: false)
+        await sut.didChangeScenePhase(isActive: false)
+        await sut.didChangeScenePhase(isActive: true)
+        await sut.didChangeScenePhase(isActive: true)
+
+        XCTAssertEqual(realtimeService.calls, ["start", "stop", "start"])
+    }
+
+    /// Кейс: приложение стало активным, не побывав в фоне (запуск, закрытие шторки).
+    /// Ожидание: соединение не перезапускается.
+    func test_scenePhase_activeWithoutBackground_doesNothing() async {
+        let sut = makeSUT(storedUser: user)
+        await sut.restoreSession()
+
+        await sut.didChangeScenePhase(isActive: true)
+
+        XCTAssertEqual(realtimeService.calls, ["start"])
     }
 }

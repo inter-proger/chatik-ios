@@ -38,12 +38,24 @@ final class MessageEntity: NSManagedObject, StorageEntity {
         updatedAt = message.updatedAt
     }
 
+    /// `true`, если в записи версия сообщения новее `message`: такую запись перезаписывать нельзя —
+    /// событие WebSocket могло прийти раньше ответа REST с более старыми данными.
+    /// - Parameter message: версия, которую собираются сохранить.
+    func isNewer(than message: Message) -> Bool {
+        guard let updatedAt else { return false }
+        return updatedAt > message.updatedAt
+    }
+
     /// Сохраняет сообщения в контексте (upsert по `messageId`), не вызывая `save()`.
+    /// Запись, в которой версия новее сохраняемой, не меняется.
     /// - Parameters:
     ///   - messages: сырые структуры сообщений.
     ///   - context: фоновый контекст записи.
     static func upsert(_ messages: [Message], in context: NSManagedObjectContext) throws {
-        _ = try upsert(messages, id: \.messageId, in: context) { entity, message in entity.update(from: message) }
+        _ = try upsert(messages, id: \.messageId, in: context) { entity, message in
+            guard !entity.isNewer(than: message) else { return }
+            entity.update(from: message)
+        }
     }
 }
 

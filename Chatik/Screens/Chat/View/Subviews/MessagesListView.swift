@@ -19,7 +19,7 @@ struct MessagesListView: View {
 
     var body: some View {
         ScrollView {
-            LazyVStack(spacing: 6) {
+            LazyVStack(spacing: 2) {
                 ForEach(messages) { message in
                     MessageBubbleView(message: message)
                         .flippedVertically()
@@ -47,11 +47,14 @@ private extension View {
 }
 
 #Preview {
+    let ivan = MessageSenderDisplayModel(name: "Иван Петров", isPlaceholder: false, avatarURL: nil)
+    let maria = MessageSenderDisplayModel(name: "Мария", isPlaceholder: false, avatarURL: nil)
     MessagesListView(
         messages: [
-            MessageDisplayModel(id: 3, text: "Отлично, до встречи!", isUnsupported: false, isOutgoing: true, senderName: nil, isSenderPlaceholder: false, time: "12:05", editedLabel: nil),
-            MessageDisplayModel(id: 2, text: "Давай в 7 у входа", isUnsupported: false, isOutgoing: false, senderName: nil, isSenderPlaceholder: false, time: "12:04", editedLabel: "изменено"),
-            MessageDisplayModel(id: 1, text: "Привет! Во сколько встречаемся?", isUnsupported: false, isOutgoing: true, senderName: nil, isSenderPlaceholder: false, time: "12:01", editedLabel: nil),
+            MessageDisplayModel(id: 4, text: "Отлично, до встречи!", isUnsupported: false, isOutgoing: true, sender: ivan, time: "12:05", editedLabel: nil),
+            MessageDisplayModel(id: 3, text: "Давай в 7 у входа", isUnsupported: false, isOutgoing: false, sender: nil, time: "12:04", editedLabel: "изменено"),
+            MessageDisplayModel(id: 2, text: "Привет!", isUnsupported: false, isOutgoing: false, sender: maria, time: "12:03", editedLabel: nil),
+            MessageDisplayModel(id: 1, text: "Привет! Во сколько встречаемся?", isUnsupported: false, isOutgoing: true, sender: ivan, time: "12:01", editedLabel: nil),
         ],
         isLoadingNextPage: true,
         onAppear: { _ in }

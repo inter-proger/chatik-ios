@@ -12,6 +12,7 @@ final class AuthViewModelTests: XCTestCase {
     private var userDefaultsService: UserDefaultsServiceMock!
     private var sessionService: SessionService!
     private var localizationService: LocalizationService!
+    private var realtimeService: RealtimeServiceMock!
 
     override func setUp() {
         super.setUp()
@@ -19,6 +20,7 @@ final class AuthViewModelTests: XCTestCase {
         userDefaultsService = UserDefaultsServiceMock()
         sessionService = SessionService(userDefaultsService: userDefaultsService, localStorageCleaner: LocalStorageCleanerMock())
         localizationService = LocalizationService(userDefaultsService: userDefaultsService, systemLanguage: .ru)
+        realtimeService = RealtimeServiceMock()
     }
 
     private func makeSUT(mode: AuthMode = .signup, authService: AuthServiceProtocol? = nil) -> AuthViewModel {
@@ -26,6 +28,7 @@ final class AuthViewModelTests: XCTestCase {
             mode: mode,
             authService: authService ?? AuthService(networkService: networkService),
             sessionService: sessionService,
+            realtimeService: realtimeService,
             localizationService: localizationService,
             signupValidator: SignupValidator(),
             loginValidator: LoginValidator(),
@@ -226,6 +229,32 @@ final class AuthViewModelTests: XCTestCase {
 
         XCTAssertEqual(networkService.requestedEndpoints.first?.path, "/auth/login")
         XCTAssertEqual(sessionService.currentUser, user)
+    }
+
+    /// Кейс: вход успешен.
+    /// Ожидание: после открытия сессии работа с сервером начата заново — WebSocket подключится под новым пользователем.
+    func test_submit_success_startsRealtime() async {
+        networkService.stubbedResult = .success(User(userId: 7, login: "ivan", name: "Иван", avatar: nil))
+        let sut = makeSUT(mode: .login)
+        sut.login = "ivan"
+        sut.password = "secret"
+
+        await sut.performAuthentication()
+
+        XCTAssertEqual(realtimeService.startCallCount, 1)
+    }
+
+    /// Кейс: вход не удался.
+    /// Ожидание: WebSocket не запускается.
+    func test_submit_failure_doesNotStartRealtime() async {
+        networkService.stubbedResult = .failure(NetworkError.api(code: NetworkError.Code.wrongCredentials))
+        let sut = makeSUT(mode: .login)
+        sut.login = "ivan"
+        sut.password = "secret"
+
+        await sut.performAuthentication()
+
+        XCTAssertEqual(realtimeService.startCallCount, 0)
     }
 
     /// Кейс: логин и имя введены с краевыми пробелами, пароль — с пробелом в начале.

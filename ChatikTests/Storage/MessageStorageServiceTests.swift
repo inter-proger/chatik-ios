@@ -46,6 +46,18 @@ final class MessageStorageServiceTests: XCTestCase {
         XCTAssertEqual(messages, [.editedStub])
     }
 
+    /// Кейс: в БД отредактированное сообщение (пришло событием WebSocket), затем сохраняется более старая версия
+    /// (ответ REST, собранный до правки).
+    /// Ожидание: запись не откатилась — в БД осталась более новая версия.
+    func test_save_olderVersion_keepsNewerRecord() async throws {
+        try await sut.save(message: .editedStub)
+
+        try await sut.save(message: .stub)
+
+        let found = try await sut.find(byId: Message.stub.id)
+        XCTAssertEqual(found, .editedStub)
+    }
+
     /// Кейс: батч из трёх сообщений, два из них с одинаковым `messageId`.
     /// Ожидание: сохранены две записи, для повторного `messageId` — последняя версия.
     func test_saveMessages_duplicateIds_collapsesToLast() async throws {

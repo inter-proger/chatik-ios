@@ -53,6 +53,19 @@ final class ConversationStorageServiceTests: XCTestCase {
         XCTAssertEqual(conversations.map(\.name), ["Новое название"])
     }
 
+    /// Кейс: в БД переписка с более новым `updatedAt` (пришла событием WebSocket), затем сохраняется более старая
+    /// версия (ответ REST, собранный раньше).
+    /// Ожидание: запись не откатилась — название осталось от новой версии.
+    func test_save_olderVersion_keepsNewerRecord() async throws {
+        let newer = makeGroup(id: 1, name: "Новое").with(updatedAt: Date(timeIntervalSince1970: 1_790_846_500))
+        try await sut.save(conversation: newer)
+
+        try await sut.save(conversation: makeGroup(id: 1, name: "Старое"))
+
+        let conversations = try await sut.fetchAll()
+        XCTAssertEqual(conversations, [newer])
+    }
+
     /// Кейс: личная переписка пересохранена группой — у неё больше нет собеседника.
     /// Ожидание: `opponentUserId` в БД обнулён, а не остался от прежней версии.
     func test_save_opponentRemoved_clearsOpponentId() async throws {
@@ -193,7 +206,7 @@ final class ConversationStorageServiceTests: XCTestCase {
     ///   - id: идентификатор переписки.
     ///   - name: название группы.
     private func makeGroup(id: Int, name: String = "Группа") -> Conversation {
-        Conversation(conversationId: id, type: .group, memberIds: [1, 2, 3], name: name, avatar: nil, opponentUserId: nil)
+        Conversation(conversationId: id, type: .group, memberIds: [1, 2, 3], name: name, avatar: nil, opponentUserId: nil, updatedAt: Date(timeIntervalSince1970: 1_790_846_400))
     }
 
     /// Личная переписка с указанным собеседником.
@@ -201,6 +214,6 @@ final class ConversationStorageServiceTests: XCTestCase {
     ///   - id: идентификатор переписки.
     ///   - opponentUserId: id собеседника.
     private func makeSingle(id: Int, opponentUserId: Int) -> Conversation {
-        Conversation(conversationId: id, type: .single, memberIds: [1, opponentUserId], name: nil, avatar: nil, opponentUserId: opponentUserId)
+        Conversation(conversationId: id, type: .single, memberIds: [1, opponentUserId], name: nil, avatar: nil, opponentUserId: opponentUserId, updatedAt: Date(timeIntervalSince1970: 1_790_846_400))
     }
 }

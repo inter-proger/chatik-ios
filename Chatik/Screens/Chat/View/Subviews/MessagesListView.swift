@@ -35,11 +35,24 @@ struct MessagesListView: View {
             .padding(.vertical, 8)
         }
         .flippedVertically()
+        .scrollEdgeEffectsHiddenIfAvailable()
         .scrollDismissesKeyboard(.interactively)
     }
 }
 
 private extension View {
+    /// Скрывает эффекты краёв прокрутки iOS 26 (размытие и затемнение под панелями). Для перевёрнутой ленты они
+    /// рисуются не у тех краёв: нижний эффект, высота которого — панель ввода вместе с клавиатурой, оказывается
+    /// сверху и при открытой клавиатуре затемняет почти всю ленту. Подложку под панелью навигации рисует `ChatView`.
+    @ViewBuilder
+    func scrollEdgeEffectsHiddenIfAvailable() -> some View {
+        if #available(iOS 26, *) {
+            scrollEdgeEffectHidden(true, for: .all)
+        } else {
+            self
+        }
+    }
+
     /// Отражает View по вертикали — для перевёрнутой ленты сообщений.
     func flippedVertically() -> some View {
         scaleEffect(x: 1, y: -1)

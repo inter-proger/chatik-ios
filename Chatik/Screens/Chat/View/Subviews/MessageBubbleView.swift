@@ -5,9 +5,10 @@
 
 import SwiftUI
 
-/// Сообщение в ленте: исходящие — справа на фоне акцентного цвета с аватаром справа, входящие — слева с аватаром
-/// слева. Аватар и имя отправителя есть только у первого сообщения серии; у остальных на месте аватара пустой
-/// отступ, чтобы пузыри серии стояли ровно. Ширина пузыря подстраивается под содержимое.
+/// Сообщение в ленте: исходящие — справа на фоне `OutgoingBubble` (акцентный синий, в тёмной теме приглушённый)
+/// с аватаром справа, входящие — слева с аватаром слева. Аватар и имя отправителя есть только у первого сообщения
+/// серии; у остальных на месте аватара пустой отступ, чтобы пузыри серии стояли ровно. Ширина пузыря подстраивается
+/// под содержимое.
 struct MessageBubbleView: View {
     let message: MessageDisplayModel
 
@@ -59,7 +60,7 @@ struct MessageBubbleView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .foregroundStyle(message.isOutgoing ? Color.white : Color.primary)
-        .background(message.isOutgoing ? Color.accentColor : Color(.secondarySystemBackground))
+        .background(message.isOutgoing ? Color.outgoingBubble : Color(.secondarySystemBackground))
         .clipShape(RoundedRectangle(cornerRadius: 16))
     }
 

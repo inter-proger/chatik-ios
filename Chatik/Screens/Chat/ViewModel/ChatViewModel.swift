@@ -130,8 +130,10 @@ final class ChatViewModel {
         Task { await send() }
     }
 
-    /// Отправляет текст из поля ввода. При успехе сообщение появляется в списке, сохраняется в БД, поле очищается;
-    /// при ошибке показывается сообщение, а текст остаётся в поле — его можно отправить ещё раз.
+    /// Отправляет текст из поля ввода. При успехе сообщение появляется в списке, сохраняется в БД, а из поля
+    /// убирается отправленный текст; при ошибке показывается сообщение, а текст остаётся в поле — его можно
+    /// отправить ещё раз. Поле во время отправки не блокируется (иначе оно теряет фокус и клавиатура опускается),
+    /// поэтому набранное за время запроса после отправленного текста сохраняется в поле.
     func send() async {
         isSending = true
         defer { isSending = false }
@@ -140,11 +142,19 @@ final class ChatViewModel {
             let text = messageText
             let message = try await messageService.send(conversationId: conversation.conversationId, text: text)
             applyLive(message)
-            messageText = ""
+            removeSentText(text)
             await save([message])
         } catch {
             errorMessage = ErrorMessages.message(for: error)
         }
+    }
+
+    /// Убирает из поля отправленный текст, оставляя дописанное после него за время запроса. Если начало поля
+    /// за это время изменили, поле не трогается: что из него уже отправлено, понять нельзя.
+    /// - Parameter text: текст, ушедший на сервер.
+    private func removeSentText(_ text: String) {
+        guard messageText.hasPrefix(text) else { return }
+        messageText.removeFirst(text.count)
     }
 
     // MARK: - События WebSocket

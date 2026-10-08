@@ -348,6 +348,42 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertFalse(sut.isSending)
     }
 
+    /// Кейс: пока сообщение отправлялось, в поле дописали текст после отправленного.
+    /// Ожидание: после успешной отправки в поле осталось только дописанное.
+    func test_send_textTypedWhileSending_keepsTypedText() async {
+        let sut = makeSUT()
+        let gate = Gate()
+        messageService.stubbedSentMessage = .success(.make(id: 2, text: "Привет"))
+        messageService.onSend = { await gate.wait() }
+        sut.messageText = "Привет"
+
+        sut.didTapSend()
+        await yieldUntil { gate.isWaiting }
+        sut.messageText = "Привет, как дела?"
+        gate.open()
+        await yieldUntil { !sut.isSending }
+
+        XCTAssertEqual(sut.messageText, ", как дела?")
+    }
+
+    /// Кейс: пока сообщение отправлялось, начало текста в поле изменили.
+    /// Ожидание: после успешной отправки поле не тронуто.
+    func test_send_textChangedWhileSending_keepsField() async {
+        let sut = makeSUT()
+        let gate = Gate()
+        messageService.stubbedSentMessage = .success(.make(id: 2, text: "Привет"))
+        messageService.onSend = { await gate.wait() }
+        sut.messageText = "Привет"
+
+        sut.didTapSend()
+        await yieldUntil { gate.isWaiting }
+        sut.messageText = "Пока"
+        gate.open()
+        await yieldUntil { !sut.isSending }
+
+        XCTAssertEqual(sut.messageText, "Пока")
+    }
+
     /// Кейс: запрос отправки выполняется.
     /// Ожидание: флаг отправки поднят, кнопка неактивна, повторное нажатие не отправляет второй запрос.
     func test_didTapSend_whileSending_ignoresRepeatedTap() async {

@@ -6,9 +6,10 @@
 import SwiftUI
 
 /// Экран переписки: сообщения с подгрузкой более старых при прокрутке вверх, обновлением жестом вверх у нижнего края
-/// ленты (pull-to-refresh) и поле ввода с кнопкой отправки.
+/// ленты (pull-to-refresh) и поле ввода с кнопкой отправки. Тап по ленте убирает клавиатуру.
 struct ChatView: View {
     @State private var viewModel: ChatViewModel
+    @FocusState private var isInputFocused: Bool
 
     init(viewModel: ChatViewModel) {
         _viewModel = State(initialValue: viewModel)
@@ -20,10 +21,12 @@ struct ChatView: View {
             isLoadingNextPage: viewModel.isLoadingNextPage,
             onAppear: viewModel.prefetchNextPageIfNeeded
         )
+        .onTapGesture { isInputFocused = false }
+        .overlay(alignment: .top) { navigationBarBackground }
         // Заглушка не перехватывает касания: потянуть ленту для обновления можно и в пустой переписке.
         .overlay { stateOverlay.allowsHitTesting(false) }
         .safeAreaInset(edge: .bottom) {
-            ChatInputPanel(viewModel: viewModel)
+            ChatInputPanel(viewModel: viewModel, isFocused: $isInputFocused)
         }
         // Лента перевёрнута (см. `MessagesListView`), поэтому индикатор обновления появляется внизу, у новых сообщений.
         .refreshable { await viewModel.loadFirstPage() }
@@ -42,6 +45,21 @@ struct ChatView: View {
             Button(CommonStrings.ok, role: .cancel) {}
         } message: { message in
             Text(message)
+        }
+    }
+
+    /// Подложка под панелью навигации. У ленты скрыты эффекты краёв прокрутки (см. `MessagesListView`), а на iOS 26
+    /// фон панели рисуют именно они — без подложки заголовок ложился бы прямо на сообщения. View нулевой высоты
+    /// стоит у верхнего края безопасной области, а её фон уходит вверх под панель навигации и строку состояния.
+    /// До iOS 26 фон панели рисует она сама — вторая подложка сделала бы его плотнее, поэтому там её нет.
+    /// Касаний подложка не принимает.
+    @ViewBuilder
+    private var navigationBarBackground: some View {
+        if #available(iOS 26, *) {
+            Color.clear
+                .frame(height: 0)
+                .background(.bar)
+                .allowsHitTesting(false)
         }
     }
 

@@ -103,6 +103,12 @@ final class ChatListViewModel: AuthServiceObserver {
         list.isEmpty && liveConversations.isEmpty
     }
 
+    /// Идентификатор переписки, открытой поверх списка: её строка подсвечена, пока экран переписки показан.
+    /// `nil` — ни одна переписка не открыта.
+    var selectedConversationId: Int? {
+        router.openedConversationId
+    }
+
     /// URL аватара текущего пользователя для кнопки профиля: уменьшенная копия, если она есть.
     /// `nil` — аватар не установлен, кнопка показывает изображение по умолчанию.
     var avatarURL: URL? {

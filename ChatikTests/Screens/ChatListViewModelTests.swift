@@ -219,7 +219,38 @@ final class ChatListViewModelTests: XCTestCase {
 
         sut.didSelectConversation(try XCTUnwrap(sut.conversations.last))
 
-        XCTAssertEqual(router.path, NavigationPath([ChatListRoute.conversation(.groupStub)]))
+        XCTAssertEqual(router.path, [.conversation(.groupStub)])
+    }
+
+    /// Кейс: тап по строке загруженной переписки.
+    /// Ожидание: строка этой переписки выбрана, пока экран переписки открыт.
+    func test_didSelectConversation_selectsRow() async throws {
+        conversationService.stubbedPages = [.success(ConversationsPage(conversations: [.singleStub, .groupStub], hasNext: false))]
+        await sut.loadFirstPage()
+
+        sut.didSelectConversation(try XCTUnwrap(sut.conversations.last))
+
+        XCTAssertEqual(sut.selectedConversationId, Conversation.groupStub.id)
+    }
+
+    /// Кейс: открытую переписку закрыли — экран убран из стека навигации (кнопка «Назад» или свайп).
+    /// Ожидание: выбор строки снят.
+    func test_selectedConversationId_conversationClosed_isNil() async throws {
+        conversationService.stubbedPages = [.success(ConversationsPage(conversations: [.singleStub], hasNext: false))]
+        await sut.loadFirstPage()
+        sut.didSelectConversation(try XCTUnwrap(sut.conversations.first))
+
+        router.path.removeLast()
+
+        XCTAssertNil(sut.selectedConversationId)
+    }
+
+    /// Кейс: поверх списка открыт профиль, а не переписка.
+    /// Ожидание: ни одна строка не выбрана.
+    func test_selectedConversationId_profileOpened_isNil() {
+        sut.didTapProfile()
+
+        XCTAssertNil(sut.selectedConversationId)
     }
 
     /// Кейс: тап по строке, переписки которой уже нет в списке (список успел обновиться).

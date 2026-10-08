@@ -12,10 +12,13 @@ import SwiftUI
 /// а не весь экран с пересборкой ленты сообщений.
 struct ChatInputPanel: View {
     @Bindable var viewModel: ChatViewModel
+    /// Фокус поля ввода: экран снимает его по тапу по ленте, чтобы убрать клавиатуру.
+    var isFocused: FocusState<Bool>.Binding
 
     var body: some View {
         MessageInputView(
             text: $viewModel.messageText,
+            isFocused: isFocused,
             hint: viewModel.inputHint,
             isSending: viewModel.isSending,
             isSendEnabled: viewModel.isSendEnabled,

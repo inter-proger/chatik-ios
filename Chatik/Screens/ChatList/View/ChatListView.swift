@@ -17,6 +17,7 @@ struct ChatListView: View {
     var body: some View {
         ConversationsListView(
             conversations: viewModel.conversations,
+            selectedId: viewModel.selectedConversationId,
             isLoadingNextPage: viewModel.isLoadingNextPage,
             onAppear: viewModel.prefetchNextPageIfNeeded,
             onSelect: viewModel.didSelectConversation

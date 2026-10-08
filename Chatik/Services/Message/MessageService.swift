@@ -10,8 +10,8 @@ protocol MessageServiceProtocol {
     func fetchMessages(conversationId: Int, blockId: Int?) async throws -> MessagesPage
     /// Возвращает сообщения одного блока.
     func fetchBlock(blockId: Int) async throws -> [Message]
-    /// Отправляет текстовое сообщение в переписку.
-    func send(conversationId: Int, text: String) async throws -> Message
+    /// Отправляет текстовое сообщение в переписку; повтор с тем же `clientId` не создаёт дубль.
+    func send(conversationId: Int, text: String, clientId: String) async throws -> Message
     /// Заменяет текст своего сообщения.
     func edit(messageId: Int, newText: String) async throws -> Message
 }
@@ -46,9 +46,12 @@ final class MessageService: MessageServiceProtocol {
     ///   - conversationId: переписка, в которую уходит сообщение.
     ///   - text: текст; после обрезки краевых пробелов и невидимых символов (см. `MessageTextValidator`) должен быть
     ///     длиной 1–4096 символов, иначе ошибка 1005.
-    /// - Returns: созданное сообщение.
-    func send(conversationId: Int, text: String) async throws -> Message {
-        let response: MessageResponse = try await networkService.request(MessageEndpoint.send(conversationId: conversationId, text: text))
+    ///   - clientId: идентификатор, сгенерированный клиентом до отправки (UUID). Повтор запроса с тем же `clientId`
+    ///     в этой переписке возвращает уже созданное сообщение; использованный в другой переписке — ошибка 6004.
+    /// - Returns: созданное сообщение (или созданное раньше с тем же `clientId`).
+    func send(conversationId: Int, text: String, clientId: String) async throws -> Message {
+        let endpoint = MessageEndpoint.send(conversationId: conversationId, text: text, clientId: clientId)
+        let response: MessageResponse = try await networkService.request(endpoint)
         return response.message
     }
 

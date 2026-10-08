@@ -45,6 +45,7 @@ struct ChatListRootView: View {
                             conversation: conversation,
                             messageService: DIContainer.shared.messageService,
                             messageStorage: DIContainer.shared.messageStorage,
+                            messageSendQueue: DIContainer.shared.messageSendQueue,
                             sessionService: DIContainer.shared.sessionService,
                             userCache: DIContainer.shared.userCache,
                             localizationService: DIContainer.shared.localizationService,

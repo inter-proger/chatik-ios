@@ -17,15 +17,36 @@ extension ChatViewModel {
             calendar: .current,
             now: now()
         )
-        let items = displayedMessages
+        let items = displayedItems
         return items.indices.map { index in
-            let message = items[index]
+            let item = items[index]
             // Порядок — от новых к старым, поэтому первое сообщение серии — то, за которым идёт сообщение
             // другого отправителя или конец загруженной ленты.
-            let isFirstInSeries = index + 1 == items.count || items[index + 1].senderId != message.senderId
-            let sender = isFirstInSeries ? cachedSender(id: message.senderId) : nil
-            return MessageDisplayModel(message: message, sender: sender, context: context)
+            let isFirstInSeries = index + 1 == items.count || items[index + 1].senderId != item.senderId
+            let sender = isFirstInSeries ? cachedSender(id: item.senderId) : nil
+            switch item {
+            case let .sent(message):
+                return MessageDisplayModel(message: message, sender: sender, context: context)
+            case let .outgoing(outgoing):
+                return MessageDisplayModel(outgoing: outgoing, sender: sender, context: context)
+            }
         }
+    }
+
+    /// Неотправленные сообщения этой переписки из общей очереди, сначала самые старые.
+    var outgoingMessages: [OutgoingMessage] {
+        messageSendQueue.outgoingMessages.filter { $0.conversationId == conversation.conversationId }
+    }
+
+    /// Элементы ленты, сначала самые новые: неотправленные сообщения — в самом низу ленты (в начале массива),
+    /// под всеми сообщениями с сервера. Неотправленное сообщение, серверная версия которого уже в ленте, не
+    /// показывается: очередь и экран узнают о подтверждении независимо (ответ на отправку, событие WebSocket), и
+    /// иначе одно сообщение на время между ними попало бы в ленту дважды с одним `id`.
+    private var displayedItems: [ChatFeedItem] {
+        let sent = displayedMessages
+        let sentKeys = Set(sent.map(\.clientKey))
+        let pending = outgoingMessages.filter { !sentKeys.contains($0.clientKey) }
+        return pending.reversed().map(ChatFeedItem.outgoing) + sent.map(ChatFeedItem.sent)
     }
 
     /// Отправитель по идентификатору: текущий пользователь — из сессии (там актуальный профиль),
@@ -89,13 +110,12 @@ extension ChatViewModel {
 
     /// `true`, если показывать нечего: сообщений нет и первая страница не грузится.
     var isEmpty: Bool {
-        list.isEmpty && liveMessages.isEmpty
+        list.isEmpty && liveMessages.isEmpty && outgoingMessages.isEmpty
     }
 
-    /// Можно ли нажать «Отправить»: отправка не идёт и текст проходит проверку.
+    /// Можно ли нажать «Отправить»: текст проходит проверку. Идущая отправка не мешает — сообщения встают в очередь.
     var isSendEnabled: Bool {
-        guard !isSending else { return false }
-        return messageTextValidator.validate(messageText) == nil
+        messageTextValidator.validate(messageText) == nil
     }
 
     /// Подсказка под полем ввода. Пустой текст подсказкой не сопровождается — кнопка просто неактивна.
@@ -107,5 +127,18 @@ extension ChatViewModel {
     /// Собеседник личной переписки из кэша; `nil` — у переписки нет собеседника.
     private var opponent: CachedUser? {
         conversation.opponentUserId.map(userCache.user(id:))
+    }
+}
+
+/// Элемент ленты: сообщение с сервера или неотправленное сообщение текущего пользователя.
+private enum ChatFeedItem {
+    case sent(Message)
+    case outgoing(OutgoingMessage)
+
+    var senderId: Int {
+        switch self {
+        case let .sent(message): return message.senderId
+        case let .outgoing(message): return message.senderId
+        }
     }
 }

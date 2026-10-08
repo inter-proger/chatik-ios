@@ -57,17 +57,17 @@ final class MessageServiceTests: XCTestCase {
     }
 
     /// Кейс: отправка текстового сообщения в переписку.
-    /// Ожидание: POST /messages/send с `conversationId` и `text`, наружу отдано сообщение из поля `message`.
+    /// Ожидание: POST /messages/send с `conversationId`, `text` и `clientId`, наружу отдано сообщение из поля `message`.
     func test_send_requestsEndpointAndUnwrapsMessage() async throws {
         networkService.stubbedResult = .success(MessageResponse(message: .stub))
 
-        let message = try await sut.send(conversationId: 1, text: "Привет!")
+        let message = try await sut.send(conversationId: 1, text: "Привет!", clientId: "abc-1")
 
         XCTAssertEqual(message, .stub)
         let endpoint = try XCTUnwrap(networkService.requestedEndpoints.first)
         XCTAssertEqual(endpoint.path, "/messages/send")
         XCTAssertEqual(endpoint.method, .post)
-        XCTAssertEqual(endpoint.parameters, ["conversationId": "1", "text": "Привет!"])
+        XCTAssertEqual(endpoint.parameters, ["conversationId": "1", "text": "Привет!", "clientId": "abc-1"])
     }
 
     /// Кейс: редактирование своего сообщения.

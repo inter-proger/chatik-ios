@@ -61,10 +61,19 @@ enum PreviewDependencies {
         let user = User(userId: 1, login: "ivan", name: "Иван Петров", avatar: nil)
         let sessionService = makeSessionService(userDefaultsService: UserDefaultsServicePreviewMock(currentUser: user))
         Task { await sessionService.restore() }
+        let messageService = MessageServicePreviewMock()
+        let messageStorage = MessageStorageService(container: storageContainer)
         return ChatViewModel(
             conversation: conversation,
-            messageService: MessageServicePreviewMock(),
-            messageStorage: MessageStorageService(container: storageContainer),
+            messageService: messageService,
+            messageStorage: messageStorage,
+            messageSendQueue: MessageSendQueue(
+                messageService: messageService,
+                messageStorage: messageStorage,
+                outgoingMessageStorage: OutgoingMessageStorageService(container: storageContainer),
+                sessionService: sessionService,
+                realtimeService: realtimeService
+            ),
             sessionService: sessionService,
             userCache: userCache,
             localizationService: localizationService,
@@ -250,7 +259,7 @@ final class MessageServicePreviewMock: MessageServiceProtocol {
         guard blockId == nil else { return MessagesPage(messages: [], nextBlockId: nil, hasNext: false) }
         let texts = ["Привет всем!", "Привет! Во сколько созвон?", "Давайте в 15:00", "Подходит", "Договорились"]
         let messages = texts.enumerated().map { index, text in
-            makeMessage(id: index + 1, conversationId: conversationId, senderId: index % 3 + 1, text: text)
+            makeMessage(id: index + 1, conversationId: conversationId, senderId: index % 3 + 1, text: text, clientId: "preview-\(index + 1)")
         }
         return MessagesPage(messages: messages.reversed(), nextBlockId: nil, hasNext: false)
     }
@@ -260,9 +269,9 @@ final class MessageServicePreviewMock: MessageServiceProtocol {
         return []
     }
 
-    func send(conversationId: Int, text: String) async throws -> Message {
+    func send(conversationId: Int, text: String, clientId: String) async throws -> Message {
         try await Task.sleep(for: delay)
-        return makeMessage(id: Int.random(in: 100...10_000), conversationId: conversationId, senderId: 1, text: text)
+        return makeMessage(id: Int.random(in: 100...10_000), conversationId: conversationId, senderId: 1, text: text, clientId: clientId)
     }
 
     func edit(messageId: Int, newText: String) async throws -> Message {
@@ -276,8 +285,9 @@ final class MessageServicePreviewMock: MessageServiceProtocol {
     ///   - conversationId: переписка.
     ///   - senderId: отправитель.
     ///   - text: текст.
-    private func makeMessage(id: Int, conversationId: Int, senderId: Int, text: String) -> Message {
-        Message(messageId: id, conversationId: conversationId, blockId: 1, senderId: senderId, type: .text, text: text, isEdited: false, createdAt: Date(), updatedAt: Date())
+    ///   - clientId: идентификатор клиента-отправителя; по умолчанию — новый.
+    private func makeMessage(id: Int, conversationId: Int, senderId: Int, text: String, clientId: String = UUID().uuidString) -> Message {
+        Message(messageId: id, clientId: clientId, conversationId: conversationId, blockId: 1, senderId: senderId, type: .text, text: text, isEdited: false, createdAt: Date(), updatedAt: Date())
     }
 }
 

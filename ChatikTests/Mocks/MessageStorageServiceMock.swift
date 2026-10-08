@@ -12,6 +12,8 @@ final class MessageStorageServiceMock: MessageStorageServiceProtocol {
     var stubbedMessages: Result<[Message], Error> = .success([])
     /// Ошибка, которой завершается любое сохранение; `nil` — сохранение успешно.
     var stubbedSaveError: Error?
+    /// Вызывается внутри `save` до записи — пока сохранение гарантированно выполняется.
+    var onSave: (@MainActor () async -> Void)?
     private(set) var savedMessages: [Message] = []
     private(set) var fetchLatestRequests: [(conversationId: Int, limit: Int)] = []
 
@@ -20,6 +22,7 @@ final class MessageStorageServiceMock: MessageStorageServiceProtocol {
     }
 
     func save(messages: [Message]) async throws {
+        await onSave?()
         if let stubbedSaveError { throw stubbedSaveError }
         savedMessages += messages
     }

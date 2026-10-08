@@ -26,3 +26,14 @@
 
 /* Opponent or sender name when the user no longer exists on the server */
 "chat.user.deleted" = "Deleted user";
+
+/* Message state while the server has not confirmed sending (for VoiceOver) */
+"chat.message.sending" = "Sending";
+
+/* State of a message that failed to send */
+"chat.message.failed" = "Not sent";
+
+/* Title of the action choice shown on tapping an unsent message */
+"chat.failed_actions.title" = "Message not sent";
+"chat.failed_actions.retry" = "Retry sending";
+"chat.failed_actions.delete" = "Delete message";

@@ -24,6 +24,7 @@ final class AppRouter {
     private let sessionService: SessionServiceProtocol
     private let localizationService: LocalizationServiceProtocol
     private let realtimeService: RealtimeServiceProtocol
+    private let messageSendQueue: MessageSendQueueProtocol
     private let minimumSplashDuration: Duration
     /// `true`, пока приложение в фоне: соединение с WebSocket закрыто и откроется при возврате.
     private var isInBackground = false
@@ -33,17 +34,20 @@ final class AppRouter {
     ///   - localizationService: сервис языка интерфейса; его состояние восстанавливается вместе с сессией.
     ///   - realtimeService: соединение с WebSocket — открывается после восстановления сессии,
     ///     закрывается на время фона.
+    ///   - messageSendQueue: очередь отправки — восстанавливается из БД после восстановления сессии.
     ///   - minimumSplashDuration: минимальное время показа splash — чтобы он не мелькал на один кадр,
     ///     когда сессия восстанавливается мгновенно.
     init(
         sessionService: SessionServiceProtocol,
         localizationService: LocalizationServiceProtocol,
         realtimeService: RealtimeServiceProtocol,
+        messageSendQueue: MessageSendQueueProtocol,
         minimumSplashDuration: Duration = .milliseconds(600)
     ) {
         self.sessionService = sessionService
         self.localizationService = localizationService
         self.realtimeService = realtimeService
+        self.messageSendQueue = messageSendQueue
         self.minimumSplashDuration = minimumSplashDuration
     }
 
@@ -58,12 +62,14 @@ final class AppRouter {
     }
 
     /// Восстанавливает сохранённые язык и сессию при старте, удерживая splash не меньше `minimumSplashDuration`.
-    /// Сразу после восстановления сессии начинает работу с сервером (`/global/start`) — splash её не ждёт.
+    /// Сразу после восстановления сессии начинает работу с сервером (`/global/start`) и восстанавливает очередь
+    /// отправки — splash их не ждёт.
     func restoreSession() async {
         let splashHold = Task { try? await Task.sleep(for: minimumSplashDuration) }
         await localizationService.restore()
         await sessionService.restore()
         realtimeService.start()
+        messageSendQueue.start()
         await splashHold.value
         isSplashFinished = true
     }

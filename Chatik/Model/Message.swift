@@ -22,6 +22,9 @@ enum MessageType: String, Decodable, Equatable {
 /// Объект `Message` из API — одно сообщение переписки.
 struct Message: Equatable, Identifiable {
     let messageId: Int
+    /// Идентификатор, сгенерированный клиентом-отправителем при отправке; уникален в пределах отправителя.
+    /// По нему отправленное с этого устройства сообщение сопоставляется с ответом сервера и событием WebSocket.
+    let clientId: String
     let conversationId: Int
     /// Блок, в котором лежит сообщение; блоки одной переписки возрастают от старых к новым.
     let blockId: Int
@@ -41,7 +44,7 @@ struct Message: Equatable, Identifiable {
 
 extension Message: Decodable {
     private enum CodingKeys: String, CodingKey {
-        case messageId, conversationId, blockId, senderId, type, text, isEdited, createdAt, updatedAt
+        case messageId, clientId, conversationId, blockId, senderId, type, text, isEdited, createdAt, updatedAt
     }
 
     /// Разбирает сообщение; `createdAt` и `updatedAt` приходят Unix timestamp в секундах.
@@ -49,6 +52,7 @@ extension Message: Decodable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         messageId = try container.decode(Int.self, forKey: .messageId)
+        clientId = try container.decode(String.self, forKey: .clientId)
         conversationId = try container.decode(Int.self, forKey: .conversationId)
         blockId = try container.decode(Int.self, forKey: .blockId)
         senderId = try container.decode(Int.self, forKey: .senderId)
@@ -67,4 +71,17 @@ extension Message {
     func isNotOlder(than other: Message) -> Bool {
         updatedAt >= other.updatedAt
     }
+
+    /// Ключ сопоставления с локальным неотправленным сообщением.
+    var clientKey: MessageClientKey {
+        MessageClientKey(senderId: senderId, clientId: clientId)
+    }
+}
+
+/// Отправитель и `clientId` сообщения — ключ, общий у локального сообщения в очереди отправки и у серверного
+/// сообщения, созданного из него. `clientId` уникален только в пределах отправителя, поэтому сравнивается вместе
+/// с `senderId`.
+struct MessageClientKey: Hashable {
+    let senderId: Int
+    let clientId: String
 }

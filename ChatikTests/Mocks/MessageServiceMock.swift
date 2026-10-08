@@ -12,10 +12,12 @@ final class MessageServiceMock: MessageServiceProtocol {
     var stubbedPages: [Result<MessagesPage, Error>] = []
     var stubbedSentMessage: Result<Message, Error> = .failure(NetworkError.missingResponse)
     private(set) var pageRequests: [(conversationId: Int, blockId: Int?)] = []
-    private(set) var sentRequests: [(conversationId: Int, text: String)] = []
+    private(set) var sentRequests: [(conversationId: Int, text: String, clientId: String)] = []
     /// Вызывается внутри `fetchMessages` до возврата результата — пока идёт запрос страницы.
     var onFetch: (@MainActor () async -> Void)?
-    /// Вызывается внутри `send` до возврата результата — пока ViewModel гарантированно в состоянии отправки.
+    /// Ответы на последовательные отправки; когда очередь пуста — `stubbedSentMessage`.
+    var stubbedSentMessages: [Result<Message, Error>] = []
+    /// Вызывается внутри `send` до возврата результата — пока запрос гарантированно выполняется.
     var onSend: (@MainActor () async -> Void)?
 
     func fetchMessages(conversationId: Int, blockId: Int?) async throws -> MessagesPage {
@@ -29,10 +31,11 @@ final class MessageServiceMock: MessageServiceProtocol {
         []
     }
 
-    func send(conversationId: Int, text: String) async throws -> Message {
-        sentRequests.append((conversationId, text))
+    func send(conversationId: Int, text: String, clientId: String) async throws -> Message {
+        sentRequests.append((conversationId, text, clientId))
+        let result = stubbedSentMessages.isEmpty ? stubbedSentMessage : stubbedSentMessages.removeFirst()
         await onSend?()
-        return try stubbedSentMessage.get()
+        return try result.get()
     }
 
     func edit(messageId: Int, newText: String) async throws -> Message {

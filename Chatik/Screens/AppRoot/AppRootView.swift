@@ -15,7 +15,8 @@ struct AppRootView: View {
         _router = State(initialValue: router ?? AppRouter(
             sessionService: DIContainer.shared.sessionService,
             localizationService: DIContainer.shared.localizationService,
-            realtimeService: DIContainer.shared.realtimeService
+            realtimeService: DIContainer.shared.realtimeService,
+            messageSendQueue: DIContainer.shared.messageSendQueue
         ))
     }
 

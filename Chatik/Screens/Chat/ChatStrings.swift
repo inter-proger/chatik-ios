@@ -15,6 +15,11 @@ enum ChatStrings {
     static var send: String { localized("chat.send") }
     static var messageEdited: String { localized("chat.message.edited") }
     static var messageUnsupported: String { localized("chat.message.unsupported") }
+    static var messageSending: String { localized("chat.message.sending") }
+    static var messageFailed: String { localized("chat.message.failed") }
+    static var failedActionsTitle: String { localized("chat.failed_actions.title") }
+    static var failedActionsRetry: String { localized("chat.failed_actions.retry") }
+    static var failedActionsDelete: String { localized("chat.failed_actions.delete") }
     static var titleUntitled: String { localized("chat.title.untitled") }
     static var userLoading: String { localized("chat.user.loading") }
     static var userDeleted: String { localized("chat.user.deleted") }

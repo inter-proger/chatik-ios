@@ -16,12 +16,14 @@ struct MessagesListView: View {
     let messages: [MessageDisplayModel]
     let isLoadingNextPage: Bool
     let onAppear: (MessageDisplayModel) -> Void
+    /// Тап по неотправленному сообщению.
+    let onTapFailed: (MessageDisplayModel) -> Void
 
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 2) {
                 ForEach(messages) { message in
-                    MessageBubbleView(message: message)
+                    MessageBubbleView(message: message, onTapFailed: { onTapFailed(message) })
                         .flippedVertically()
                         .onAppear { onAppear(message) }
                 }
@@ -64,12 +66,15 @@ private extension View {
     let maria = MessageSenderDisplayModel(name: "Мария", isPlaceholder: false, avatarURL: nil)
     MessagesListView(
         messages: [
-            MessageDisplayModel(id: 4, text: "Отлично, до встречи!", isUnsupported: false, isOutgoing: true, sender: ivan, time: "12:05", editedLabel: nil),
-            MessageDisplayModel(id: 3, text: "Давай в 7 у входа", isUnsupported: false, isOutgoing: false, sender: nil, time: "12:04", editedLabel: "изменено"),
-            MessageDisplayModel(id: 2, text: "Привет!", isUnsupported: false, isOutgoing: false, sender: maria, time: "12:03", editedLabel: nil),
-            MessageDisplayModel(id: 1, text: "Привет! Во сколько встречаемся?", isUnsupported: false, isOutgoing: true, sender: ivan, time: "12:01", editedLabel: nil),
+            MessageDisplayModel(id: MessageClientKey(senderId: 1, clientId: "6"), text: "Ты где?", isUnsupported: false, isOutgoing: true, sender: nil, time: "12:07", editedLabel: nil, deliveryState: .failed, deliveryStateLabel: "Не отправлено"),
+            MessageDisplayModel(id: MessageClientKey(senderId: 1, clientId: "5"), text: "Я уже на месте", isUnsupported: false, isOutgoing: true, sender: ivan, time: "12:06", editedLabel: nil, deliveryState: .sending, deliveryStateLabel: "Отправляется"),
+            MessageDisplayModel(id: MessageClientKey(senderId: 1, clientId: "4"), text: "Отлично, до встречи!", isUnsupported: false, isOutgoing: true, sender: ivan, time: "12:05", editedLabel: nil, deliveryState: .delivered, deliveryStateLabel: nil),
+            MessageDisplayModel(id: MessageClientKey(senderId: 2, clientId: "3"), text: "Давай в 7 у входа", isUnsupported: false, isOutgoing: false, sender: nil, time: "12:04", editedLabel: "изменено", deliveryState: .delivered, deliveryStateLabel: nil),
+            MessageDisplayModel(id: MessageClientKey(senderId: 2, clientId: "2"), text: "Привет!", isUnsupported: false, isOutgoing: false, sender: maria, time: "12:03", editedLabel: nil, deliveryState: .delivered, deliveryStateLabel: nil),
+            MessageDisplayModel(id: MessageClientKey(senderId: 1, clientId: "1"), text: "Привет! Во сколько встречаемся?", isUnsupported: false, isOutgoing: true, sender: ivan, time: "12:01", editedLabel: nil, deliveryState: .delivered, deliveryStateLabel: nil),
         ],
         isLoadingNextPage: true,
-        onAppear: { _ in }
+        onAppear: { _ in },
+        onTapFailed: { _ in }
     )
 }

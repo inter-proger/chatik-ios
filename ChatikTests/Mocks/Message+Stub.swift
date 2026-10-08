@@ -10,6 +10,7 @@ extension Message {
     /// Неотредактированное текстовое сообщение — типовой ответ `/messages/send`.
     static let stub = Message(
         messageId: 15,
+        clientId: "6f1c2a9e-4b7d-4e3a-9c51-0d2f8b6a7e14",
         conversationId: 1,
         blockId: 2,
         senderId: 1,
@@ -23,6 +24,7 @@ extension Message {
     /// То же сообщение после редактирования — типовой ответ `/messages/edit`.
     static let editedStub = Message(
         messageId: 15,
+        clientId: "6f1c2a9e-4b7d-4e3a-9c51-0d2f8b6a7e14",
         conversationId: 1,
         blockId: 2,
         senderId: 1,
@@ -41,9 +43,11 @@ extension Message {
     ///   - conversationId: переписка.
     ///   - senderId: отправитель.
     ///   - text: текст.
-    static func make(id: Int, conversationId: Int = 1, senderId: Int = 1, text: String = "Привет!") -> Message {
+    ///   - clientId: идентификатор клиента-отправителя; по умолчанию — `client-<id>`.
+    static func make(id: Int, conversationId: Int = 1, senderId: Int = 1, text: String = "Привет!", clientId: String? = nil) -> Message {
         Message(
             messageId: id,
+            clientId: clientId ?? "client-\(id)",
             conversationId: conversationId,
             blockId: 1,
             senderId: senderId,

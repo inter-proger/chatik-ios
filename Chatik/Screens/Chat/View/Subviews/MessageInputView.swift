@@ -5,16 +5,14 @@
 
 import SwiftUI
 
-/// Панель ввода сообщения: многострочное поле и кнопка отправки. Во время отправки кнопка показывает прелоадер
-/// вместо иконки, а поле остаётся доступным: отключённое поле теряет фокус, и клавиатура опускалась бы
-/// при каждой отправке.
+/// Панель ввода сообщения: многострочное поле и кнопка отправки. Отправка не блокирует ввод: сообщение сразу
+/// уходит в ленту, а поле очищается для следующего.
 struct MessageInputView: View {
     @Binding var text: String
     /// Фокус поля ввода — им управляет экран (например, убирает клавиатуру по тапу по ленте).
     var isFocused: FocusState<Bool>.Binding
     /// Подсказка под полем (например, о превышении длины); `nil` — подсказки нет.
     let hint: String?
-    let isSending: Bool
     let isSendEnabled: Bool
     let onSend: () -> Void
 
@@ -45,17 +43,11 @@ struct MessageInputView: View {
             .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 18))
     }
 
-    /// Кнопка отправки; во время запроса иконка скрывается с сохранением размера, поверх — прелоадер.
+    /// Кнопка отправки.
     private var sendButton: some View {
         Button(action: onSend) {
             Image(systemName: "arrow.up.circle.fill")
                 .font(.system(size: 32))
-                .opacity(isSending ? 0 : 1)
-                .overlay {
-                    if isSending {
-                        ProgressView()
-                    }
-                }
         }
         .disabled(!isSendEnabled)
         .accessibilityLabel(ChatStrings.send)
@@ -66,8 +58,7 @@ struct MessageInputView: View {
     @Previewable @FocusState var isFocused: Bool
     VStack {
         Spacer()
-        MessageInputView(text: .constant("Привет!"), isFocused: $isFocused, hint: nil, isSending: false, isSendEnabled: true, onSend: {})
-        MessageInputView(text: .constant("Привет!"), isFocused: $isFocused, hint: nil, isSending: true, isSendEnabled: false, onSend: {})
-        MessageInputView(text: .constant(""), isFocused: $isFocused, hint: "Сообщение не должно быть длиннее 4096 символов", isSending: false, isSendEnabled: false, onSend: {})
+        MessageInputView(text: .constant("Привет!"), isFocused: $isFocused, hint: nil, isSendEnabled: true, onSend: {})
+        MessageInputView(text: .constant(""), isFocused: $isFocused, hint: "Сообщение не должно быть длиннее 4096 символов", isSendEnabled: false, onSend: {})
     }
 }

@@ -10,10 +10,12 @@ import XCTest
 final class AppRouterTests: XCTestCase {
     private let user = User(userId: 1, login: "ivan", name: "Ivan", avatar: nil)
     private var realtimeService: RealtimeServiceMock!
+    private var messageSendQueue: MessageSendQueueMock!
 
     override func setUp() async throws {
         try await super.setUp()
         realtimeService = RealtimeServiceMock()
+        messageSendQueue = MessageSendQueueMock()
     }
 
     /// Создаёт роутер над сессией с заданным сохранённым пользователем и без задержки splash.
@@ -27,6 +29,7 @@ final class AppRouterTests: XCTestCase {
             sessionService: SessionService(userDefaultsService: defaults, localStorageCleaner: LocalStorageCleanerMock()),
             localizationService: LocalizationService(userDefaultsService: defaults, systemLanguage: .ru),
             realtimeService: realtimeService,
+            messageSendQueue: messageSendQueue,
             minimumSplashDuration: minimumSplashDuration
         )
     }
@@ -52,6 +55,16 @@ final class AppRouterTests: XCTestCase {
         XCTAssertEqual(withSession.root, .chats)
     }
 
+    /// Кейс: приложение запустилось с сохранённой сессией.
+    /// Ожидание: после восстановления сессии очередь отправки восстановлена из БД — один раз.
+    func test_restoreSession_startsMessageSendQueue() async {
+        let sut = makeSUT(storedUser: user)
+
+        await sut.restoreSession()
+
+        XCTAssertEqual(messageSendQueue.startCallCount, 1)
+    }
+
     /// Кейс: задано минимальное время показа splash, сессия восстанавливается мгновенно.
     /// Ожидание: `restoreSession()` завершается не раньше этого времени; до завершения корень — splash.
     func test_restoreSession_holdsSplashForMinimumDuration() async {
@@ -73,6 +86,7 @@ final class AppRouterTests: XCTestCase {
             sessionService: session,
             localizationService: LocalizationService(userDefaultsService: defaults, systemLanguage: .ru),
             realtimeService: realtimeService,
+            messageSendQueue: messageSendQueue,
             minimumSplashDuration: .zero
         )
         await sut.restoreSession()

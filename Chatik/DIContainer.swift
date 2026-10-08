@@ -23,6 +23,7 @@ final class DIContainer {
     let userStorage: UserStorageServiceProtocol
     let conversationStorage: ConversationStorageServiceProtocol
     let messageStorage: MessageStorageServiceProtocol
+    let messageSendQueue: MessageSendQueueProtocol
     let userDefaultsService: UserDefaultsServiceProtocol
     let sessionService: SessionServiceProtocol
     let localizationService: LocalizationServiceProtocol
@@ -66,7 +67,8 @@ final class DIContainer {
         self.usersService = usersService
         self.userCache = userCache
         self.conversationService = ConversationService(networkService: networkService)
-        self.messageService = MessageService(networkService: networkService)
+        let messageService = MessageService(networkService: networkService)
+        self.messageService = messageService
         self.imageFileStore = ImageFileStore()
         self.fileStorage = FileStorageService(container: storageContainer)
         self.userStorage = userStorage
@@ -89,9 +91,18 @@ final class DIContainer {
         )
         self.globalService = globalService
         self.realtimeService = realtimeService
-        // Соединение закрывается в фазе `authServiceWillLogout` (до запроса выхода), сессия завершается
-        // в `authServiceDidLogout` (после него) — от порядка подписки это не зависит.
+        let messageSendQueue = MessageSendQueue(
+            messageService: messageService,
+            messageStorage: messageStorage,
+            outgoingMessageStorage: OutgoingMessageStorageService(container: storageContainer),
+            sessionService: sessionService,
+            realtimeService: realtimeService
+        )
+        self.messageSendQueue = messageSendQueue
+        // Соединение и очередь отправки останавливаются в фазе `authServiceWillLogout` (до запроса выхода),
+        // сессия завершается в `authServiceDidLogout` (после него) — от порядка подписки это не зависит.
         authService.addObserver(realtimeService)
+        authService.addObserver(messageSendQueue)
         authService.addObserver(sessionService)
         self.networkPathMonitor = NetworkPathMonitor { [weak realtimeService] in
             realtimeService?.networkDidBecomeAvailable()

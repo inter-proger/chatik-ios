@@ -14,7 +14,7 @@ final class MessageTests: XCTestCase {
     func test_decode_readsAllFieldsAndUnixTimestamps() throws {
         let json = """
         {
-          "messageId": 15, "conversationId": 1, "blockId": 2, "senderId": 1, "type": "text", "text": "Привет!",
+          "messageId": 15, "clientId": "6f1c2a9e-4b7d-4e3a-9c51-0d2f8b6a7e14", "conversationId": 1, "blockId": 2, "senderId": 1, "type": "text", "text": "Привет!",
           "isEdited": false, "createdAt": 1790846400, "updatedAt": 1790846400
         }
         """
@@ -30,7 +30,7 @@ final class MessageTests: XCTestCase {
     func test_decode_editedMessage_readsIsEditedAndUpdatedAt() throws {
         let json = """
         {
-          "messageId": 15, "conversationId": 1, "blockId": 2, "senderId": 1, "type": "text", "text": "Привет всем!",
+          "messageId": 15, "clientId": "6f1c2a9e-4b7d-4e3a-9c51-0d2f8b6a7e14", "conversationId": 1, "blockId": 2, "senderId": 1, "type": "text", "text": "Привет всем!",
           "isEdited": true, "createdAt": 1790846400, "updatedAt": 1790846460
         }
         """
@@ -51,7 +51,7 @@ final class MessageTests: XCTestCase {
     func test_decode_unknownType_fallsBackToUnknown() throws {
         let json = """
         {
-          "messageId": 16, "conversationId": 1, "blockId": 2, "senderId": 2, "type": "sticker", "text": "",
+          "messageId": 16, "clientId": "6f1c2a9e-4b7d-4e3a-9c51-0d2f8b6a7e14", "conversationId": 1, "blockId": 2, "senderId": 2, "type": "sticker", "text": "",
           "isEdited": false, "createdAt": 1790846400, "updatedAt": 1790846400
         }
         """
@@ -67,11 +67,30 @@ final class MessageTests: XCTestCase {
     func test_decode_missingRequiredField_throws() {
         let json = """
         {
-          "messageId": 15, "conversationId": 1, "blockId": 2, "type": "text", "text": "Привет!",
+          "messageId": 15, "clientId": "6f1c2a9e-4b7d-4e3a-9c51-0d2f8b6a7e14", "conversationId": 1, "blockId": 2, "type": "text", "text": "Привет!",
           "isEdited": false, "createdAt": 1790846400, "updatedAt": 1790846400
         }
         """
 
         XCTAssertThrowsError(try decoder.decode(Message.self, from: Data(json.utf8)))
+    }
+
+    /// Кейс: в JSON нет `clientId` — сервер обязан присылать его у всех сообщений.
+    /// Ожидание: ошибка декодирования.
+    func test_decode_missingClientId_throws() {
+        let json = """
+        {
+          "messageId": 15, "conversationId": 1, "blockId": 2, "senderId": 1, "type": "text", "text": "Привет!",
+          "isEdited": false, "createdAt": 1790846400, "updatedAt": 1790846400
+        }
+        """
+
+        XCTAssertThrowsError(try decoder.decode(Message.self, from: Data(json.utf8)))
+    }
+
+    /// Кейс: ключ сопоставления с локальным сообщением.
+    /// Ожидание: состоит из отправителя и `clientId`.
+    func test_clientKey_combinesSenderAndClientId() {
+        XCTAssertEqual(Message.stub.clientKey, MessageClientKey(senderId: 1, clientId: "6f1c2a9e-4b7d-4e3a-9c51-0d2f8b6a7e14"))
     }
 }

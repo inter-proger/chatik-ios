@@ -16,16 +16,21 @@ import os
 /// отдельно (`liveMessages`) и накладываются на список при отображении: из двух версий одного сообщения
 /// показывается версия с большим `updatedAt`.
 ///
+/// Отправкой занимается общая для всех переписок очередь (`MessageSendQueue`): экран ставит в неё сообщения,
+/// показывает её сообщения этой переписки внизу ленты (в статусах «отправляется» и «не отправлено») и передаёт ей
+/// действия с неотправленными. Отправка продолжается и после закрытия экрана. Созданные сервером сообщения очередь
+/// публикует — экран накладывает их на список так же, как события WebSocket.
+///
 /// Тексты и DisplayModel собираются в `ChatViewModel+Texts`.
 @MainActor
 @Observable
 final class ChatViewModel {
     /// Текст в поле ввода.
     var messageText = ""
-    /// `true`, пока выполняется запрос отправки.
-    private(set) var isSending = false
     /// Текст ошибки для всплывающего сообщения. `nil` — сообщение скрыто.
     var errorMessage: String?
+    /// `clientId` неотправленного сообщения, для которого показан выбор «повторить / удалить». `nil` — выбор скрыт.
+    var failedMessageActionsClientId: String?
 
     /// Сколько последних сообщений читается из БД при открытии экрана.
     static let cachedMessagesLimit = 200
@@ -44,11 +49,13 @@ final class ChatViewModel {
     private let messageService: MessageServiceProtocol
     private let messageStorage: MessageStorageServiceProtocol
     private let realtimeService: RealtimeServiceProtocol
+    let messageSendQueue: MessageSendQueueProtocol
 
     /// - Parameters:
     ///   - conversation: открытая переписка.
     ///   - messageService: сервис сообщений — источник `/messages/*`.
     ///   - messageStorage: хранилище сообщений в БД.
+    ///   - messageSendQueue: очередь отправки сообщений.
     ///   - sessionService: сессия — по ней сообщения делятся на исходящие и входящие.
     ///   - userCache: кэш пользователей — имена собеседника и отправителей.
     ///   - localizationService: язык форматирования времени.
@@ -59,6 +66,7 @@ final class ChatViewModel {
         conversation: Conversation,
         messageService: MessageServiceProtocol,
         messageStorage: MessageStorageServiceProtocol,
+        messageSendQueue: MessageSendQueueProtocol,
         sessionService: SessionServiceProtocol,
         userCache: UserCacheServiceProtocol,
         localizationService: LocalizationServiceProtocol,
@@ -69,6 +77,7 @@ final class ChatViewModel {
         self.conversation = conversation
         self.messageService = messageService
         self.messageStorage = messageStorage
+        self.messageSendQueue = messageSendQueue
         self.sessionService = sessionService
         self.userCache = userCache
         self.localizationService = localizationService
@@ -100,7 +109,7 @@ final class ChatViewModel {
     /// Начинает загрузку более старых сообщений, если показано одно из самых старых.
     /// - Parameter message: сообщение, которое появилось на экране.
     func prefetchNextPageIfNeeded(currentMessage message: MessageDisplayModel) {
-        guard let item = list.items.first(where: { $0.id == message.id }) else { return }
+        guard let item = list.items.first(where: { $0.clientKey == message.id }) else { return }
         list.prefetchNextPageIfNeeded(currentItem: item, load: loadPage, onOutcome: show)
     }
 
@@ -109,6 +118,7 @@ final class ChatViewModel {
     private func loadPage(_ context: PaginationContext) async throws -> PaginatedListPage<Message> {
         let page = try await messageService.fetchMessages(conversationId: conversation.conversationId, blockId: context.cursor)
         await save(page.messages)
+        messageSendQueue.removeConfirmed(by: page.messages)
         loadSenders(of: page.messages)
         return PaginatedListPage(items: page.messages, hasNext: page.hasNext && page.nextBlockId != nil, nextCursor: page.nextBlockId)
     }
@@ -122,39 +132,40 @@ final class ChatViewModel {
 
     // MARK: - Отправка
 
-    /// Обработчик кнопки отправки: отправляет сообщение, если текст допустим и отправка ещё не идёт.
-    /// Флаг отправки поднимается до старта задачи: иначе второй тап, пришедший до её запуска, отправил бы дубликат.
+    /// Обработчик кнопки отправки: ставит сообщение в очередь и сразу очищает поле. Сообщение появляется внизу
+    /// ленты в статусе «отправляется».
     func didTapSend() {
         guard isSendEnabled else { return }
-        isSending = true
-        Task { await send() }
+        messageSendQueue.enqueue(text: messageText, conversationId: conversation.conversationId)
+        messageText = ""
     }
 
-    /// Отправляет текст из поля ввода. При успехе сообщение появляется в списке, сохраняется в БД, а из поля
-    /// убирается отправленный текст; при ошибке показывается сообщение, а текст остаётся в поле — его можно
-    /// отправить ещё раз. Поле во время отправки не блокируется (иначе оно теряет фокус и клавиатура опускается),
-    /// поэтому набранное за время запроса после отправленного текста сохраняется в поле.
-    func send() async {
-        isSending = true
-        defer { isSending = false }
+    /// Обработчик тапа по сообщению: для неотправленного показывает выбор «повторить / удалить».
+    /// - Parameter message: сообщение, по которому тапнули.
+    func didTapMessage(_ message: MessageDisplayModel) {
+        guard message.deliveryState == .failed else { return }
+        failedMessageActionsClientId = message.id.clientId
+    }
 
-        do {
-            let text = messageText
-            let message = try await messageService.send(conversationId: conversation.conversationId, text: text)
+    /// Повторяет отправку неотправленного сообщения.
+    /// - Parameter clientId: идентификатор сообщения.
+    func retrySending(clientId: String) {
+        messageSendQueue.retry(clientId: clientId)
+    }
+
+    /// Удаляет неотправленное сообщение.
+    /// - Parameter clientId: идентификатор сообщения.
+    func deleteOutgoing(clientId: String) {
+        messageSendQueue.delete(clientId: clientId)
+    }
+
+    /// Применяет сообщения, созданные сервером в ответ на отправку из очереди, пока задачу не отменят: отправленное
+    /// сообщение сразу встаёт в ленту на место неотправленного, не дожидаясь события WebSocket.
+    func observeSentMessages() async {
+        for await message in messageSendQueue.sentMessages() {
+            guard message.conversationId == conversation.conversationId else { continue }
             applyLive(message)
-            removeSentText(text)
-            await save([message])
-        } catch {
-            errorMessage = ErrorMessages.message(for: error)
         }
-    }
-
-    /// Убирает из поля отправленный текст, оставляя дописанное после него за время запроса. Если начало поля
-    /// за это время изменили, поле не трогается: что из него уже отправлено, понять нельзя.
-    /// - Parameter text: текст, ушедший на сервер.
-    private func removeSentText(_ text: String) {
-        guard messageText.hasPrefix(text) else { return }
-        messageText.removeFirst(text.count)
     }
 
     // MARK: - События WebSocket
@@ -183,7 +194,7 @@ final class ChatViewModel {
     }
 
     /// Запоминает версию сообщения, полученную помимо страниц, если она не старше уже известной. Повторное
-    /// применение той же версии (событие о собственном отправленном сообщении) ничего не меняет.
+    /// применение той же версии (ответ на отправку и событие о том же сообщении) ничего не меняет.
     /// - Parameter message: сообщение из ответа `/messages/send` или события WebSocket.
     private func applyLive(_ message: Message) {
         guard liveMessages[message.id].map(message.isNotOlder(than:)) ?? true else { return }

@@ -10,6 +10,7 @@ import XCTest
 final class ChatViewModelTests: XCTestCase {
     private var messageService: MessageServiceMock!
     private var messageStorage: MessageStorageServiceMock!
+    private var messageSendQueue: MessageSendQueueMock!
     private var sessionService: SessionService!
     private var userCache: UserCacheServiceMock!
     private var realtimeService: RealtimeServiceMock!
@@ -18,6 +19,7 @@ final class ChatViewModelTests: XCTestCase {
         try await super.setUp()
         messageService = MessageServiceMock()
         messageStorage = MessageStorageServiceMock()
+        messageSendQueue = MessageSendQueueMock()
         let userDefaultsService = UserDefaultsServiceMock(currentUser: User(userId: 1, login: "ivan", name: "Ivan", avatar: nil))
         sessionService = SessionService(userDefaultsService: userDefaultsService, localStorageCleaner: LocalStorageCleanerMock())
         await sessionService.restore()
@@ -36,7 +38,7 @@ final class ChatViewModelTests: XCTestCase {
 
         await sut.loadFirstPage()
 
-        XCTAssertEqual(sut.messages.map(\.id), [2, 1])
+        XCTAssertEqual(sut.messages.map(\.id.clientId), clientIds(2, 1))
         XCTAssertEqual(messageService.pageRequests.map(\.conversationId), [Conversation.singleStub.id])
         XCTAssertEqual(messageService.pageRequests.map(\.blockId), [nil])
         XCTAssertFalse(sut.isLoadingFirstPage)
@@ -68,7 +70,7 @@ final class ChatViewModelTests: XCTestCase {
         await yieldUntil { [unowned self] in messageService.pageRequests.count == 2 && !sut.isLoadingNextPage }
 
         XCTAssertEqual(messageService.pageRequests.last?.blockId, 5)
-        XCTAssertEqual(sut.messages.map(\.id), Array((1...14).reversed()))
+        XCTAssertEqual(sut.messages.map(\.id.clientId), (1...14).reversed().map { "client-\($0)" })
     }
 
     /// Кейс: транспортная ошибка при загрузке первой страницы.
@@ -96,7 +98,7 @@ final class ChatViewModelTests: XCTestCase {
 
         await sut.loadFirstPage()
 
-        XCTAssertEqual(sut.messages.map(\.id), [3, 2, 1])
+        XCTAssertEqual(sut.messages.map(\.id.clientId), clientIds(3, 2, 1))
         XCTAssertEqual(messageService.pageRequests.map(\.blockId), [nil, nil])
         XCTAssertEqual(messageStorage.fetchLatestRequests.count, 1)
     }
@@ -113,7 +115,7 @@ final class ChatViewModelTests: XCTestCase {
 
         await sut.loadFirstPage()
 
-        XCTAssertEqual(sut.messages.map(\.id), [1])
+        XCTAssertEqual(sut.messages.map(\.id.clientId), clientIds(1))
         XCTAssertEqual(sut.errorMessage, CommonStrings.errorNoConnection)
     }
 
@@ -131,7 +133,7 @@ final class ChatViewModelTests: XCTestCase {
         gate.open()
         await load.value
 
-        XCTAssertEqual(sut.messages.map(\.id), [1])
+        XCTAssertEqual(sut.messages.map(\.id.clientId), clientIds(1))
         XCTAssertNil(sut.errorMessage)
     }
 
@@ -160,11 +162,11 @@ final class ChatViewModelTests: XCTestCase {
         let load = Task { await sut.loadFirstPage() }
         await yieldUntil { gate.isWaiting }
 
-        await yieldUntil { sut.messages.map(\.id) == [1] }
+        await yieldUntil { sut.messages.map(\.id.clientId) == clientIds(1) }
         gate.open()
         await load.value
 
-        XCTAssertEqual(sut.messages.map(\.id), [2, 1])
+        XCTAssertEqual(sut.messages.map(\.id.clientId), clientIds(2, 1))
         XCTAssertEqual(messageStorage.fetchLatestRequests.map(\.conversationId), [Conversation.singleStub.id])
         XCTAssertEqual(messageStorage.fetchLatestRequests.map(\.limit), [ChatViewModel.cachedMessagesLimit])
     }
@@ -178,7 +180,7 @@ final class ChatViewModelTests: XCTestCase {
 
         await sut.loadFirstPage()
 
-        XCTAssertEqual(sut.messages.map(\.id), [2, 1])
+        XCTAssertEqual(sut.messages.map(\.id.clientId), clientIds(2, 1))
         XCTAssertFalse(sut.isEmpty)
         XCTAssertEqual(sut.errorMessage, CommonStrings.errorNoConnection)
     }
@@ -193,7 +195,7 @@ final class ChatViewModelTests: XCTestCase {
 
         await sut.loadFirstPage()
 
-        XCTAssertEqual(sut.messages.map(\.id), [1])
+        XCTAssertEqual(sut.messages.map(\.id.clientId), clientIds(1))
         XCTAssertNil(sut.errorMessage)
     }
 
@@ -315,127 +317,139 @@ final class ChatViewModelTests: XCTestCase {
 
     // MARK: - Отправка
 
-    /// Кейс: сообщение успешно отправлено.
-    /// Ожидание: на сервер ушёл текст из поля, сообщение появилось первым в списке, сохранено в БД, поле очищено.
-    func test_send_success_showsMessageAndClearsInput() async {
+    /// Кейс: нажата «Отправить».
+    /// Ожидание: текст из поля поставлен в очередь в открытую переписку, поле сразу очищено.
+    func test_didTapSend_enqueuesAndClearsInput() {
         let sut = makeSUT()
-        messageService.stubbedPages = [.success(MessagesPage(messages: [.make(id: 1)], nextBlockId: nil, hasNext: false))]
-        await sut.loadFirstPage()
-        messageService.stubbedSentMessage = .success(.make(id: 2, text: "Привет"))
         sut.messageText = "Привет"
 
-        await sut.send()
+        sut.didTapSend()
 
-        XCTAssertEqual(messageService.sentRequests.map(\.text), ["Привет"])
-        XCTAssertEqual(messageService.sentRequests.map(\.conversationId), [Conversation.singleStub.id])
-        XCTAssertEqual(sut.messages.map(\.id), [2, 1])
-        XCTAssertEqual(messageStorage.savedMessages.last?.id, 2)
+        XCTAssertEqual(messageSendQueue.enqueued.map(\.text), ["Привет"])
+        XCTAssertEqual(messageSendQueue.enqueued.map(\.conversationId), [Conversation.singleStub.id])
         XCTAssertEqual(sut.messageText, "")
+    }
+
+    /// Кейс: нажата «Отправить» с пустым полем.
+    /// Ожидание: в очередь ничего не поставлено.
+    func test_didTapSend_blankText_isIgnored() {
+        let sut = makeSUT()
+        sut.messageText = "  "
+
+        sut.didTapSend()
+
+        XCTAssertTrue(messageSendQueue.enqueued.isEmpty)
+    }
+
+    /// Кейс: в очереди неотправленные сообщения этой и другой переписки; на экране есть сообщение с сервера.
+    /// Ожидание: показаны только сообщения этой переписки — в самом низу ленты, под сообщениями с сервера,
+    /// исходящие и в своих статусах.
+    func test_messages_showsOutgoingOfThisConversationAtBottom() async {
+        let sut = makeSUT()
+        messageService.stubbedPages = [.success(MessagesPage(messages: [.make(id: 5, senderId: 2)], nextBlockId: nil, hasNext: false))]
+        await sut.loadFirstPage()
+
+        messageSendQueue.outgoingMessages = [
+            .stub(clientId: "a", status: .failed),
+            .stub(clientId: "other", conversationId: 99),
+            .stub(clientId: "b", status: .sending),
+        ]
+
+        XCTAssertEqual(sut.messages.map(\.id.clientId), ["b", "a", "client-5"])
+        XCTAssertEqual(sut.messages.map(\.deliveryState), [.sending, .failed, .delivered])
+        XCTAssertEqual(sut.messages.map(\.isOutgoing), [true, true, false])
         XCTAssertFalse(sut.isEmpty)
     }
 
-    /// Кейс: отправка не удалась.
-    /// Ожидание: показано сообщение об ошибке, текст остался в поле, флаг отправки снят.
-    func test_send_failure_keepsTextAndShowsError() async {
+    /// Кейс: очередь опубликовала сообщение, созданное сервером, — этой переписки и другой.
+    /// Ожидание: сообщение этой переписки встало в ленту, чужое — нет.
+    func test_observeSentMessages_appliesThisConversationOnly() async {
         let sut = makeSUT()
-        messageService.stubbedSentMessage = .failure(NetworkError.transport(URLError(.notConnectedToInternet)))
-        sut.messageText = "Привет"
+        let observation = Task { await sut.observeSentMessages() }
+        await yieldUntil { [unowned self] in messageSendQueue.subscriberCount == 1 }
 
-        await sut.send()
+        messageSendQueue.publishSent(.make(id: 3, conversationId: 99))
+        messageSendQueue.publishSent(.make(id: 2, clientId: "c1"))
 
-        XCTAssertEqual(sut.errorMessage, CommonStrings.errorNoConnection)
-        XCTAssertEqual(sut.messageText, "Привет")
-        XCTAssertFalse(sut.isSending)
+        await yieldUntil { sut.messages.map(\.id.clientId) == ["c1"] }
+        observation.cancel()
+        await observation.value
     }
 
-    /// Кейс: пока сообщение отправлялось, в поле дописали текст после отправленного.
-    /// Ожидание: после успешной отправки в поле осталось только дописанное.
-    func test_send_textTypedWhileSending_keepsTypedText() async {
+    /// Кейс: очередь опубликовала сообщение, созданное сервером, но ещё держит его неотправленную копию.
+    /// Ожидание: в ленте одно сообщение с этим `clientId` — серверная версия.
+    func test_messages_sentAndStillInQueue_showsOnce() async {
         let sut = makeSUT()
-        let gate = Gate()
-        messageService.stubbedSentMessage = .success(.make(id: 2, text: "Привет"))
-        messageService.onSend = { await gate.wait() }
-        sut.messageText = "Привет"
+        let observation = Task { await sut.observeSentMessages() }
+        await yieldUntil { [unowned self] in messageSendQueue.subscriberCount == 1 }
+        messageSendQueue.outgoingMessages = [.stub(clientId: "c1")]
 
-        sut.didTapSend()
-        await yieldUntil { gate.isWaiting }
-        sut.messageText = "Привет, как дела?"
-        gate.open()
-        await yieldUntil { !sut.isSending }
+        messageSendQueue.publishSent(.make(id: 2, clientId: "c1"))
 
-        XCTAssertEqual(sut.messageText, ", как дела?")
+        await yieldUntil { sut.messages.map(\.deliveryState) == [.delivered] }
+        XCTAssertEqual(sut.messages.map(\.id.clientId), ["c1"])
+        observation.cancel()
+        await observation.value
     }
 
-    /// Кейс: пока сообщение отправлялось, начало текста в поле изменили.
-    /// Ожидание: после успешной отправки поле не тронуто.
-    func test_send_textChangedWhileSending_keepsField() async {
+    /// Кейс: загружена страница сообщений.
+    /// Ожидание: сообщения страницы переданы очереди — она уберёт те, что уже есть на сервере.
+    func test_loadFirstPage_confirmsOutgoingInQueue() async {
         let sut = makeSUT()
-        let gate = Gate()
-        messageService.stubbedSentMessage = .success(.make(id: 2, text: "Привет"))
-        messageService.onSend = { await gate.wait() }
-        sut.messageText = "Привет"
+        let page = [Message.make(id: 2, clientId: "c1"), .make(id: 1)]
+        messageService.stubbedPages = [.success(MessagesPage(messages: page, nextBlockId: nil, hasNext: false))]
 
-        sut.didTapSend()
-        await yieldUntil { gate.isWaiting }
-        sut.messageText = "Пока"
-        gate.open()
-        await yieldUntil { !sut.isSending }
+        await sut.loadFirstPage()
 
-        XCTAssertEqual(sut.messageText, "Пока")
+        XCTAssertEqual(messageSendQueue.confirmedBatches, [page])
     }
 
-    /// Кейс: запрос отправки выполняется.
-    /// Ожидание: флаг отправки поднят, кнопка неактивна, повторное нажатие не отправляет второй запрос.
-    func test_didTapSend_whileSending_ignoresRepeatedTap() async {
+    /// Кейс: тап по доставленному и по неотправленному сообщению.
+    /// Ожидание: выбор действий показывается только для неотправленного.
+    func test_didTapMessage_showsActionsForFailedOnly() async {
         let sut = makeSUT()
-        let gate = Gate()
-        messageService.stubbedSentMessage = .success(.make(id: 2))
-        messageService.onSend = { await gate.wait() }
-        sut.messageText = "Привет"
+        messageService.stubbedPages = [.success(MessagesPage(messages: [.make(id: 1)], nextBlockId: nil, hasNext: false))]
+        await sut.loadFirstPage()
+        messageSendQueue.outgoingMessages = [.stub(clientId: "a", status: .failed)]
 
-        sut.didTapSend()
-        await yieldUntil { gate.isWaiting }
-        sut.didTapSend()
+        sut.didTapMessage(sut.messages[1])
+        XCTAssertNil(sut.failedMessageActionsClientId)
+        sut.didTapMessage(sut.messages[0])
 
-        XCTAssertTrue(sut.isSending)
-        XCTAssertFalse(sut.isSendEnabled)
-        gate.open()
-        await yieldUntil { !sut.isSending }
-        XCTAssertEqual(messageService.sentRequests.count, 1)
+        XCTAssertEqual(sut.failedMessageActionsClientId, "a")
     }
 
-    /// Кейс: сообщение отправлено, пока грузилась первая страница, а ответ сервера собран до отправки.
+    /// Кейс: в выборе действий нажаты «Повторить отправку» и «Удалить сообщение».
+    /// Ожидание: действия переданы очереди с `clientId` сообщения.
+    func test_retryAndDelete_forwardToQueue() {
+        let sut = makeSUT()
+
+        sut.retrySending(clientId: "a")
+        sut.deleteOutgoing(clientId: "b")
+
+        XCTAssertEqual(messageSendQueue.retriedClientIds, ["a"])
+        XCTAssertEqual(messageSendQueue.deletedClientIds, ["b"])
+    }
+
+    /// Кейс: отправленное сообщение пришло, пока грузилась первая страница, а ответ сервера собран до отправки.
     /// Ожидание: после ответа отправленное сообщение остаётся в списке — сверху, над сообщениями страницы.
-    func test_send_duringFirstPageLoad_keepsSentMessage() async {
+    func test_sentMessage_duringFirstPageLoad_keepsSentMessage() async {
         let sut = makeSUT()
         let gate = Gate()
         messageService.stubbedPages = [.success(MessagesPage(messages: [.make(id: 1)], nextBlockId: nil, hasNext: false))]
         messageService.onFetch = { await gate.wait() }
+        let observation = Task { await sut.observeSentMessages() }
         let load = Task { await sut.loadFirstPage() }
         await yieldUntil { gate.isWaiting }
-        messageService.stubbedSentMessage = .success(.make(id: 2))
-        sut.messageText = "Привет"
+        await yieldUntil { [unowned self] in messageSendQueue.subscriberCount == 1 }
 
-        await sut.send()
+        messageSendQueue.publishSent(.make(id: 2, clientId: "c1"))
+        await yieldUntil { sut.messages.map(\.id.clientId) == ["c1"] }
         gate.open()
         await load.value
 
-        XCTAssertEqual(sut.messages.map(\.id), [2, 1])
-    }
-
-    /// Кейс: два тапа по «Отправить» подряд, до того как задача отправки успела запуститься.
-    /// Ожидание: флаг отправки поднят сразу после первого тапа, на сервер ушёл один запрос.
-    func test_didTapSend_twiceBeforeTaskStarts_sendsOnce() async {
-        let sut = makeSUT()
-        messageService.stubbedSentMessage = .success(.make(id: 2))
-        sut.messageText = "Привет"
-
-        sut.didTapSend()
-        sut.didTapSend()
-
-        XCTAssertTrue(sut.isSending)
-        await yieldUntil { !sut.isSending }
-        XCTAssertEqual(messageService.sentRequests.count, 1)
+        XCTAssertEqual(sut.messages.map(\.id.clientId), ["c1", "client-1"])
+        observation.cancel()
     }
 
     /// Кейс: сообщение отправлено, затем обновление вернуло первую страницу из более новых чужих сообщений —
@@ -448,13 +462,11 @@ final class ChatViewModelTests: XCTestCase {
             .success(MessagesPage(messages: [.make(id: 4), .make(id: 3)], nextBlockId: 1, hasNext: true)),
         ]
         await sut.loadFirstPage()
-        messageService.stubbedSentMessage = .success(.make(id: 2))
-        sut.messageText = "Привет"
-        await sut.send()
+        sut.handle(.messageReceived(.make(id: 2)))
 
         await sut.loadFirstPage()
 
-        XCTAssertEqual(sut.messages.map(\.id), [4, 3])
+        XCTAssertEqual(sut.messages.map(\.id.clientId), clientIds(4, 3))
     }
 
     // MARK: - События WebSocket
@@ -468,7 +480,7 @@ final class ChatViewModelTests: XCTestCase {
 
         sut.handle(.messageReceived(.make(id: 2, senderId: 2)))
 
-        XCTAssertEqual(sut.messages.map(\.id), [2, 1])
+        XCTAssertEqual(sut.messages.map(\.id.clientId), clientIds(2, 1))
     }
 
     /// Кейс: событием пришло сообщение другой переписки.
@@ -480,22 +492,24 @@ final class ChatViewModelTests: XCTestCase {
 
         sut.handle(.messageReceived(.make(id: 2, conversationId: 99)))
 
-        XCTAssertEqual(sut.messages.map(\.id), [1])
+        XCTAssertEqual(sut.messages.map(\.id.clientId), clientIds(1))
     }
 
-    /// Кейс: сообщение отправлено с экрана, затем пришло событие о нём же (сервер шлёт его и автору).
+    /// Кейс: очередь опубликовала отправленное сообщение, затем пришло событие о нём же (сервер шлёт его и автору).
     /// Ожидание: сообщение в ленте одно — повторное применение ничего не меняет.
     func test_messageReceived_ownSentMessage_doesNotDuplicate() async {
         let sut = makeSUT()
         messageService.stubbedPages = [.success(MessagesPage(messages: [.make(id: 1)], nextBlockId: nil, hasNext: false))]
         await sut.loadFirstPage()
-        messageService.stubbedSentMessage = .success(.make(id: 2))
-        sut.messageText = "Привет"
-        await sut.send()
+        let observation = Task { await sut.observeSentMessages() }
+        await yieldUntil { [unowned self] in messageSendQueue.subscriberCount == 1 }
+        messageSendQueue.publishSent(.make(id: 2, clientId: "c1"))
+        await yieldUntil { sut.messages.count == 2 }
 
-        sut.handle(.messageReceived(.make(id: 2)))
+        sut.handle(.messageReceived(.make(id: 2, clientId: "c1")))
 
-        XCTAssertEqual(sut.messages.map(\.id), [2, 1])
+        XCTAssertEqual(sut.messages.map(\.id.clientId), ["c1", "client-1"])
+        observation.cancel()
     }
 
     /// Кейс: сообщение ленты отредактировано (событие), затем пришла его более старая версия (повтор события).
@@ -540,7 +554,7 @@ final class ChatViewModelTests: XCTestCase {
 
         sut.handle(.connected)
 
-        await yieldUntil { sut.messages.map(\.id) == [2, 1] }
+        await yieldUntil { sut.messages.map(\.id.clientId) == clientIds(2, 1) }
         XCTAssertFalse(sut.isLoadingFirstPage)
     }
 
@@ -556,7 +570,7 @@ final class ChatViewModelTests: XCTestCase {
 
         sut.handle(.connected)
 
-        await yieldUntil { sut.messages.map(\.id) == [4, 3, 2] }
+        await yieldUntil { sut.messages.map(\.id.clientId) == clientIds(4, 3, 2) }
     }
 
     /// Кейс: экран подписан на события, сервис WebSocket прислал новое сообщение.
@@ -568,7 +582,7 @@ final class ChatViewModelTests: XCTestCase {
 
         realtimeService.send(.messageReceived(.make(id: 5, senderId: 2)))
 
-        await yieldUntil { sut.messages.map(\.id) == [5] }
+        await yieldUntil { sut.messages.map(\.id.clientId) == clientIds(5) }
         observation.cancel()
         await observation.value
     }
@@ -582,11 +596,18 @@ final class ChatViewModelTests: XCTestCase {
             conversation: conversation,
             messageService: messageService,
             messageStorage: messageStorage,
+            messageSendQueue: messageSendQueue,
             sessionService: sessionService,
             userCache: userCache,
             localizationService: LocalizationService(userDefaultsService: UserDefaultsServiceMock(), systemLanguage: .ru),
             messageTextValidator: MessageTextValidator(),
             realtimeService: realtimeService
         )
+    }
+
+    /// `clientId` сообщений из `Message.make` с заданными `messageId`.
+    /// - Parameter ids: `messageId` сообщений в порядке ленты.
+    private func clientIds(_ ids: Int...) -> [String] {
+        ids.map { "client-\($0)" }
     }
 }

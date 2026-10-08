@@ -58,6 +58,8 @@ extension NetworkError {
         static let invalidName = 1003
         static let invalidParameters = 1004
         static let invalidText = 1005
+        /// `clientId` при отправке сообщения не передан или имеет недопустимый формат.
+        static let invalidClientId = 1006
         static let loginAlreadyTaken = 2001
         static let wrongCredentials = 2002
         static let unauthorized = 2003
@@ -75,6 +77,8 @@ extension NetworkError {
         static let messageNotFound = 6001
         static let messageBlockNotFound = 6002
         static let messageEditForbidden = 6003
+        /// `clientId` уже использован для сообщения этого пользователя в другой переписке.
+        static let clientIdConflict = 6004
         /// Внутренняя ошибка сервера; приходит с HTTP-статусом 500.
         static let internalServerError = 9001
     }

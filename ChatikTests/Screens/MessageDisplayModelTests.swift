@@ -65,12 +65,43 @@ final class MessageDisplayModelTests: XCTestCase {
     /// Кейс: сообщение типа, который клиент не знает.
     /// Ожидание: вместо текста — пояснение, что сообщение не поддерживается.
     func test_init_unknownType_showsUnsupportedText() {
-        let message = Message(messageId: 1, conversationId: 1, blockId: 1, senderId: 2, type: .unknown, text: "", isEdited: false, createdAt: now, updatedAt: now)
+        let message = Message(messageId: 1, clientId: "a", conversationId: 1, blockId: 1, senderId: 2, type: .unknown, text: "", isEdited: false, createdAt: now, updatedAt: now)
 
         let sut = MessageDisplayModel(message: message, sender: nil, context: makeContext())
 
         XCTAssertTrue(sut.isUnsupported)
         XCTAssertEqual(sut.text, ChatStrings.messageUnsupported)
+    }
+
+    // MARK: - Состояние доставки
+
+    /// Кейс: сообщение с сервера.
+    /// Ожидание: доставлено, без описания состояния; идентификатор — отправитель и `clientId`.
+    func test_init_serverMessage_isDelivered() {
+        let sut = MessageDisplayModel(message: .stub, sender: nil, context: makeContext())
+
+        XCTAssertEqual(sut.deliveryState, .delivered)
+        XCTAssertNil(sut.deliveryStateLabel)
+        XCTAssertEqual(sut.id, Message.stub.clientKey)
+    }
+
+    /// Кейс: неотправленное сообщение в статусах «отправляется» и «не отправлено».
+    /// Ожидание: исходящее, состояние и его описание соответствуют статусу, время — момент отправки.
+    func test_init_outgoing_mapsStatus() {
+        let cases: [(status: OutgoingMessageStatus, state: MessageDeliveryState, label: String)] = [
+            (.sending, .sending, ChatStrings.messageSending),
+            (.failed, .failed, ChatStrings.messageFailed),
+        ]
+
+        for testCase in cases {
+            let outgoing = OutgoingMessage.stub(clientId: "a", createdAt: now, status: testCase.status)
+            let sut = MessageDisplayModel(outgoing: outgoing, sender: nil, context: makeContext())
+            XCTAssertTrue(sut.isOutgoing)
+            XCTAssertEqual(sut.deliveryState, testCase.state)
+            XCTAssertEqual(sut.deliveryStateLabel, testCase.label)
+            XCTAssertEqual(sut.time, "12:00")
+            XCTAssertEqual(sut.id, outgoing.clientKey)
+        }
     }
 
     // MARK: - Отправитель

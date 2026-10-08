@@ -5,9 +5,21 @@
 
 import Foundation
 
+/// Состояние доставки сообщения.
+enum MessageDeliveryState: Equatable {
+    /// Сообщение есть на сервере.
+    case delivered
+    /// Отправляется: сервер ещё не ответил.
+    case sending
+    /// Не отправлено: по тапу можно повторить отправку или удалить сообщение.
+    case failed
+}
+
 /// Сообщение переписки в готовом для отображения виде.
 struct MessageDisplayModel: Identifiable, Equatable {
-    let id: Int
+    /// Отправитель и `clientId`: у неотправленного сообщения и созданного из него серверного он один и тот же,
+    /// поэтому при подтверждении отправки пузырь остаётся на месте, а не пересоздаётся.
+    let id: MessageClientKey
     /// Текст сообщения; для неизвестного типа — пояснение, что сообщение не поддерживается.
     let text: String
     /// `true` — тип сообщения неизвестен клиенту, `text` — пояснение, а не содержимое.
@@ -21,6 +33,9 @@ struct MessageDisplayModel: Identifiable, Equatable {
     let time: String
     /// Пометка «изменено»; `nil` — сообщение не редактировалось.
     let editedLabel: String?
+    let deliveryState: MessageDeliveryState
+    /// Описание состояния доставки для VoiceOver; `nil` — сообщение доставлено.
+    let deliveryStateLabel: String?
 }
 
 /// Отправитель сообщения в готовом для отображения виде.
@@ -54,13 +69,37 @@ extension MessageDisplayModel {
     init(message: Message, sender: CachedUser?, context: MessageDisplayContext) {
         let isUnsupported = message.type == .unknown
         self.init(
-            id: message.id,
+            id: message.clientKey,
             text: isUnsupported ? ChatStrings.messageUnsupported : message.text,
             isUnsupported: isUnsupported,
             isOutgoing: message.senderId == context.currentUserId,
             sender: sender.map(MessageSenderDisplayModel.init(cachedUser:)),
             time: Self.formattedTime(message.createdAt, context: context),
-            editedLabel: message.isEdited ? ChatStrings.messageEdited : nil
+            editedLabel: message.isEdited ? ChatStrings.messageEdited : nil,
+            deliveryState: .delivered,
+            deliveryStateLabel: nil
+        )
+    }
+
+    /// Собирает для отображения сообщение, ещё не подтверждённое сервером. Оно всегда исходящее; время —
+    /// момент нажатия «Отправить».
+    /// - Parameters:
+    ///   - outgoing: сообщение очереди отправки.
+    ///   - sender: отправитель (текущий пользователь); `nil` — сообщение продолжает серию.
+    ///   - context: общие параметры отображения.
+    @MainActor
+    init(outgoing: OutgoingMessage, sender: CachedUser?, context: MessageDisplayContext) {
+        let deliveryState: MessageDeliveryState = outgoing.status == .failed ? .failed : .sending
+        self.init(
+            id: outgoing.clientKey,
+            text: outgoing.text,
+            isUnsupported: false,
+            isOutgoing: true,
+            sender: sender.map(MessageSenderDisplayModel.init(cachedUser:)),
+            time: Self.formattedTime(outgoing.createdAt, context: context),
+            editedLabel: nil,
+            deliveryState: deliveryState,
+            deliveryStateLabel: deliveryState == .failed ? ChatStrings.messageFailed : ChatStrings.messageSending
         )
     }
 

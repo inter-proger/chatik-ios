@@ -20,7 +20,6 @@ struct ChatInputPanel: View {
             text: $viewModel.messageText,
             isFocused: isFocused,
             hint: viewModel.inputHint,
-            isSending: viewModel.isSending,
             isSendEnabled: viewModel.isSendEnabled,
             onSend: viewModel.didTapSend
         )

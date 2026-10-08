@@ -6,9 +6,9 @@
 import CoreData
 
 protocol MessageStorageServiceProtocol {
-    /// Сохраняет сообщение (upsert по `messageId`).
+    /// Сохраняет сообщение (upsert по `messageId`); его неотправленная копия удаляется.
     func save(message: Message) async throws
-    /// Сохраняет список сообщений одним фоновым контекстом.
+    /// Сохраняет список сообщений одним фоновым контекстом; их неотправленные копии удаляются.
     func save(messages: [Message]) async throws
     /// Возвращает не больше `limit` самых новых сохранённых сообщений переписки, сначала самые новые.
     func fetchLatest(conversationId: Int, limit: Int) async throws -> [Message]
@@ -23,6 +23,10 @@ protocol MessageStorageServiceProtocol {
 ///
 /// Сообщения, которых нет в ответе сервера, из БД не удаляются: API не умеет удалять сообщения, а изменения
 /// (редактирование) приходят тем же сообщением и перезаписывают запись по `messageId`.
+///
+/// Серверное сообщение с тем же отправителем и `clientId`, что у неотправленного (`OutgoingMessageEntity`), —
+/// подтверждение его доставки: неотправленная копия удаляется в той же записи. Так очередь отправки очищается,
+/// откуда бы ни пришло сообщение — из ответа `/messages/send`, события WebSocket или страницы переписки.
 final class MessageStorageService: MessageStorageServiceProtocol {
     private let container: PersistentContainerProvider
 
@@ -36,12 +40,13 @@ final class MessageStorageService: MessageStorageServiceProtocol {
         try await save(messages: [message])
     }
 
-    /// Сохраняет список сообщений одним фоновым контекстом (upsert по `messageId`).
+    /// Сохраняет список сообщений одним фоновым контекстом (upsert по `messageId`) и удаляет их неотправленные копии.
     /// - Parameter messages: сырые структуры; повторы `messageId` схлопываются в одну запись.
     func save(messages: [Message]) async throws {
         guard !messages.isEmpty else { return }
         try await container.performWrite { context in
             try MessageEntity.upsert(messages, in: context)
+            try OutgoingMessageEntity.deleteConfirmed(by: messages, in: context)
             try context.save()
         }
     }

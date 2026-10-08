@@ -9,8 +9,13 @@ import SwiftUI
 /// с аватаром справа, входящие — слева с аватаром слева. Аватар и имя отправителя есть только у первого сообщения
 /// серии; у остальных на месте аватара пустой отступ, чтобы пузыри серии стояли ровно. Ширина пузыря подстраивается
 /// под содержимое.
+///
+/// У отправляющегося сообщения рядом со временем часы, у неотправленного — красный значок слева от пузыря;
+/// тап по неотправленному сообщению вызывает `onTapFailed`. Тапы по остальным сообщениям не перехватываются —
+/// их обрабатывает лента (убирает клавиатуру).
 struct MessageBubbleView: View {
     let message: MessageDisplayModel
+    var onTapFailed: () -> Void = {}
 
     private static let avatarSize: CGFloat = 32
 
@@ -18,7 +23,11 @@ struct MessageBubbleView: View {
         HStack(alignment: .top, spacing: 8) {
             if message.isOutgoing {
                 Spacer(minLength: 48)
-                bubble
+                // Значок ошибки — у нижнего края пузыря.
+                HStack(alignment: .bottom, spacing: 6) {
+                    failedMark
+                    bubble
+                }
                 avatar
             } else {
                 avatar
@@ -28,6 +37,27 @@ struct MessageBubbleView: View {
         }
         // Отступ отделяет серии друг от друга; внутри серии пузыри идут плотно.
         .padding(.top, message.sender == nil ? 0 : 8)
+        .contentShape(Rectangle())
+        // Жест включается только у неотправленного сообщения, без смены структуры View: при повторной отправке
+        // пузырь не пересоздаётся.
+        .gesture(TapGesture().onEnded(onTapFailed), including: isFailed ? .all : .subviews)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(isFailed ? .isButton : [])
+    }
+
+    private var isFailed: Bool {
+        message.deliveryState == .failed
+    }
+
+    /// Значок неотправленного сообщения слева от пузыря.
+    @ViewBuilder
+    private var failedMark: some View {
+        if isFailed {
+            Image(systemName: "exclamationmark.circle.fill")
+                .font(.title3)
+                .foregroundStyle(.red)
+                .accessibilityLabel(message.deliveryStateLabel ?? "")
+        }
     }
 
     /// Аватар отправителя у первого сообщения серии, иначе пустое место того же размера.
@@ -64,13 +94,17 @@ struct MessageBubbleView: View {
         .clipShape(RoundedRectangle(cornerRadius: 16))
     }
 
-    /// Время отправки и пометка «изменено».
+    /// Время отправки, пометка «изменено» и часы, пока сообщение отправляется.
     private var footer: some View {
         HStack(spacing: 4) {
             if let editedLabel = message.editedLabel {
                 Text(editedLabel)
             }
             Text(message.time)
+            if message.deliveryState == .sending {
+                Image(systemName: "clock")
+                    .accessibilityLabel(message.deliveryStateLabel ?? "")
+            }
         }
         .font(.caption2)
         .opacity(0.7)
@@ -125,11 +159,13 @@ private struct MessageBubbleLayout: Layout {
 }
 
 #Preview {
+    let ivan = MessageSenderDisplayModel(name: "Иван Петров", isPlaceholder: false, avatarURL: nil)
     VStack(spacing: 0) {
-        MessageBubbleView(message: MessageDisplayModel(id: 1, text: "Привет!", isUnsupported: false, isOutgoing: true, sender: MessageSenderDisplayModel(name: "Иван Петров", isPlaceholder: false, avatarURL: nil), time: "12:01", editedLabel: nil))
-        MessageBubbleView(message: MessageDisplayModel(id: 2, text: "Как дела?", isUnsupported: false, isOutgoing: true, sender: nil, time: "12:01", editedLabel: nil))
-        MessageBubbleView(message: MessageDisplayModel(id: 3, text: "Ок", isUnsupported: false, isOutgoing: false, sender: MessageSenderDisplayModel(name: "Мария Александровна Константинопольская-Вознесенская", isPlaceholder: false, avatarURL: nil), time: "12:02", editedLabel: "изменено"))
-        MessageBubbleView(message: MessageDisplayModel(id: 4, text: "Сообщение не поддерживается", isUnsupported: true, isOutgoing: false, sender: MessageSenderDisplayModel(name: "Загрузка…", isPlaceholder: true, avatarURL: nil), time: "12:03", editedLabel: nil))
+        MessageBubbleView(message: MessageDisplayModel(id: MessageClientKey(senderId: 1, clientId: "1"), text: "Привет!", isUnsupported: false, isOutgoing: true, sender: ivan, time: "12:01", editedLabel: nil, deliveryState: .delivered, deliveryStateLabel: nil))
+        MessageBubbleView(message: MessageDisplayModel(id: MessageClientKey(senderId: 1, clientId: "2"), text: "Как дела?", isUnsupported: false, isOutgoing: true, sender: nil, time: "12:01", editedLabel: nil, deliveryState: .sending, deliveryStateLabel: "Отправляется"))
+        MessageBubbleView(message: MessageDisplayModel(id: MessageClientKey(senderId: 1, clientId: "3"), text: "Ты тут?", isUnsupported: false, isOutgoing: true, sender: nil, time: "12:02", editedLabel: nil, deliveryState: .failed, deliveryStateLabel: "Не отправлено"))
+        MessageBubbleView(message: MessageDisplayModel(id: MessageClientKey(senderId: 2, clientId: "4"), text: "Ок", isUnsupported: false, isOutgoing: false, sender: MessageSenderDisplayModel(name: "Мария Александровна Константинопольская-Вознесенская", isPlaceholder: false, avatarURL: nil), time: "12:02", editedLabel: "изменено", deliveryState: .delivered, deliveryStateLabel: nil))
+        MessageBubbleView(message: MessageDisplayModel(id: MessageClientKey(senderId: 3, clientId: "5"), text: "Сообщение не поддерживается", isUnsupported: true, isOutgoing: false, sender: MessageSenderDisplayModel(name: "Загрузка…", isPlaceholder: true, avatarURL: nil), time: "12:03", editedLabel: nil, deliveryState: .delivered, deliveryStateLabel: nil))
     }
     .padding()
 }

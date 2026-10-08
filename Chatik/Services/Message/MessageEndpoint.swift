@@ -13,7 +13,8 @@ enum MessageEndpoint: Endpoint {
     /// GET /messages/getBlock — сообщения одного блока. Ответ: `MessagesBlock`.
     case getBlock(blockId: Int)
     /// POST /messages/send — отправка текстового сообщения от лица текущего пользователя. Ответ: `MessageResponse`.
-    case send(conversationId: Int, text: String)
+    /// Идемпотентен по `clientId`: повтор с тем же `clientId` возвращает уже созданное сообщение.
+    case send(conversationId: Int, text: String, clientId: String)
     /// POST /messages/edit — замена текста своего сообщения. Ответ: `MessageResponse` с `isEdited == true`.
     case edit(messageId: Int, newText: String)
 
@@ -41,8 +42,8 @@ enum MessageEndpoint: Endpoint {
             return parameters
         case let .getBlock(blockId):
             return ["blockId": String(blockId)]
-        case let .send(conversationId, text):
-            return ["conversationId": String(conversationId), "text": text]
+        case let .send(conversationId, text, clientId):
+            return ["conversationId": String(conversationId), "text": text, "clientId": clientId]
         case let .edit(messageId, newText):
             return ["messageId": String(messageId), "newText": newText]
         }

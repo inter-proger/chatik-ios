@@ -73,6 +73,20 @@ final class MessageStorageServiceTests: XCTestCase {
         XCTAssertEqual(saved.map(\.text), ["Второй", "Первый, исправленный"])
     }
 
+    /// Кейс: в очереди отправки два сообщения с одним `clientId` — текущего пользователя и (теоретически) другого
+    /// отправителя; сохранено серверное сообщение текущего пользователя с этим `clientId`.
+    /// Ожидание: удалена только неотправленная копия того же отправителя — `clientId` сравнивается вместе с `senderId`.
+    func test_save_removesConfirmedOutgoingOfSameSender() async throws {
+        let outgoingStorage = OutgoingMessageStorageService(container: container)
+        try await outgoingStorage.save(message: .stub(clientId: "a", senderId: 1))
+        try await outgoingStorage.save(message: .stub(clientId: "b", senderId: 1))
+
+        try await sut.save(messages: [.make(id: 1, senderId: 1, clientId: "a"), .make(id: 2, senderId: 2, clientId: "b")])
+
+        let outgoing = try await outgoingStorage.fetchAll()
+        XCTAssertEqual(outgoing.map(\.clientId), ["b"])
+    }
+
     // MARK: - Выборка
 
     /// Кейс: в БД сообщения двух переписок, сохранённые не по порядку.
@@ -111,6 +125,22 @@ final class MessageStorageServiceTests: XCTestCase {
             broken.type = MessageType.text.rawValue
             broken.createdAt = .distantPast
             broken.updatedAt = .distantPast
+            try context.save()
+        }
+
+        let messages = try await sut.fetchLatest(conversationId: 1, limit: 10)
+
+        XCTAssertEqual(messages.map(\.id), [1])
+    }
+
+    /// Кейс: в БД запись, сохранённая до появления `clientId` (после миграции поле пустое).
+    /// Ожидание: выборка её пропускает — она перезапишется при следующей загрузке переписки.
+    func test_fetchLatest_skipsRecordsWithoutClientId() async throws {
+        try await sut.save(message: .make(id: 1))
+        try await container.performWrite { context in
+            let legacy = MessageEntity(context: context)
+            legacy.update(from: .make(id: 2))
+            legacy.clientId = nil
             try context.save()
         }
 

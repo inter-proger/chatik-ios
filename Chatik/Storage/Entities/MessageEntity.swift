@@ -10,6 +10,7 @@ import CoreData
 @objc(MessageEntity)
 final class MessageEntity: NSManagedObject, StorageEntity {
     @NSManaged var messageId: Int64
+    @NSManaged var clientId: String?
     @NSManaged var conversationId: Int64
     @NSManaged var blockId: Int64
     @NSManaged var senderId: Int64
@@ -28,6 +29,7 @@ final class MessageEntity: NSManagedObject, StorageEntity {
     /// - Parameter message: источник данных.
     func update(from message: Message) {
         messageId = Int64(message.messageId)
+        clientId = message.clientId
         conversationId = Int64(message.conversationId)
         blockId = Int64(message.blockId)
         senderId = Int64(message.senderId)
@@ -62,14 +64,17 @@ final class MessageEntity: NSManagedObject, StorageEntity {
 extension Message {
     /// Собирает структуру из Entity.
     /// - Parameter entity: запись CoreData.
-    /// - Returns: `nil`, если в записи нет обязательных полей.
+    /// - Returns: `nil`, если в записи нет обязательных полей. Записи, сохранённые до появления `clientId`,
+    ///   тоже отбрасываются — они перезапишутся при следующей загрузке переписки.
     init?(entity: MessageEntity) {
-        guard let rawType = entity.type,
+        guard let clientId = entity.clientId,
+              let rawType = entity.type,
               let text = entity.text,
               let createdAt = entity.createdAt,
               let updatedAt = entity.updatedAt else { return nil }
         self.init(
             messageId: Int(entity.messageId),
+            clientId: clientId,
             conversationId: Int(entity.conversationId),
             blockId: Int(entity.blockId),
             senderId: Int(entity.senderId),

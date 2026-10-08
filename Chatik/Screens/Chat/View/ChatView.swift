@@ -19,7 +19,8 @@ struct ChatView: View {
         MessagesListView(
             messages: viewModel.messages,
             isLoadingNextPage: viewModel.isLoadingNextPage,
-            onAppear: viewModel.prefetchNextPageIfNeeded
+            onAppear: viewModel.prefetchNextPageIfNeeded,
+            onTapFailed: viewModel.didTapMessage
         )
         .onTapGesture { isInputFocused = false }
         .overlay(alignment: .top) { navigationBarBackground }
@@ -31,6 +32,7 @@ struct ChatView: View {
         // Лента перевёрнута (см. `MessagesListView`), поэтому индикатор обновления появляется внизу, у новых сообщений.
         .refreshable { await viewModel.loadFirstPage() }
         .task { await viewModel.loadFirstPage() }
+        .task { await viewModel.observeSentMessages() }
         .task { await viewModel.observeRealtimeEvents() }
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -45,6 +47,15 @@ struct ChatView: View {
             Button(CommonStrings.ok, role: .cancel) {}
         } message: { message in
             Text(message)
+        }
+        .confirmationDialog(
+            ChatStrings.failedActionsTitle,
+            isPresented: $viewModel.failedMessageActionsClientId.isPresent(),
+            titleVisibility: .visible,
+            presenting: viewModel.failedMessageActionsClientId
+        ) { clientId in
+            Button(ChatStrings.failedActionsRetry) { viewModel.retrySending(clientId: clientId) }
+            Button(ChatStrings.failedActionsDelete, role: .destructive) { viewModel.deleteOutgoing(clientId: clientId) }
         }
     }
 

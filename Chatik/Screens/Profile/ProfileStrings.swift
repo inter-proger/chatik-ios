@@ -20,6 +20,10 @@ enum ProfileStrings {
     static var avatarTakePhoto: String { localized("profile.avatar.take_photo") }
     static var avatarLoadFailed: String { localized("profile.avatar.load_failed") }
 
+    static var logout: String { localized("profile.logout") }
+    static var logoutConfirmationTitle: String { localized("profile.logout.confirm_title") }
+    static var logoutCancel: String { localized("profile.logout.cancel") }
+
     /// Возвращает локализованную строку по ключу из таблицы `Profile`.
     /// - Parameter key: ключ в `Profile.strings`.
     private static func localized(_ key: String) -> String {

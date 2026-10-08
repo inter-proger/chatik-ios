@@ -6,26 +6,52 @@
 import Foundation
 @testable import Chatik
 
-/// Мок сервиса авторизации: возвращает заданный результат и позволяет заглянуть в состояние во время запроса.
+/// Мок сервиса авторизации: возвращает заданный результат, запоминает подписчиков и вызовы выхода
+/// и позволяет заглянуть в состояние во время запроса. Выход наблюдателей не оповещает — это проверяется
+/// в тестах `AuthService`.
+@MainActor
 final class AuthServiceMock: AuthServiceProtocol {
     var stubbedUser: Result<User, Error> = .failure(NetworkError.missingResponse)
-    var stubbedLogout: Result<Void, Error> = .success(())
+    private(set) var logoutCallCount = 0
+    private(set) var expireSessionCallCount = 0
+    /// Подписанные наблюдатели (сильные ссылки — чтобы тест мог проверить подписку).
+    private(set) var observers: [AuthServiceObserver] = []
     /// Вызывается внутри каждого метода и ожидается до возврата результата — пока ViewModel гарантированно
-    /// в состоянии загрузки. `@MainActor`, чтобы из хука можно было читать состояние ViewModel и вызывать её методы.
+    /// в состоянии загрузки. Из хука можно читать состояние ViewModel и вызывать её методы.
     var onRequest: (@MainActor () async -> Void)?
 
+    /// Возвращает `stubbedUser` после хука `onRequest`.
     func signup(login: String, password: String, name: String) async throws -> User {
         await onRequest?()
         return try stubbedUser.get()
     }
 
+    /// Возвращает `stubbedUser` после хука `onRequest`.
     func login(login: String, password: String) async throws -> User {
         await onRequest?()
         return try stubbedUser.get()
     }
 
-    func logout() async throws {
+    /// Считает вызов и ждёт хук `onRequest`; наблюдателей не оповещает.
+    func logout() async {
+        logoutCallCount += 1
         await onRequest?()
-        try stubbedLogout.get()
+    }
+
+    /// Считает вызов; наблюдателей не оповещает.
+    func expireSession() {
+        expireSessionCallCount += 1
+    }
+
+    /// Запоминает наблюдателя сильной ссылкой — без защиты от повторов.
+    /// - Parameter observer: подписываемый наблюдатель.
+    func addObserver(_ observer: AuthServiceObserver) {
+        observers.append(observer)
+    }
+
+    /// Убирает наблюдателя из списка подписанных.
+    /// - Parameter observer: отписываемый наблюдатель.
+    func removeObserver(_ observer: AuthServiceObserver) {
+        observers.removeAll { $0 === observer }
     }
 }

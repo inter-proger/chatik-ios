@@ -7,7 +7,7 @@ import Foundation
 import os
 
 /// Состояние экрана списка чатов: постраничный список переписок, переход в профиль, создание личного
-/// диалога и выход из аккаунта.
+/// диалога. Подписан на выход из аккаунта (`AuthServiceObserver`): перед выходом отменяет загрузки списка.
 ///
 /// Список переписок хранит `PaginatedList`: он же отбрасывает устаревшие ответы, не допускает дубликатов
 /// и считает сдвиг для следующей страницы. ViewModel остаётся владельцем запроса и текстов ошибок.
@@ -19,11 +19,7 @@ import os
 /// на него при отображении: обновление списка, ответ на которое сервер собрал раньше события, иначе стёрло бы их.
 @MainActor
 @Observable
-final class ChatListViewModel {
-    /// `true`, пока показан попап подтверждения выхода.
-    var isLogoutConfirmationPresented = false
-    /// `true`, пока выполняется запрос выхода.
-    private(set) var isLoggingOut = false
+final class ChatListViewModel: AuthServiceObserver {
     /// Текст ошибки для всплывающего сообщения. `nil` — сообщение скрыто.
     var errorMessage: String?
 
@@ -39,7 +35,6 @@ final class ChatListViewModel {
     private var firstPageTasks: Set<Task<PaginationOutcome, Never>> = []
     /// Последнее начатое сохранение созданной переписки; следующие сохранения выстраиваются за ним.
     private var createdConversationSaveTask: Task<Void, Never>?
-    private let authService: AuthServiceProtocol
     private let sessionService: SessionServiceProtocol
     private let conversationService: ConversationServiceProtocol
     private let conversationStorage: ConversationStorageServiceProtocol
@@ -56,13 +51,13 @@ final class ChatListViewModel {
         realtimeService: RealtimeServiceProtocol,
         router: ChatListRouter
     ) {
-        self.authService = authService
         self.sessionService = sessionService
         self.conversationService = conversationService
         self.conversationStorage = conversationStorage
         self.userCache = userCache
         self.realtimeService = realtimeService
         self.router = router
+        authService.addObserver(self)
     }
 
     /// Переписки текущего пользователя, сначала самые новые. Собеседники читаются из кэша пользователей —
@@ -269,46 +264,10 @@ final class ChatListViewModel {
 
     // MARK: - Выход
 
-    /// Обработчик кнопки «Выйти»: показывает попап подтверждения, если выход ещё не выполняется.
-    func didTapLogout() {
-        guard !isLoggingOut else { return }
-        isLogoutConfirmationPresented = true
-    }
-
-    /// Обработчик подтверждения в попапе: запускает выход. Отмена ничего не делает — попап
-    /// закрывается самим `Alert` через привязку `isLogoutConfirmationPresented`.
-    func didTapConfirmLogout() {
-        guard !isLoggingOut else { return }
-        Task { await logout() }
-    }
-
-    /// Завершает сессию на сервере и локально; приложение переключится на экран авторизации.
-    /// Если сервер ответил «не авторизован», сессии уже нет — завершаем локально без сообщения об ошибке.
-    /// При прочих ошибках показывает сообщение и остаётся на экране — загрузки списка не прерываются.
-    ///
-    /// Соединение с WebSocket закрывается до запроса: сервер закроет соединения сессии с кодом 4003, и по ещё
-    /// текущему соединению это выглядело бы как истечение сессии. Закрытие дожидается записей событий в БД —
-    /// они не попадут туда после очистки. После запроса работа с сервером начинается заново: после выхода
-    /// `/global/start` подключаться не даст, а при ошибке выхода соединение восстановится.
-    func logout() async {
-        isLoggingOut = true
-        defer { isLoggingOut = false }
-
-        await realtimeService.stop()
-        do {
-            try await authService.logout()
-            await endSession()
-        } catch NetworkError.api(let code) where code == NetworkError.Code.unauthorized {
-            await endSession()
-        } catch {
-            errorMessage = ErrorMessages.message(for: error)
-        }
-        realtimeService.start()
-    }
-
-    /// Отменяет загрузки списка, дожидается записей в БД и только затем завершает сессию: иначе страница,
-    /// пришедшая во время выхода, записалась бы в БД уже после её очистки и досталась следующему пользователю.
-    private func endSession() async {
+    /// Выход из аккаунта начинается (`AuthServiceObserver`): загрузки списка отменяются, выход дожидается их
+    /// и записей в БД. Иначе страница, пришедшая во время выхода, записалась бы в БД уже после её очистки
+    /// и досталась следующему пользователю.
+    func authServiceWillLogout() async {
         let firstPageTasks = firstPageTasks
         firstPageTasks.forEach { $0.cancel() }
         await list.cancelLoading()
@@ -316,6 +275,5 @@ final class ChatListViewModel {
             _ = await task.value
         }
         await createdConversationSaveTask?.value
-        await sessionService.end()
     }
 }

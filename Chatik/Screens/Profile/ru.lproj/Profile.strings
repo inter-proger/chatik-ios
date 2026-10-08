@@ -14,3 +14,7 @@
 "profile.avatar.choose_from_gallery" = "Выбрать из галереи";
 "profile.avatar.take_photo" = "Сделать фото";
 "profile.avatar.load_failed" = "Не удалось открыть выбранное изображение. Попробуйте другое";
+
+"profile.logout" = "Выйти";
+"profile.logout.confirm_title" = "Выйти из аккаунта?";
+"profile.logout.cancel" = "Отмена";

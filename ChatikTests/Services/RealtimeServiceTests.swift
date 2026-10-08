@@ -13,6 +13,7 @@ final class RealtimeServiceTests: XCTestCase {
     private var globalService: GlobalServiceMock!
     private var factory: WebSocketConnectionFactoryMock!
     private var sessionService: SessionService!
+    private var authService: AuthService!
     private var conversationStorage: ConversationStorageServiceMock!
     private var messageStorage: MessageStorageServiceMock!
     private var userCache: UserCacheServiceMock!
@@ -26,6 +27,7 @@ final class RealtimeServiceTests: XCTestCase {
         let userDefaultsService = UserDefaultsServiceMock(currentUser: User(userId: 1, login: "ivan", name: "Ivan", avatar: nil))
         sessionService = SessionService(userDefaultsService: userDefaultsService, localStorageCleaner: LocalStorageCleanerMock())
         await sessionService.restore()
+        authService = AuthService(networkService: NetworkServiceMock())
         conversationStorage = ConversationStorageServiceMock()
         messageStorage = MessageStorageServiceMock()
         userCache = UserCacheServiceMock()
@@ -35,6 +37,7 @@ final class RealtimeServiceTests: XCTestCase {
             globalService: globalService,
             connectionFactory: factory,
             sessionService: sessionService,
+            authService: authService,
             conversationStorage: conversationStorage,
             messageStorage: messageStorage,
             userCache: userCache,
@@ -43,6 +46,8 @@ final class RealtimeServiceTests: XCTestCase {
             pongTimeout: pongTimeout,
             sleep: { try await sleeper.sleep($0) }
         )
+        authService.addObserver(sut)
+        authService.addObserver(sessionService)
     }
 
     override func tearDown() async throws {
@@ -333,6 +338,42 @@ final class RealtimeServiceTests: XCTestCase {
         XCTAssertEqual(factory.made.count, 1)
     }
 
+    /// Кейс: `AuthService` сообщил о начале выхода при открытом соединении.
+    /// Ожидание: соединение закрыто клиентом с кодом 1000 до запроса выхода, переподключения нет.
+    func test_authServiceWillLogout_closesConnection() async throws {
+        let connection = try await startAndConnect()
+
+        await sut.authServiceWillLogout()
+
+        XCTAssertEqual(connection.closeCodes, [WebSocketCloseCode.normal])
+        XCTAssertEqual(factory.made.count, 1)
+    }
+
+    /// Кейс: `start()` между `authServiceWillLogout` и `authServiceDidLogout` (возврат из фона во время выхода).
+    /// Ожидание: `/global/start` не вызывается, соединение не открывается.
+    func test_start_whileLoggingOut_doesNothing() async {
+        await sut.authServiceWillLogout()
+
+        sut.start()
+        await sut.stop()
+
+        XCTAssertEqual(globalService.startCallCount, 0)
+        XCTAssertTrue(factory.made.isEmpty)
+    }
+
+    /// Кейс: `start()` после завершения выхода (новый вход).
+    /// Ожидание: работа с сервером начинается заново с `/global/start`.
+    func test_start_afterLogoutFinished_connects() async {
+        globalService.startResults = [.success(.stub(token: "t1"))]
+        await sut.authServiceWillLogout()
+        await sut.authServiceDidLogout(reason: .userInitiated)
+
+        sut.start()
+        await waitUntil { [unowned self] in factory.made.first?.sent.isEmpty == false }
+
+        XCTAssertEqual(globalService.startCallCount, 1)
+    }
+
     /// Кейс: повторный `start()` (вход под другим пользователем, возврат из фона) при открытом соединении.
     /// Ожидание: старое соединение закрыто клиентом, новое открыто по данным нового `/global/start`;
     /// закрытие старого не вызывает переподключения.
@@ -400,6 +441,7 @@ final class RealtimeServiceTests: XCTestCase {
             globalService: globalService,
             connectionFactory: factory,
             sessionService: sessionService,
+            authService: authService,
             conversationStorage: conversationStorage,
             messageStorage: messageStorage,
             userCache: userCache,
@@ -408,6 +450,8 @@ final class RealtimeServiceTests: XCTestCase {
             pongTimeout: pongTimeout,
             sleep: { try await sleeper.sleep($0) }
         )
+        authService.addObserver(sut)
+        authService.addObserver(sessionService)
     }
 }
 

@@ -9,8 +9,8 @@ import XCTest
 
 @MainActor
 final class ChatListViewModelTests: XCTestCase {
-    private var networkService: NetworkServiceMock!
     private var userDefaultsService: UserDefaultsServiceMock!
+    private var authService: AuthServiceMock!
     private var sessionService: SessionService!
     private var conversationService: ConversationServiceMock!
     private var conversationStorage: ConversationStorageServiceMock!
@@ -21,17 +21,17 @@ final class ChatListViewModelTests: XCTestCase {
 
     override func setUp() async throws {
         try await super.setUp()
-        networkService = NetworkServiceMock()
         userDefaultsService = UserDefaultsServiceMock(currentUser: User(userId: 1, login: "ivan", name: "Ivan", avatar: nil))
         sessionService = SessionService(userDefaultsService: userDefaultsService, localStorageCleaner: LocalStorageCleanerMock())
         await sessionService.restore()
+        authService = AuthServiceMock()
         conversationService = ConversationServiceMock()
         conversationStorage = ConversationStorageServiceMock()
         userCache = UserCacheServiceMock()
         realtimeService = RealtimeServiceMock()
         router = ChatListRouter()
         sut = ChatListViewModel(
-            authService: AuthService(networkService: networkService),
+            authService: authService,
             sessionService: sessionService,
             conversationService: conversationService,
             conversationStorage: conversationStorage,
@@ -592,190 +592,64 @@ final class ChatListViewModelTests: XCTestCase {
 
     // MARK: - Выход
 
-    /// Кейс: нажатие на кнопку «Выйти».
-    /// Ожидание: показан попап подтверждения, сам выход не запускается.
-    func test_didTapLogout_presentsConfirmation() {
-        sut.didTapLogout()
-
-        XCTAssertTrue(sut.isLogoutConfirmationPresented)
-        XCTAssertTrue(networkService.requestedEndpoints.isEmpty)
+    /// Кейс: экран списка создан.
+    /// Ожидание: он подписан на выход из аккаунта.
+    func test_init_subscribesToLogout() {
+        XCTAssertTrue(authService.observers.contains { $0 === sut })
     }
 
-    /// Кейс: нажатие на кнопку «Выйти», пока выход уже выполняется.
-    /// Ожидание: повторный попап не показывается.
-    func test_didTapLogout_whileLoggingOut_doesNotPresentConfirmation() async {
-        let sut: ChatListViewModel = sut
-        var isPresentedDuringLogout = true
-        networkService.stubbedResult = .success(EmptyResponse())
-        networkService.onRequest = {
-            sut.didTapLogout()
-            isPresentedDuringLogout = sut.isLogoutConfirmationPresented
-        }
-
-        await sut.logout()
-
-        XCTAssertFalse(isPresentedDuringLogout)
-    }
-
-    /// Кейс: подтверждение в попапе.
-    /// Ожидание: запрос выхода уходит на сервер, сессия завершается.
-    func test_confirmLogout_startsLogout() async {
-        networkService.stubbedResult = .success(EmptyResponse())
-        sut.didTapLogout()
-
-        sut.didTapConfirmLogout()
-        await yieldUntil { !sessionService.isLoggedIn }
-
-        XCTAssertFalse(sessionService.isLoggedIn)
-    }
-
-    /// Кейс: подтверждение в попапе, пока выход уже выполняется.
-    /// Ожидание: повторный запрос не уходит — даже если дать ему время дойти до сети.
-    func test_confirmLogout_whileLoggingOut_doesNotStartAgain() async {
-        let sut: ChatListViewModel = sut
-        let repeatedRequest = expectation(description: "Повторный запрос выхода")
-        repeatedRequest.isInverted = true
-        networkService.stubbedResult = .success(EmptyResponse())
-        networkService.onRequest = { [unowned self] in
-            networkService.onRequest = { repeatedRequest.fulfill() }
-            sut.didTapConfirmLogout()
-        }
-
-        await sut.logout()
-        await fulfillment(of: [repeatedRequest], timeout: 0.2)
-
-        XCTAssertEqual(networkService.requestedEndpoints.count, 1)
-    }
-
-    /// Кейс: сервер успешно завершил сессию.
-    /// Ожидание: сессия завершена, пользователь удалён из `UserDefaults`, ошибки нет.
-    func test_logout_success_endsSession() async {
-        networkService.stubbedResult = .success(EmptyResponse())
-
-        await sut.logout()
-
-        let stored = await userDefaultsService.currentUser()
-        XCTAssertFalse(sessionService.isLoggedIn)
-        XCTAssertNil(stored)
-        XCTAssertNil(sut.errorMessage)
-        XCTAssertFalse(sut.isLoggingOut)
-    }
-
-    /// Кейс: сервер ответил «не авторизован» — сессии на сервере уже нет.
-    /// Ожидание: сессия завершена как при успехе, без сообщения об ошибке и без флага «истекла».
-    func test_logout_unauthorized_endsSessionSilently() async {
-        networkService.stubbedResult = .failure(NetworkError.api(code: NetworkError.Code.unauthorized))
-
-        await sut.logout()
-
-        XCTAssertFalse(sessionService.isLoggedIn)
-        XCTAssertFalse(sessionService.isExpired)
-        XCTAssertNil(sut.errorMessage)
-    }
-
-    /// Кейс: транспортная ошибка при выходе.
-    /// Ожидание: сессия сохраняется, показано сообщение об ошибке.
-    func test_logout_transportError_showsErrorAndKeepsSession() async {
-        networkService.stubbedResult = .failure(NetworkError.transport(URLError(.notConnectedToInternet)))
-
-        await sut.logout()
-
-        XCTAssertTrue(sessionService.isLoggedIn)
-        XCTAssertEqual(sut.errorMessage, CommonStrings.errorNoConnection)
-    }
-
-    /// Кейс: выход из аккаунта успешен.
-    /// Ожидание: соединение с WebSocket закрыто до запроса выхода (иначе 4003 по нему выглядел бы как истечение
-    /// сессии), а после — работа с сервером начата заново.
-    func test_logout_stopsRealtimeBeforeRequestAndStartsAfter() async {
-        networkService.stubbedResult = .success(EmptyResponse())
-        var callsDuringRequest: [String] = []
-        networkService.onRequest = { [unowned self] in callsDuringRequest = realtimeService.calls }
-
-        await sut.logout()
-
-        XCTAssertEqual(callsDuringRequest, ["stop"])
-        XCTAssertEqual(realtimeService.calls, ["stop", "start"])
-    }
-
-    /// Кейс: выход не удался из-за сети.
-    /// Ожидание: соединение с WebSocket восстанавливается — `start()` после ошибки.
-    func test_logout_failure_restartsRealtime() async {
-        networkService.stubbedResult = .failure(NetworkError.transport(URLError(.notConnectedToInternet)))
-
-        await sut.logout()
-
-        XCTAssertTrue(sessionService.isLoggedIn)
-        XCTAssertEqual(realtimeService.calls, ["stop", "start"])
-    }
-
-    // MARK: - Выход во время загрузки
-
-    /// Кейс: выход подтверждён, пока грузится первая страница; ответ на неё приходит уже после отмены.
-    /// Ожидание: сессия завершается только после того, как загрузка закончилась; страница в БД не записана,
+    /// Кейс: выход начинается, пока грузится первая страница; ответ на неё приходит уже после отмены.
+    /// Ожидание: уведомление возвращается только после того, как загрузка закончилась; страница в БД не записана,
     /// ошибка не показана.
-    func test_logout_duringFirstPage_cancelsLoadingBeforeEndingSession() async {
+    func test_authServiceWillLogout_duringFirstPage_cancelsLoadingAndWaits() async {
         let gate = Gate()
+        let log = EventLog()
         conversationService.stubbedPages = [.success(ConversationsPage(conversations: [.singleStub], hasNext: false))]
         conversationService.onRequest = { await gate.wait() }
-        networkService.stubbedResult = .success(EmptyResponse())
         let load = Task { await sut.loadFirstPage() }
         await yieldUntil { gate.isWaiting }
 
-        let logout = Task { await sut.logout() }
+        let willLogout = Task { [sut] in
+            await sut!.authServiceWillLogout()
+            log.events.append("willLogout returned")
+        }
         await yieldUntil { [unowned self] in !sut.isLoadingFirstPage }
-        let isLoggedInBeforeLoadFinished = sessionService.isLoggedIn
+        log.events.append("response released")
         gate.open()
-        await logout.value
+        await willLogout.value
         await load.value
 
-        XCTAssertTrue(isLoggedInBeforeLoadFinished)
-        XCTAssertFalse(sessionService.isLoggedIn)
+        XCTAssertEqual(log.events, ["response released", "willLogout returned"])
         XCTAssertTrue(conversationStorage.savedPages.isEmpty)
         XCTAssertNil(sut.errorMessage)
     }
 
-    /// Кейс: выход подтверждён, пока грузится следующая страница; ответ на неё приходит уже после отмены.
-    /// Ожидание: сессия завершается только после того, как подгрузка закончилась; в БД записана только первая страница.
-    func test_logout_duringNextPage_cancelsLoadingBeforeEndingSession() async throws {
+    /// Кейс: выход начинается, пока грузится следующая страница; ответ на неё приходит уже после отмены.
+    /// Ожидание: уведомление возвращается только после того, как подгрузка закончилась; в БД записана только
+    /// первая страница.
+    func test_authServiceWillLogout_duringNextPage_cancelsLoadingAndWaits() async throws {
         let gate = Gate()
+        let log = EventLog()
         conversationService.stubbedPages = [
             .success(ConversationsPage(conversations: makeConversations(ids: Array((1...30).reversed())), hasNext: true)),
             .success(ConversationsPage(conversations: makeConversations(ids: [0]), hasNext: false)),
         ]
-        networkService.stubbedResult = .success(EmptyResponse())
         await sut.loadFirstPage()
         conversationService.onRequest = { await gate.wait() }
         sut.prefetchNextPageIfNeeded(currentConversation: try XCTUnwrap(sut.conversations.last))
         await yieldUntil { gate.isWaiting }
 
-        let logout = Task { await sut.logout() }
+        let willLogout = Task { [sut] in
+            await sut!.authServiceWillLogout()
+            log.events.append("willLogout returned")
+        }
         await yieldUntil { [unowned self] in !sut.isLoadingNextPage }
-        let isLoggedInBeforeLoadFinished = sessionService.isLoggedIn
+        log.events.append("response released")
         gate.open()
-        await logout.value
+        await willLogout.value
 
-        XCTAssertTrue(isLoggedInBeforeLoadFinished)
-        XCTAssertFalse(sessionService.isLoggedIn)
+        XCTAssertEqual(log.events, ["response released", "willLogout returned"])
         XCTAssertEqual(conversationStorage.savedPages.map(\.isFirstPage), [true])
-    }
-
-    /// Кейс: выход не удался из-за сети, пока грузится первая страница.
-    /// Ожидание: загрузка не прерывается — после ответа страница показана и записана в БД.
-    func test_logout_failure_doesNotCancelLoading() async {
-        let gate = Gate()
-        conversationService.stubbedPages = [.success(ConversationsPage(conversations: [.singleStub], hasNext: false))]
-        conversationService.onRequest = { await gate.wait() }
-        networkService.stubbedResult = .failure(NetworkError.transport(URLError(.notConnectedToInternet)))
-        let load = Task { await sut.loadFirstPage() }
-        await yieldUntil { gate.isWaiting }
-
-        await sut.logout()
-        gate.open()
-        await load.value
-
-        XCTAssertEqual(sut.conversations.map(\.id), [Conversation.singleStub.id])
-        XCTAssertEqual(conversationStorage.savedPages.count, 1)
     }
 
     // MARK: - Helpers

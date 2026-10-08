@@ -5,7 +5,7 @@
 
 import SwiftUI
 
-/// Экран профиля текущего пользователя: аватар, имя, логин и идентификатор.
+/// Экран профиля текущего пользователя: аватар, имя, логин, идентификатор и выход из аккаунта.
 /// Открывается внутри `NavigationStack` списка чатов. Нажатие на пустой аватар предлагает выбрать фото.
 struct ProfileView: View {
     @State private var viewModel: ProfileViewModel
@@ -24,6 +24,7 @@ struct ProfileView: View {
                 )
                 ProfileDetailsView(profile: profile)
             }
+            ProfileLogoutView(isLoggingOut: viewModel.isLoggingOut, onTap: viewModel.didTapLogout)
         }
         .navigationTitle(ProfileStrings.title)
         .navigationBarTitleDisplayMode(.inline)
@@ -43,6 +44,10 @@ struct ProfileView: View {
             Button(CommonStrings.ok, role: .cancel) {}
         } message: { message in
             Text(message)
+        }
+        .alert(ProfileStrings.logoutConfirmationTitle, isPresented: $viewModel.isLogoutConfirmationPresented) {
+            Button(ProfileStrings.logoutCancel, role: .cancel) {}
+            Button(ProfileStrings.logout, role: .destructive, action: viewModel.didTapConfirmLogout)
         }
     }
 }

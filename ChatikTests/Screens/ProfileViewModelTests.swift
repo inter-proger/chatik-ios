@@ -14,6 +14,7 @@ final class ProfileViewModelTests: XCTestCase {
     private var imageFileStore: ImageFileStoreMock!
     private var userDefaultsService: UserDefaultsServiceMock!
     private var sessionService: SessionService!
+    private var authService: AuthServiceMock!
     private var sut: ProfileViewModel!
 
     override func setUp() async throws {
@@ -24,6 +25,7 @@ final class ProfileViewModelTests: XCTestCase {
         userDefaultsService = UserDefaultsServiceMock(currentUser: storedUser)
         sessionService = SessionService(userDefaultsService: userDefaultsService, localStorageCleaner: LocalStorageCleanerMock())
         await sessionService.restore()
+        authService = AuthServiceMock()
         sut = makeSUT(isCameraAvailable: true)
     }
 
@@ -33,6 +35,7 @@ final class ProfileViewModelTests: XCTestCase {
             filesService: filesService,
             imageFileStore: imageFileStore,
             sessionService: sessionService,
+            authService: authService,
             isCameraAvailable: isCameraAvailable
         )
     }
@@ -369,4 +372,70 @@ final class ProfileViewModelTests: XCTestCase {
         XCTAssertEqual(imageFileStore.removedFiles, [ignored, .stub])
     }
 
+    // MARK: - Выход
+
+    /// Кейс: нажатие на кнопку «Выйти».
+    /// Ожидание: показан попап подтверждения, сам выход не запускается.
+    func test_didTapLogout_presentsConfirmation() {
+        sut.didTapLogout()
+
+        XCTAssertTrue(sut.isLogoutConfirmationPresented)
+        XCTAssertEqual(authService.logoutCallCount, 0)
+    }
+
+    /// Кейс: нажатие на кнопку «Выйти», пока выход уже выполняется.
+    /// Ожидание: повторный попап не показывается.
+    func test_didTapLogout_whileLoggingOut_doesNotPresentConfirmation() async {
+        let sut: ProfileViewModel = sut
+        var isPresentedDuringLogout = true
+        authService.onRequest = {
+            sut.didTapLogout()
+            isPresentedDuringLogout = sut.isLogoutConfirmationPresented
+        }
+
+        await sut.logout()
+
+        XCTAssertFalse(isPresentedDuringLogout)
+    }
+
+    /// Кейс: подтверждение в попапе.
+    /// Ожидание: выход запущен через сервис авторизации.
+    func test_confirmLogout_startsLogout() async {
+        sut.didTapLogout()
+
+        sut.didTapConfirmLogout()
+        await yieldUntil { [unowned self] in authService.logoutCallCount == 1 }
+
+        XCTAssertEqual(authService.logoutCallCount, 1)
+    }
+
+    /// Кейс: подтверждение в попапе, пока выход уже выполняется.
+    /// Ожидание: повторный выход не запускается — даже если дать ему время начаться.
+    func test_confirmLogout_whileLoggingOut_doesNotStartAgain() async {
+        let sut: ProfileViewModel = sut
+        let repeatedLogout = expectation(description: "Повторный выход")
+        repeatedLogout.isInverted = true
+        authService.onRequest = { [unowned self] in
+            authService.onRequest = { repeatedLogout.fulfill() }
+            sut.didTapConfirmLogout()
+        }
+
+        await sut.logout()
+        await fulfillment(of: [repeatedLogout], timeout: 0.2)
+
+        XCTAssertEqual(authService.logoutCallCount, 1)
+    }
+
+    /// Кейс: выход выполняется.
+    /// Ожидание: во время выхода поднят флаг `isLoggingOut`, после — снят.
+    func test_logout_togglesLoggingOutFlag() async {
+        let sut: ProfileViewModel = sut
+        var isLoggingOutDuringRequest = false
+        authService.onRequest = { isLoggingOutDuringRequest = sut.isLoggingOut }
+
+        await sut.logout()
+
+        XCTAssertTrue(isLoggingOutDuringRequest)
+        XCTAssertFalse(sut.isLoggingOut)
+    }
 }

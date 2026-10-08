@@ -41,10 +41,9 @@ enum PreviewDependencies {
     }
 
     /// ViewModel списка чатов над моками.
-    /// - Parameter logoutResult: чем отвечает сервис авторизации на выход.
-    static func chatListViewModel(logoutResult: Result<Void, Error> = .success(())) -> ChatListViewModel {
+    static func chatListViewModel() -> ChatListViewModel {
         ChatListViewModel(
-            authService: AuthServicePreviewMock(logoutResult: logoutResult),
+            authService: AuthServicePreviewMock(),
             sessionService: sessionService,
             conversationService: ConversationServicePreviewMock(userCache: userCache),
             conversationStorage: ConversationStorageService(container: storageContainer),
@@ -115,10 +114,19 @@ enum PreviewDependencies {
             filesService: FilesServicePreviewMock(),
             imageFileStore: ImageFileStore(),
             sessionService: sessionService,
+            authService: makeAuthService(observers: [sessionService]),
             // Как в приложении: на симуляторе камеры нет, и «Сделать фото» предлагаться не должно —
             // `UIImagePickerController` с `.camera` без камеры падает.
             isCameraAvailable: UIImagePickerController.isSourceTypeAvailable(.camera)
         )
+    }
+
+    /// Мок сервиса авторизации с подписанными наблюдателями — выход в превью ведёт себя как в приложении.
+    /// - Parameter observers: наблюдатели выхода в порядке подписки.
+    private static func makeAuthService(observers: [AuthServiceObserver]) -> AuthServicePreviewMock {
+        let authService = AuthServicePreviewMock()
+        observers.forEach(authService.addObserver)
+        return authService
     }
 }
 
@@ -300,18 +308,18 @@ final class ProfileServicePreviewMock: ProfileServiceProtocol {
 }
 
 /// Мок сервиса авторизации для превью: отвечает заданным результатом с задержкой, чтобы было видно состояние загрузки.
+/// Выход всегда успешен и оповещает наблюдателей так же, как настоящий сервис (`AuthServiceObservers`).
+@MainActor
 final class AuthServicePreviewMock: AuthServiceProtocol {
     private let authResult: Result<User, Error>
-    private let logoutResult: Result<Void, Error>
     private let delay: Duration
+    private let observers = AuthServiceObservers()
 
     init(
         authResult: Result<User, Error> = .success(User(userId: 1, login: "ivan", name: "Иван", avatar: nil)),
-        logoutResult: Result<Void, Error> = .success(()),
         delay: Duration = .seconds(1.5)
     ) {
         self.authResult = authResult
-        self.logoutResult = logoutResult
         self.delay = delay
     }
 
@@ -325,9 +333,24 @@ final class AuthServicePreviewMock: AuthServiceProtocol {
         return try authResult.get()
     }
 
-    func logout() async throws {
-        try await Task.sleep(for: delay)
-        try logoutResult.get()
+    /// Выход с задержкой вместо запроса.
+    func logout() async {
+        await observers.performLogout(reason: .userInitiated) { [delay] in
+            try? await Task.sleep(for: delay)
+        }
+    }
+
+    /// Истечение сессии без задержки — как в настоящем сервисе, запроса нет.
+    func expireSession() {
+        Task { await observers.performLogout(reason: .sessionExpired) {} }
+    }
+
+    func addObserver(_ observer: AuthServiceObserver) {
+        observers.add(observer)
+    }
+
+    func removeObserver(_ observer: AuthServiceObserver) {
+        observers.remove(observer)
     }
 }
 

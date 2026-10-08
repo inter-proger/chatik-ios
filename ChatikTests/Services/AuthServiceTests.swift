@@ -6,13 +6,16 @@
 import XCTest
 @testable import Chatik
 
+@MainActor
 final class AuthServiceTests: XCTestCase {
     private var networkService: NetworkServiceMock!
+    private var log: EventLog!
     private var sut: AuthService!
 
-    override func setUp() {
-        super.setUp()
+    override func setUp() async throws {
+        try await super.setUp()
         networkService = NetworkServiceMock()
+        log = EventLog()
         sut = AuthService(networkService: networkService)
     }
 
@@ -58,42 +61,139 @@ final class AuthServiceTests: XCTestCase {
         }
     }
 
-    /// Кейс: успешный выход.
-    /// Ожидание: запрос на /auth/logout и однократная очистка cookie сессии.
-    func test_logout_success_clearsSessionCookies() async throws {
+    // MARK: - Выход
+
+    /// Кейс: выход; сервер отвечает успехом / «не авторизован» / транспортной ошибкой.
+    /// Ожидание: при любом ответе ушёл запрос на /auth/logout, cookie сессии очищены, наблюдатель узнал о выходе
+    /// по кнопке.
+    func test_logout_anyResponse_clearsCookiesAndNotifiesObservers() async {
+        let results: [Result<Any, Error>] = [
+            .success(EmptyResponse()),
+            .failure(NetworkError.api(code: NetworkError.Code.unauthorized)),
+            .failure(NetworkError.transport(URLError(.notConnectedToInternet))),
+        ]
+
+        for result in results {
+            let caseNetworkService = NetworkServiceMock()
+            caseNetworkService.stubbedResult = result
+            let caseLog = EventLog()
+            let observer = AuthServiceObserverMock(log: caseLog)
+            let caseSUT = AuthService(networkService: caseNetworkService)
+            caseSUT.addObserver(observer)
+
+            await caseSUT.logout()
+
+            XCTAssertEqual(caseNetworkService.requestedEndpoints.map(\.path), ["/auth/logout"], "\(result)")
+            XCTAssertEqual(caseNetworkService.clearSessionCookiesCallCount, 1, "\(result)")
+            XCTAssertEqual(caseLog.events, ["observer.willLogout", "observer.didLogout"], "\(result)")
+            XCTAssertEqual(observer.reasons, [.userInitiated], "\(result)")
+        }
+    }
+
+    /// Кейс: выход с двумя наблюдателями.
+    /// Ожидание: все наблюдатели в порядке подписки узнают о начале выхода до запроса, а о завершении — после него
+    /// и после очистки cookie.
+    func test_logout_notifiesObserversAroundRequestInSubscriptionOrder() async {
+        let first = AuthServiceObserverMock(name: "first", log: log)
+        let second = AuthServiceObserverMock(name: "second", log: log)
+        sut.addObserver(first)
+        sut.addObserver(second)
+        networkService.stubbedResult = .success(EmptyResponse())
+        networkService.onRequest = { [unowned self] in log.events.append("request") }
+
+        await sut.logout()
+
+        XCTAssertEqual(log.events, ["first.willLogout", "second.willLogout", "request", "first.didLogout", "second.didLogout"])
+    }
+
+    /// Кейс: наблюдатель подписан дважды.
+    /// Ожидание: каждое уведомление он получает один раз.
+    func test_addObserver_twice_notifiesOnce() async {
+        let observer = AuthServiceObserverMock(log: log)
+        sut.addObserver(observer)
+        sut.addObserver(observer)
         networkService.stubbedResult = .success(EmptyResponse())
 
-        try await sut.logout()
+        await sut.logout()
 
-        XCTAssertEqual(networkService.requestedEndpoints.first?.path, "/auth/logout")
-        XCTAssertEqual(networkService.clearSessionCookiesCallCount, 1)
+        XCTAssertEqual(log.events, ["observer.willLogout", "observer.didLogout"])
     }
 
-    /// Кейс: сервер ответил «не авторизован» при выходе (сессия уже недействительна).
-    /// Ожидание: cookie сессии очищены локально, ошибка проброшена наружу.
-    func test_logout_unauthorized_clearsCookiesAndRethrows() async {
-        networkService.stubbedResult = .failure(NetworkError.api(code: 2003))
+    /// Кейс: наблюдатель отписан до выхода.
+    /// Ожидание: уведомлений он не получает.
+    func test_removeObserver_stopsNotifications() async {
+        let observer = AuthServiceObserverMock(log: log)
+        sut.addObserver(observer)
+        sut.removeObserver(observer)
+        networkService.stubbedResult = .success(EmptyResponse())
 
-        do {
-            try await sut.logout()
-            XCTFail("Expected error")
-        } catch {
-            XCTAssertEqual(error as? NetworkError, .api(code: 2003))
-        }
-        XCTAssertEqual(networkService.clearSessionCookiesCallCount, 1)
+        await sut.logout()
+
+        XCTAssertTrue(log.events.isEmpty)
     }
 
-    /// Кейс: сетевая ошибка при выходе (нет соединения).
-    /// Ожидание: cookie сессии не тронуты, чтобы повторить выход позже; ошибка проброшена.
-    func test_logout_transportError_keepsCookies() async {
-        networkService.stubbedResult = .failure(NetworkError.transport(URLError(.notConnectedToInternet)))
+    /// Кейс: наблюдатель уничтожен, не отписавшись.
+    /// Ожидание: сервис его не удерживает, выход проходит без уведомлений.
+    func test_addObserver_holdsObserverWeakly() async {
+        var observer: AuthServiceObserverMock? = AuthServiceObserverMock(log: log)
+        weak var weakObserver = observer
+        sut.addObserver(observer!)
+        observer = nil
+        networkService.stubbedResult = .success(EmptyResponse())
 
-        do {
-            try await sut.logout()
-            XCTFail("Expected error")
-        } catch {
-            XCTAssertEqual(error as? NetworkError, .transport(URLError(.notConnectedToInternet)))
+        await sut.logout()
+
+        XCTAssertNil(weakObserver)
+        XCTAssertTrue(log.events.isEmpty)
+    }
+
+    /// Кейс: во время запроса выхода выход вызван ещё раз.
+    /// Ожидание: повторный выход сразу возвращается — запрос один, каждое уведомление наблюдатель получил один раз.
+    func test_logout_whileLoggingOut_isIgnored() async {
+        let observer = AuthServiceObserverMock(log: log)
+        sut.addObserver(observer)
+        networkService.stubbedResult = .success(EmptyResponse())
+        networkService.onRequest = { [unowned self] in await sut.logout() }
+
+        await sut.logout()
+
+        XCTAssertEqual(networkService.requestedEndpoints.count, 1)
+        XCTAssertEqual(log.events, ["observer.willLogout", "observer.didLogout"])
+    }
+
+    // MARK: - Истечение сессии
+
+    /// Кейс: сессия истекла на сервере.
+    /// Ожидание: запроса нет, cookie очищены, наблюдатель прошёл обе фазы и узнал причину — истечение.
+    func test_expireSession_notifiesObserversWithoutRequest() async {
+        let observer = AuthServiceObserverMock(log: log)
+        sut.addObserver(observer)
+
+        sut.expireSession()
+        await yieldUntil { observer.reasons == [.sessionExpired] }
+
+        XCTAssertTrue(networkService.requestedEndpoints.isEmpty)
+        XCTAssertEqual(networkService.clearSessionCookiesCallCount, 1)
+        XCTAssertEqual(log.events, ["observer.willLogout", "observer.didLogout"])
+    }
+
+    /// Кейс: во время выхода по кнопке пришло истечение сессии (2003 от отменяемого запроса).
+    /// Ожидание: истечение ничего не делает — наблюдатель получил только уведомления выхода по кнопке.
+    func test_expireSession_whileLoggingOut_isIgnored() async {
+        let observer = AuthServiceObserverMock(log: log)
+        sut.addObserver(observer)
+        networkService.stubbedResult = .success(EmptyResponse())
+        networkService.onRequest = { [unowned self] in
+            sut.expireSession()
+            await Task.yield()
         }
-        XCTAssertEqual(networkService.clearSessionCookiesCallCount, 0)
+
+        await sut.logout()
+        for _ in 0..<10 {
+            await Task.yield()
+        }
+
+        XCTAssertEqual(log.events, ["observer.willLogout", "observer.didLogout"])
+        XCTAssertEqual(observer.reasons, [.userInitiated])
     }
 }

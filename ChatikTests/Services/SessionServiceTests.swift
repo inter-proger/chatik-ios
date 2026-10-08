@@ -228,6 +228,48 @@ final class SessionServiceTests: XCTestCase {
         XCTAssertFalse(sut.isExpired)
         XCTAssertFalse(sut.isLoggedIn)
     }
+
+    // MARK: - Наблюдение за выходом
+
+    /// Кейс: открытая сессия; `AuthService` сообщил о завершённом выходе по кнопке.
+    /// Ожидание: сессия завершена, пользователь удалён из `UserDefaults`, флаг «истекла» не поднят.
+    func test_authServiceDidLogout_userInitiated_endsSession() async {
+        let (sut, defaults) = await makeRestoredSUT(storedUser: user)
+
+        await sut.authServiceDidLogout(reason: .userInitiated)
+
+        let stored = await defaults.currentUser()
+        XCTAssertFalse(sut.isLoggedIn)
+        XCTAssertNil(stored)
+        XCTAssertFalse(sut.isExpired)
+    }
+
+    /// Кейс: открытая сессия; `AuthService` сообщил, что сессия истекла на сервере.
+    /// Ожидание: сессия завершена, пользователь удалён из `UserDefaults`, поднят флаг «истекла».
+    func test_authServiceDidLogout_sessionExpired_expiresSession() async {
+        let (sut, defaults) = await makeRestoredSUT(storedUser: user)
+
+        await sut.authServiceDidLogout(reason: .sessionExpired)
+
+        let stored = await defaults.currentUser()
+        XCTAssertFalse(sut.isLoggedIn)
+        XCTAssertNil(stored)
+        XCTAssertTrue(sut.isExpired)
+    }
+
+    /// Кейс: сессия подписана на `AuthService`, запрос выхода не дошёл до сервера (нет сети).
+    /// Ожидание: устройство всё равно разлогинено.
+    func test_logoutThroughAuthService_transportError_endsSession() async {
+        let (sut, _) = await makeRestoredSUT(storedUser: user)
+        let networkService = NetworkServiceMock()
+        networkService.stubbedResult = .failure(NetworkError.transport(URLError(.notConnectedToInternet)))
+        let authService = AuthService(networkService: networkService)
+        authService.addObserver(sut)
+
+        await authService.logout()
+
+        XCTAssertFalse(sut.isLoggedIn)
+    }
 }
 
 /// Значение, снятое из `@Sendable`-замыкания `withObservationTracking`.

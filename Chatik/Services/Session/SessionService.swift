@@ -7,7 +7,7 @@ import Foundation
 import os
 
 @MainActor
-protocol SessionServiceProtocol: AnyObject {
+protocol SessionServiceProtocol: AuthServiceObserver {
     /// Залогиненный пользователь. `nil` — сессии нет (или она ещё не восстановлена, см. `isRestored`).
     var currentUser: User? { get }
     var isLoggedIn: Bool { get }
@@ -58,9 +58,9 @@ final class SessionService: SessionServiceProtocol {
     }
 
     /// Очищает локальную БД, сохраняет пользователя и открывает сессию.
-    /// БД уже очищалась при завершении прошлой сессии, но при истечении сессии (2003) экраны не дожидаются
-    /// своих записей в БД — запись, начатая до очистки, могла завершиться после неё. Повторная очистка при входе
-    /// гарантирует, что новый пользователь не увидит данных прежнего.
+    /// БД уже очищалась при завершении прошлой сессии, но сессию можно завершить и в обход `AuthService`
+    /// (`end()` / `expire()` напрямую), без ожидания записей экранов. Повторная очистка при входе гарантирует,
+    /// что новый пользователь не увидит данных прежнего.
     /// - Parameter user: пользователь из ответа `/auth/signup` или `/auth/login`.
     func start(user: User) async {
         await clearLocalStorage()
@@ -98,6 +98,16 @@ final class SessionService: SessionServiceProtocol {
 
     func acknowledgeExpiration() {
         isExpired = false
+    }
+
+    /// Выход из аккаунта завершён (`AuthServiceObserver`): сессия завершается — при любом ответе сервера на выход.
+    /// Истечение сессии на сервере поднимает `isExpired`, чтобы экран авторизации объяснил причину.
+    /// - Parameter reason: выход по кнопке или истечение сессии.
+    func authServiceDidLogout(reason: LogoutReason) async {
+        switch reason {
+        case .userInitiated: await end()
+        case .sessionExpired: await expire()
+        }
     }
 
     /// Очищает локальную БД. Ошибка не блокирует ни вход, ни выход, но логируется.

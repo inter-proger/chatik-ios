@@ -6,7 +6,8 @@
 import Foundation
 
 /// Состояние экрана профиля текущего пользователя. Показывает пользователя из сессии сразу,
-/// а при открытии и pull-to-refresh обновляет его с сервера. Позволяет установить аватар из галереи или с камеры.
+/// а при открытии и pull-to-refresh обновляет его с сервера. Позволяет установить аватар из галереи или с камеры
+/// и выйти из аккаунта.
 ///
 /// Здесь — хранимое состояние, зависимости, `init` и действия, которые мутируют состояние.
 /// Обработчики выбора фото вынесены в `ProfileViewModel+AvatarPicking`.
@@ -22,6 +23,10 @@ final class ProfileViewModel {
     var isAvatarSourcesPresented = false
     /// Источник, чей пикер сейчас на экране. `nil` — пикер скрыт.
     var presentedAvatarSource: AvatarSource?
+    /// `true`, пока показан попап подтверждения выхода.
+    var isLogoutConfirmationPresented = false
+    /// `true`, пока выполняется запрос выхода.
+    private(set) var isLoggingOut = false
     /// Текст ошибки для всплывающего сообщения. `nil` — сообщение скрыто.
     var errorMessage: String?
 
@@ -33,24 +38,28 @@ final class ProfileViewModel {
     /// Временные файлы для загрузки; нужен и `ProfileViewModel+AvatarPicking`, поэтому не `private`.
     let imageFileStore: ImageFileStoreProtocol
     private let sessionService: SessionServiceProtocol
+    private let authService: AuthServiceProtocol
 
     /// - Parameters:
     ///   - profileService: сервис профиля.
     ///   - filesService: сервис загрузки файлов — для отправки изображения аватара.
     ///   - imageFileStore: временные файлы изображений для загрузки.
     ///   - sessionService: сервис сессии; отсюда берётся текущий пользователь, сюда пишется обновлённый.
+    ///   - authService: сервис авторизации — для выхода из аккаунта.
     ///   - isCameraAvailable: есть ли на устройстве камера; без неё вариант «Сделать фото» не предлагается.
     init(
         profileService: ProfileServiceProtocol,
         filesService: FilesServiceProtocol,
         imageFileStore: ImageFileStoreProtocol,
         sessionService: SessionServiceProtocol,
+        authService: AuthServiceProtocol,
         isCameraAvailable: Bool
     ) {
         self.profileService = profileService
         self.filesService = filesService
         self.imageFileStore = imageFileStore
         self.sessionService = sessionService
+        self.authService = authService
         avatarSources = isCameraAvailable ? [.gallery, .camera] : [.gallery]
     }
 
@@ -135,5 +144,30 @@ final class ProfileViewModel {
     func didSendAvatarBytes(_ progress: Double) {
         guard let current = avatarUploadProgress else { return }
         avatarUploadProgress = max(current, progress)
+    }
+
+    // MARK: - Выход
+
+    /// Обработчик кнопки «Выйти»: показывает попап подтверждения, если выход ещё не выполняется.
+    func didTapLogout() {
+        guard !isLoggingOut else { return }
+        isLogoutConfirmationPresented = true
+    }
+
+    /// Обработчик подтверждения в попапе: запускает выход. Отмена ничего не делает — попап
+    /// закрывается самим `Alert` через привязку `isLogoutConfirmationPresented`.
+    func didTapConfirmLogout() {
+        guard !isLoggingOut else { return }
+        Task { await logout() }
+    }
+
+    /// Выходит из аккаунта. Выход не может не удаться: устройство разлогинивается при любом ответе сервера,
+    /// а сессия, WebSocket и список чатов реагируют на него сами — как наблюдатели `AuthService`.
+    /// Приложение переключится на экран авторизации.
+    func logout() async {
+        isLoggingOut = true
+        defer { isLoggingOut = false }
+
+        await authService.logout()
     }
 }

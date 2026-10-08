@@ -5,8 +5,8 @@
 
 import SwiftUI
 
-/// Экран списка чатов: список переписок с бесшовной подгрузкой страниц, кнопки профиля,
-/// создания диалога и выхода.
+/// Экран списка чатов: список переписок с бесшовной подгрузкой страниц, кнопки профиля
+/// и создания диалога. Заголовок всегда компактный — по центру панели навигации.
 struct ChatListView: View {
     @State private var viewModel: ChatListViewModel
 
@@ -25,12 +25,12 @@ struct ChatListView: View {
         .refreshable { await viewModel.loadFirstPage() }
         .task { await viewModel.loadFirstPage() }
         .navigationTitle(ChatListStrings.title)
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 profileButton
             }
-            ToolbarItemGroup(placement: .topBarTrailing) {
-                logoutButton
+            ToolbarItem(placement: .topBarTrailing) {
                 createMenu
             }
         }
@@ -38,10 +38,6 @@ struct ChatListView: View {
             Button(CommonStrings.ok, role: .cancel) {}
         } message: { message in
             Text(message)
-        }
-        .alert(ChatListStrings.logoutConfirmationTitle, isPresented: $viewModel.isLogoutConfirmationPresented) {
-            Button(ChatListStrings.logoutCancel, role: .cancel) {}
-            Button(ChatListStrings.logout, role: .destructive, action: viewModel.didTapConfirmLogout)
         }
     }
 
@@ -72,16 +68,6 @@ struct ChatListView: View {
             Image(systemName: "plus")
         }
         .accessibilityLabel(ChatListStrings.create)
-    }
-
-    /// Кнопка выхода; во время запроса заменяется прелоадером.
-    @ViewBuilder
-    private var logoutButton: some View {
-        if viewModel.isLoggingOut {
-            ProgressView()
-        } else {
-            Button(ChatListStrings.logout, action: viewModel.didTapLogout)
-        }
     }
 }
 

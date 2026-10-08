@@ -1,0 +1,16 @@
+//
+//  Local.xcconfig.example
+//  Chatik
+//
+//  Шаблон локальных настроек сборки. Скопируйте в Local.xcconfig (он в .gitignore) и раскомментируйте нужное:
+//  значения переопределяют Base.xcconfig только на этой машине.
+//
+
+// Команда подписи для запуска на своём устройстве.
+// DEVELOPMENT_TEAM = XXXXXXXXXX
+
+// Свой bundle id, если основной занят другой командой.
+// PRODUCT_BUNDLE_IDENTIFIER = me.Chatik
+
+// Сервер на Mac в локальной сети — для запуска на устройстве (localhost там — само устройство).
+// API_BASE_URL = http:/$()/my-mac.local:8080

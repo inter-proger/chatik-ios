@@ -20,9 +20,9 @@ enum RealtimeEvent: Equatable, Sendable {
 }
 
 @MainActor
-protocol RealtimeServiceProtocol: AnyObject {
+protocol RealtimeServiceProtocol: AuthServiceObserver {
     /// Начинает работу с `/global/start`: подключается к WebSocket или, если пользователь не авторизован,
-    /// закрывает соединение. Прежнее соединение закрывается.
+    /// закрывает соединение. Прежнее соединение закрывается. Во время выхода из аккаунта ничего не делает.
     func start()
     /// Закрывает соединение и прекращает переподключения; возвращается, когда начатая обработка событий
     /// (запись в БД) закончена.
@@ -92,6 +92,7 @@ final class RealtimeService: RealtimeServiceProtocol {
     private let globalService: GlobalServiceProtocol
     private let connectionFactory: WebSocketConnectionFactoryProtocol
     private let sessionService: SessionServiceProtocol
+    private let authService: AuthServiceProtocol
     private let conversationStorage: ConversationStorageServiceProtocol
     private let messageStorage: MessageStorageServiceProtocol
     private let userCache: UserCacheServiceProtocol
@@ -103,11 +104,16 @@ final class RealtimeService: RealtimeServiceProtocol {
     /// Идущая задержка перед переподключением; появление сети её прерывает.
     private var reconnectDelayTask: Task<Void, Never>?
     private var subscribers: [UUID: AsyncStream<RealtimeEvent>.Continuation] = [:]
+    /// `true` между `authServiceWillLogout` и `authServiceDidLogout`: `start()` в это время не подключается —
+    /// иначе возврат из фона во время выхода открыл бы соединение по ещё живой cookie, и закрытие 4003 после
+    /// выхода выглядело бы как истечение сессии.
+    private var isLoggingOut = false
 
     /// - Parameters:
     ///   - globalService: источник данных подключения.
     ///   - connectionFactory: открывает WebSocket-соединения.
-    ///   - sessionService: текущий пользователь; при `null` из `/global/start` сессия завершается через него.
+    ///   - sessionService: текущий пользователь.
+    ///   - authService: при `null` из `/global/start` сессия завершается через него — как истёкшая.
     ///   - conversationStorage: куда пишутся переписки из событий.
     ///   - messageStorage: куда пишутся сообщения из событий.
     ///   - userCache: загружает пользователей из `userIds` событий.
@@ -119,6 +125,7 @@ final class RealtimeService: RealtimeServiceProtocol {
         globalService: GlobalServiceProtocol,
         connectionFactory: WebSocketConnectionFactoryProtocol,
         sessionService: SessionServiceProtocol,
+        authService: AuthServiceProtocol,
         conversationStorage: ConversationStorageServiceProtocol,
         messageStorage: MessageStorageServiceProtocol,
         userCache: UserCacheServiceProtocol,
@@ -130,6 +137,7 @@ final class RealtimeService: RealtimeServiceProtocol {
         self.globalService = globalService
         self.connectionFactory = connectionFactory
         self.sessionService = sessionService
+        self.authService = authService
         self.conversationStorage = conversationStorage
         self.messageStorage = messageStorage
         self.userCache = userCache
@@ -142,7 +150,9 @@ final class RealtimeService: RealtimeServiceProtocol {
     // MARK: - Управление
 
     /// Отменяет прежнее соединение и, дождавшись его закрытия, начинает новое с `/global/start`.
+    /// Во время выхода из аккаунта ничего не делает: подключаться после него не с чем.
     func start() {
+        guard !isLoggingOut else { return }
         let previous = runTask
         previous?.cancel()
         runTask = Task {
@@ -158,6 +168,21 @@ final class RealtimeService: RealtimeServiceProtocol {
         runTask = nil
         task?.cancel()
         await task?.value
+    }
+
+    /// Выход из аккаунта начинается (`AuthServiceObserver`): соединение закрывается до запроса выхода — сервер закроет
+    /// соединения сессии с кодом 4003, и по ещё текущему соединению это выглядело бы как истечение сессии.
+    /// Закрытие дожидается записей событий в БД — они не попадут туда после очистки. До конца выхода `start()`
+    /// не подключается; заново работа с сервером начнётся при следующем входе.
+    func authServiceWillLogout() async {
+        isLoggingOut = true
+        await stop()
+    }
+
+    /// Выход из аккаунта завершён (`AuthServiceObserver`): `start()` снова работает.
+    /// - Parameter reason: причина выхода; на соединение не влияет.
+    func authServiceDidLogout(reason: LogoutReason) async {
+        isLoggingOut = false
     }
 
     /// Появилась сеть: если идёт задержка перед переподключением — переподключиться сразу.
@@ -254,13 +279,14 @@ final class RealtimeService: RealtimeServiceProtocol {
         }
     }
 
-    /// `/global/start`: `null` — пользователь не авторизован; если локально сессия ещё открыта, она завершается.
+    /// `/global/start`: `null` — пользователь не авторизован; если локально сессия ещё открыта, она завершается
+    /// как истёкшая через `AuthService` (выход идёт отдельной задачей: он сам дожидается остановки этого цикла).
     /// Ошибка запроса при открытой сессии — повод переподключиться с задержкой.
     private func connectInfoFromGlobalStart() async -> ConnectInfoResult {
         do {
             guard let info = try await globalService.start() else {
                 if sessionService.isLoggedIn {
-                    await sessionService.expire()
+                    authService.expireSession()
                 }
                 return .finished(.notAuthorized)
             }

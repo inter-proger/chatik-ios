@@ -1,5 +1,6 @@
-# Секреты
+# Секреты и локальные настройки сборки
 Chatik/PrivateConfig.swift
+Config/Local.xcconfig
 
 # Xcode
 xcuserdata/

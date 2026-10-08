@@ -1,0 +1,17 @@
+//
+//  Base.xcconfig
+//  Chatik
+//
+//  Общие настройки сборки приложения. Машинозависимые значения (команда подписи, свой bundle id,
+//  адрес сервера в локальной сети) переопределяются в Local.xcconfig — он в .gitignore,
+//  шаблон: Local.xcconfig.example.
+//
+
+PRODUCT_BUNDLE_IDENTIFIER = mihateam.Chatik
+DEVELOPMENT_TEAM =
+
+// Адрес API; попадает в Info.plist (`APIBaseURL`) и читается `AppConfig`.
+// `/$()/` — экранирование: `//` в xcconfig начинает комментарий.
+API_BASE_URL = http:/$()/localhost:8080
+
+#include? "Local.xcconfig"

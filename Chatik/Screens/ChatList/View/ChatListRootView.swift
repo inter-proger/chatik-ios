@@ -37,6 +37,7 @@ struct ChatListRootView: View {
                             filesService: DIContainer.shared.filesService,
                             imageFileStore: DIContainer.shared.imageFileStore,
                             sessionService: DIContainer.shared.sessionService,
+                            authService: DIContainer.shared.authService,
                             isCameraAvailable: UIImagePickerController.isSourceTypeAvailable(.camera)
                         ))
                     case let .conversation(conversation):

@@ -30,6 +30,14 @@ struct AuthView: View {
             .padding(.top, 48)
         }
         .scrollDismissesKeyboard(.interactively)
+        // Тап по пустому месту или тексту скрывает клавиатуру. Жесты кнопок, ссылок и полей вложены глубже
+        // и срабатывают вместо этого. Фон за ScrollView ловит тапы и ниже контента, куда сам ScrollView их не отдаёт.
+        .background {
+            Color.clear
+                .contentShape(.rect)
+                .onTapGesture(perform: UIApplication.shared.dismissKeyboard)
+        }
+        .onTapGesture(perform: UIApplication.shared.dismissKeyboard)
         .animation(.default, value: viewModel.isSignup)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -60,9 +68,15 @@ struct AuthView: View {
         }
     }
 
+    /// Скрывает клавиатуру сразу по нажатию, ещё до начала запроса, и запускает регистрацию / вход.
+    private func didTapPrimaryButton() {
+        UIApplication.shared.dismissKeyboard()
+        viewModel.didTapPrimaryButton()
+    }
+
     /// Кнопка действия. Во время запроса текст скрывается (сохраняя размер кнопки), поверх — прелоадер.
     private var primaryButton: some View {
-        Button(action: viewModel.didTapPrimaryButton) {
+        Button(action: didTapPrimaryButton) {
             Text(viewModel.primaryButtonTitle)
                 .font(.headline)
                 .opacity(viewModel.isLoading ? 0 : 1)

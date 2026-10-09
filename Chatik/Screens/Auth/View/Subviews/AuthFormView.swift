@@ -9,18 +9,20 @@ import SwiftUI
 struct AuthFormView: View {
     @Bindable var viewModel: AuthViewModel
     @FocusState private var focusedField: AuthField?
+    /// Фокус поля пароля: его внутренними полями управляет `SecureInputField`.
+    @State private var isPasswordFocused = false
 
     var body: some View {
         VStack(spacing: 12) {
             if viewModel.isSignup {
-                AuthFieldContainer(state: viewModel.nameFieldState) {
+                AuthFieldContainer(state: viewModel.nameFieldState, onTap: { focusedField = .name }) {
                     TextField(AuthStrings.fieldName, text: $viewModel.name)
                         .textContentType(.name)
                         .focused($focusedField, equals: .name)
                 }
             }
 
-            AuthFieldContainer(state: viewModel.loginFieldState) {
+            AuthFieldContainer(state: viewModel.loginFieldState, onTap: { focusedField = .login }) {
                 TextField(AuthStrings.fieldLogin, text: $viewModel.login)
                     .textContentType(.username)
                     .textInputAutocapitalization(.never)
@@ -28,19 +30,22 @@ struct AuthFormView: View {
                     .focused($focusedField, equals: .login)
             }
 
-            AuthFieldContainer(state: viewModel.passwordFieldState) {
+            AuthFieldContainer(state: viewModel.passwordFieldState, onTap: { isPasswordFocused = true }) {
                 SecureInputField(
                     placeholder: AuthStrings.fieldPassword,
                     text: $viewModel.password,
                     isVisible: viewModel.isPasswordVisible,
                     onToggleVisibility: viewModel.togglePasswordVisibility,
-                    onFocusChange: handlePasswordFocusChange
+                    isFocused: $isPasswordFocused
                 )
                 .textContentType(viewModel.isSignup ? .newPassword : .password)
             }
         }
         .onChange(of: focusedField) { _, field in
             handleTextFieldFocusChange(field)
+        }
+        .onChange(of: isPasswordFocused) { _, isFocused in
+            handlePasswordFocusChange(isFocused)
         }
     }
 

@@ -10,13 +10,15 @@ import SwiftUI
 /// Оба поля (`SecureField` и `TextField`) существуют одновременно и переключаются прозрачностью —
 /// если заменять их через `if`, SwiftUI создаёт новое view и клавиатура сбрасывается.
 /// При переключении фокус переносится на видимое поле, поэтому клавиатура остаётся открытой.
+///
+/// Фокус наружу отдаётся одним флагом `isFocused`: внутренних полей два, а снаружи важно лишь, редактируется ли пароль.
 struct SecureInputField: View {
     let placeholder: String
     @Binding var text: String
     let isVisible: Bool
     let onToggleVisibility: () -> Void
-    /// Вызывается при получении (`true`) и потере (`false`) фокуса любым из внутренних полей.
-    var onFocusChange: (Bool) -> Void = { _ in }
+    /// `true`, пока в фокусе любое из внутренних полей. Запись `true` ставит фокус на видимое поле, `false` снимает его.
+    @Binding var isFocused: Bool
 
     @FocusState private var focusedField: Field?
 
@@ -49,9 +51,20 @@ struct SecureInputField: View {
         .onChange(of: isVisible) { _, isVisible in
             moveFocusIfNeeded(toPlain: isVisible)
         }
-        .onChange(of: focusedField != nil) { _, isFocused in
-            onFocusChange(isFocused)
+        .onChange(of: focusedField != nil) { _, hasFocus in
+            isFocused = hasFocus
         }
+        .onChange(of: isFocused) { _, isFocused in
+            applyFocus(isFocused)
+        }
+    }
+
+    /// Ставит фокус на видимое поле или снимает его по запросу снаружи. Если состояние уже совпадает, ничего не делает,
+    /// чтобы не перебить фокус, выставленный самим пользователем.
+    /// - Parameter isFocused: `true` — поставить фокус, `false` — снять.
+    private func applyFocus(_ isFocused: Bool) {
+        guard isFocused != (focusedField != nil) else { return }
+        focusedField = isFocused ? (isVisible ? .plain : .secure) : nil
     }
 
     /// Переносит фокус на поле, ставшее видимым, если пользователь в этот момент редактировал пароль.

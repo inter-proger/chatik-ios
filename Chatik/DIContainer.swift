@@ -21,7 +21,6 @@ final class DIContainer {
     let imageFileStore: ImageFileStoreProtocol
     let fileStorage: FileStorageServiceProtocol
     let userStorage: UserStorageServiceProtocol
-    let conversationStorage: ConversationStorageServiceProtocol
     let messageStorage: MessageStorageServiceProtocol
     let messageSendQueue: MessageSendQueueProtocol
     let userDefaultsService: UserDefaultsServiceProtocol
@@ -32,6 +31,10 @@ final class DIContainer {
     let messageTextValidator: MessageTextValidatorProtocol
     let globalService: GlobalServiceProtocol
     let realtimeService: RealtimeServiceProtocol
+    /// Очередь событий WebSocket между соединением и всеми потребителями.
+    let realtimeEventQueue: RealtimeEventQueueProtocol
+    /// Список переписок — единственный, кто пишет переписки в БД.
+    let conversationListService: ConversationListServiceProtocol
     /// Держит наблюдение за сетью, пока жив контейнер: при появлении сети WebSocket переподключается сразу.
     private let networkPathMonitor: NetworkPathMonitor
 
@@ -66,26 +69,34 @@ final class DIContainer {
         actionDispatcher.userCache = userCache
         self.usersService = usersService
         self.userCache = userCache
-        self.conversationService = ConversationService(networkService: networkService)
+        let conversationService = ConversationService(networkService: networkService)
+        self.conversationService = conversationService
         let messageService = MessageService(networkService: networkService)
         self.messageService = messageService
         self.imageFileStore = ImageFileStore()
         self.fileStorage = FileStorageService(container: storageContainer)
         self.userStorage = userStorage
-        let conversationStorage = ConversationStorageService(container: storageContainer)
         let messageStorage = MessageStorageService(container: storageContainer)
-        self.conversationStorage = conversationStorage
         self.messageStorage = messageStorage
         self.signupValidator = SignupValidator()
         self.loginValidator = LoginValidator()
         self.messageTextValidator = MessageTextValidator()
+        let realtimeEventQueue = RealtimeEventQueue()
+        self.realtimeEventQueue = realtimeEventQueue
+        let conversationListService = ConversationListService(
+            conversationService: conversationService,
+            storage: ConversationStorageService(container: storageContainer),
+            eventQueue: realtimeEventQueue,
+            userCache: userCache
+        )
+        self.conversationListService = conversationListService
         let globalService = GlobalService(networkService: networkService)
         let realtimeService = RealtimeService(
             globalService: globalService,
             connectionFactory: URLSessionWebSocketConnectionFactory(),
             sessionService: sessionService,
             authService: authService,
-            conversationStorage: conversationStorage,
+            eventQueue: realtimeEventQueue,
             messageStorage: messageStorage,
             userCache: userCache
         )
@@ -96,12 +107,16 @@ final class DIContainer {
             messageStorage: messageStorage,
             outgoingMessageStorage: OutgoingMessageStorageService(container: storageContainer),
             sessionService: sessionService,
-            realtimeService: realtimeService
+            eventQueue: realtimeEventQueue,
+            positionUpdater: conversationListService
         )
         self.messageSendQueue = messageSendQueue
-        // Соединение и очередь отправки останавливаются в фазе `authServiceWillLogout` (до запроса выхода),
-        // сессия завершается в `authServiceDidLogout` (после него) — от порядка подписки это не зависит.
+        // Соединение, очередь событий, список и очередь отправки останавливаются в фазе `authServiceWillLogout`
+        // (до запроса выхода), сессия завершается в `authServiceDidLogout` (после него) — от порядка подписки
+        // это не зависит.
         authService.addObserver(realtimeService)
+        authService.addObserver(realtimeEventQueue)
+        authService.addObserver(conversationListService)
         authService.addObserver(messageSendQueue)
         authService.addObserver(sessionService)
         self.networkPathMonitor = NetworkPathMonitor { [weak realtimeService] in

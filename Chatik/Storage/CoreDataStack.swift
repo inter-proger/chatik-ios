@@ -12,12 +12,22 @@ enum CoreDataStack {
     /// Модель загружается один раз на процесс и переиспользуется всеми контейнерами: иначе в тестах
     /// несколько моделей претендуют на одни и те же классы Entity.
     private static let model: NSManagedObjectModel = {
-        guard let url = Bundle(for: UserEntity.self).url(forResource: "Chatik", withExtension: "momd"),
-              let model = NSManagedObjectModel(contentsOf: url) else {
+        guard let url = modelURL, let model = NSManagedObjectModel(contentsOf: url) else {
             fatalError("Не найдена модель CoreData Chatik.momd")
         }
         return model
     }()
+
+    private static let modelURL = Bundle(for: UserEntity.self).url(forResource: "Chatik", withExtension: "momd")
+
+    /// Версии модели, в которых серверное время хранилось в секундах (файлы `.mom` внутри `Chatik.momd`).
+    /// Хранилище такой версии после миграции очищается от переписок и сообщений: время в них не переводится
+    /// в миллисекунды, а данные — только кэш сервера и загрузятся заново.
+    private static let secondsModelVersions = ["Chatik", "Chatik 2", "Chatik 3", "Chatik 4", "Chatik 5"]
+
+    /// Сущности с серверным временем, которые очищаются после миграции с версии модели в секундах. Очередь
+    /// отправки (`OutgoingMessageEntity`) и пользователи остаются: их время локальное или не серверное.
+    private static let serverTimeEntityNames = ["ConversationEntity", "MessageEntity"]
 
     /// Создаёт контейнер CoreData.
     /// - Parameter inMemory: `true` — хранилище не пишется на диск (для тестов и превью).
@@ -36,7 +46,13 @@ enum CoreDataStack {
         if let storeURL {
             container.persistentStoreDescriptions.first?.url = storeURL
         }
-        guard let error = loadStores(of: container) else { return container }
+        let needsServerTimeCleanup = storesUseSecondsModel(container)
+        guard let error = loadStores(of: container) else {
+            if needsServerTimeCleanup {
+                clearServerTimeEntities(in: container)
+            }
+            return container
+        }
 
         Logger.storage.error("Не удалось открыть БД, она будет создана заново: \(String(describing: error), privacy: .public)")
         destroyStores(of: container)
@@ -56,6 +72,44 @@ enum CoreDataStack {
             loadError = loadError ?? error
         }
         return loadError
+    }
+
+    /// `true`, если хранилище контейнера уже существует и создано версией модели, в которой серверное время
+    /// хранилось в секундах. Проверяется до открытия: после миграции хранилище уже текущей версии.
+    /// - Parameter container: контейнер, хранилища которого ещё не открыты.
+    private static func storesUseSecondsModel(_ container: NSPersistentContainer) -> Bool {
+        guard let url = container.persistentStoreDescriptions.first?.url,
+              url != URL(fileURLWithPath: "/dev/null"),
+              FileManager.default.fileExists(atPath: url.path),
+              let metadata = try? NSPersistentStoreCoordinator.metadataForPersistentStore(ofType: NSSQLiteStoreType, at: url) else {
+            return false
+        }
+        // Хранилище текущей версии — обычный запуск: старые модели можно не загружать.
+        guard !model.isConfiguration(withName: nil, compatibleWithStoreMetadata: metadata) else { return false }
+        return secondsModelVersions.contains { version in
+            guard let modelURL, let model = NSManagedObjectModel(contentsOf: modelURL.appendingPathComponent("\(version).mom")) else {
+                return false
+            }
+            // Классы Entity принадлежат текущей версии модели: прежняя не должна на них претендовать.
+            model.entities.forEach { $0.managedObjectClassName = NSStringFromClass(NSManagedObject.self) }
+            return model.isConfiguration(withName: nil, compatibleWithStoreMetadata: metadata)
+        }
+    }
+
+    /// Удаляет переписки и сообщения, мигрированные с версии модели в секундах. Хранилище целиком не пересоздаётся:
+    /// пропали бы неотправленные сообщения. Ошибка удаления логируется — устаревший кэш не мешает открыть БД.
+    /// - Parameter container: контейнер с открытыми хранилищами.
+    private static func clearServerTimeEntities(in container: NSPersistentContainer) {
+        let context = container.newBackgroundContext()
+        context.performAndWait {
+            do {
+                for name in serverTimeEntityNames {
+                    try context.execute(NSBatchDeleteRequest(fetchRequest: NSFetchRequest(entityName: name)))
+                }
+            } catch {
+                Logger.storage.error("Не удалось очистить кэш со временем в секундах: \(String(describing: error), privacy: .public)")
+            }
+        }
     }
 
     /// Удаляет файлы хранилищ контейнера вместе со служебными файлами SQLite (`-wal`, `-shm`).

@@ -17,8 +17,8 @@ extension Message {
         type: .text,
         text: "Привет!",
         isEdited: false,
-        createdAt: Date(timeIntervalSince1970: 1_790_846_400),
-        updatedAt: Date(timeIntervalSince1970: 1_790_846_400)
+        createdAt: .stub,
+        updatedAt: .stub
     )
 
     /// То же сообщение после редактирования — типовой ответ `/messages/edit`.
@@ -31,8 +31,8 @@ extension Message {
         type: .text,
         text: "Привет всем!",
         isEdited: true,
-        createdAt: Date(timeIntervalSince1970: 1_790_846_400),
-        updatedAt: Date(timeIntervalSince1970: 1_790_846_460)
+        createdAt: .stub,
+        updatedAt: .stub(60_000)
     )
 }
 
@@ -44,7 +44,15 @@ extension Message {
     ///   - senderId: отправитель.
     ///   - text: текст.
     ///   - clientId: идентификатор клиента-отправителя; по умолчанию — `client-<id>`.
-    static func make(id: Int, conversationId: Int = 1, senderId: Int = 1, text: String = "Привет!", clientId: String? = nil) -> Message {
+    ///   - createdAt: время отправки; по умолчанию — как у `stub`.
+    static func make(
+        id: Int,
+        conversationId: Int = 1,
+        senderId: Int = 1,
+        text: String = "Привет!",
+        clientId: String? = nil,
+        createdAt: ServerTime = stub.createdAt
+    ) -> Message {
         Message(
             messageId: id,
             clientId: clientId ?? "client-\(id)",
@@ -54,8 +62,8 @@ extension Message {
             type: .text,
             text: text,
             isEdited: false,
-            createdAt: stub.createdAt,
-            updatedAt: stub.updatedAt
+            createdAt: createdAt,
+            updatedAt: createdAt
         )
     }
 }

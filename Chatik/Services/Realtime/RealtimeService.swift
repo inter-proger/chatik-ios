@@ -6,17 +6,18 @@
 import Foundation
 import os
 
-/// Событие реального времени для экранов. Локальная БД к моменту доставки уже обновлена.
+/// Событие реального времени для потребителей очереди событий. Сообщения в локальной БД к моменту доставки
+/// уже обновлены; переписки пишет только `ConversationListService`.
 enum RealtimeEvent: Equatable, Sendable {
     /// Соединение (пере)установлено. WebSocket не гарантирует доставку: пока соединения не было, события
-    /// могли потеряться, поэтому открытые экраны синхронизируются через REST.
+    /// могли потеряться, поэтому потребители синхронизируются через REST.
     case connected
     /// Создана личная переписка.
     case conversationCreated(Conversation)
-    /// Новое сообщение.
-    case messageReceived(Message)
-    /// Сообщение отредактировано.
-    case messageEdited(Message)
+    /// Новое сообщение и новое превью его переписки.
+    case messageReceived(Message, LastMessage)
+    /// Сообщение отредактировано; превью — только если отредактировано последнее сообщение переписки.
+    case messageEdited(Message, LastMessage?)
 }
 
 @MainActor
@@ -27,8 +28,6 @@ protocol RealtimeServiceProtocol: AuthServiceObserver {
     /// Закрывает соединение и прекращает переподключения; возвращается, когда начатая обработка событий
     /// (запись в БД) закончена.
     func stop() async
-    /// Поток событий реального времени; заканчивается, когда отменена читающая его задача.
-    func events() -> AsyncStream<RealtimeEvent>
 }
 
 /// Соединение с WebSocket-сервером: подключение, переподключение, heartbeat и разбор событий.
@@ -38,9 +37,12 @@ protocol RealtimeServiceProtocol: AuthServiceObserver {
 /// не влияют (например, 4003 по старому соединению после входа под другим пользователем).
 ///
 /// Цикл соединения: токен (`/global/start` или `/global/getWebsocketToken`) → handshake → `auth` / `connect` →
-/// `auth` / `connected` → события. После `connected` экраны получают `RealtimeEvent.connected` и синхронизируются
-/// через REST. Событие сначала применяется к БД (из двух версий объекта побеждает версия с большим `updatedAt`,
-/// см. storage-сервисы), затем доставляется экранам и только потом подтверждается серверу.
+/// `auth` / `connected` → события. После `connected` потребители получают `RealtimeEvent.connected` и синхронизируются
+/// через REST. Сообщение из события сначала сохраняется в БД (из двух версий побеждает версия с большим `updatedAt`,
+/// см. `MessageStorageService`), затем событие кладётся в `RealtimeEventQueue` и подтверждается серверу — не дожидаясь
+/// обработки: приостановленная очередь иначе задержала бы чтение сокета. Событие, потерянное из памяти при убийстве
+/// приложения, восстановит стартовая синхронизация списка. `connected` тоже идёт через очередь — чтобы события
+/// старого соединения применились раньше синхронизации.
 @MainActor
 final class RealtimeService: RealtimeServiceProtocol {
     /// Откуда брать токен для следующего подключения.
@@ -93,7 +95,7 @@ final class RealtimeService: RealtimeServiceProtocol {
     private let connectionFactory: WebSocketConnectionFactoryProtocol
     private let sessionService: SessionServiceProtocol
     private let authService: AuthServiceProtocol
-    private let conversationStorage: ConversationStorageServiceProtocol
+    private let eventQueue: RealtimeEventQueueProtocol
     private let messageStorage: MessageStorageServiceProtocol
     private let userCache: UserCacheServiceProtocol
     private let backoff: ReconnectBackoff
@@ -103,7 +105,6 @@ final class RealtimeService: RealtimeServiceProtocol {
     private var runTask: Task<Void, Never>?
     /// Идущая задержка перед переподключением; появление сети её прерывает.
     private var reconnectDelayTask: Task<Void, Never>?
-    private var subscribers: [UUID: AsyncStream<RealtimeEvent>.Continuation] = [:]
     /// `true` между `authServiceWillLogout` и `authServiceDidLogout`: `start()` в это время не подключается —
     /// иначе возврат из фона во время выхода открыл бы соединение по ещё живой cookie, и закрытие 4003 после
     /// выхода выглядело бы как истечение сессии.
@@ -114,7 +115,7 @@ final class RealtimeService: RealtimeServiceProtocol {
     ///   - connectionFactory: открывает WebSocket-соединения.
     ///   - sessionService: текущий пользователь.
     ///   - authService: при `null` из `/global/start` сессия завершается через него — как истёкшая.
-    ///   - conversationStorage: куда пишутся переписки из событий.
+    ///   - eventQueue: очередь, в которую кладутся события для потребителей.
     ///   - messageStorage: куда пишутся сообщения из событий.
     ///   - userCache: загружает пользователей из `userIds` событий.
     ///   - backoff: задержки переподключения.
@@ -126,7 +127,7 @@ final class RealtimeService: RealtimeServiceProtocol {
         connectionFactory: WebSocketConnectionFactoryProtocol,
         sessionService: SessionServiceProtocol,
         authService: AuthServiceProtocol,
-        conversationStorage: ConversationStorageServiceProtocol,
+        eventQueue: RealtimeEventQueueProtocol,
         messageStorage: MessageStorageServiceProtocol,
         userCache: UserCacheServiceProtocol,
         backoff: ReconnectBackoff = ReconnectBackoff(),
@@ -138,7 +139,7 @@ final class RealtimeService: RealtimeServiceProtocol {
         self.connectionFactory = connectionFactory
         self.sessionService = sessionService
         self.authService = authService
-        self.conversationStorage = conversationStorage
+        self.eventQueue = eventQueue
         self.messageStorage = messageStorage
         self.userCache = userCache
         self.backoff = backoff
@@ -188,17 +189,6 @@ final class RealtimeService: RealtimeServiceProtocol {
     /// Появилась сеть: если идёт задержка перед переподключением — переподключиться сразу.
     func networkDidBecomeAvailable() {
         reconnectDelayTask?.cancel()
-    }
-
-    /// Подписывает на события реального времени.
-    func events() -> AsyncStream<RealtimeEvent> {
-        let (stream, continuation) = AsyncStream.makeStream(of: RealtimeEvent.self)
-        let id = UUID()
-        subscribers[id] = continuation
-        continuation.onTermination = { [weak self] _ in
-            Task { @MainActor [weak self] in self?.subscribers[id] = nil }
-        }
-        return stream
     }
 
     // MARK: - Цикл переподключения
@@ -351,7 +341,7 @@ final class RealtimeService: RealtimeServiceProtocol {
             switch message.event {
             case .connected:
                 isConnected = true
-                broadcast(.connected)
+                eventQueue.enqueue(.connected)
             case let .connectionError(errorCode):
                 connectionErrorCode = errorCode
             default:
@@ -411,8 +401,8 @@ final class RealtimeService: RealtimeServiceProtocol {
 
     // MARK: - События
 
-    /// Применяет событие к БД, доставляет экранам, запускает загрузку упомянутых пользователей и подтверждает
-    /// получение. Пользователей не ждёт: подтверждение — после применения к локальному состоянию.
+    /// Сохраняет сообщение события в БД, кладёт событие в очередь, запускает загрузку упомянутых пользователей
+    /// и подтверждает получение. Ни обработку очередью, ни пользователей не ждёт.
     /// - Parameters:
     ///   - message: сообщение сервера после `connected`.
     ///   - connection: соединение, в которое уходит подтверждение.
@@ -422,7 +412,7 @@ final class RealtimeService: RealtimeServiceProtocol {
     private func handle(_ message: WebSocketServerMessage, from connection: WebSocketConnectionProtocol, userId: Int) async -> Bool {
         guard sessionService.currentUser?.userId == userId else { return false }
         if let event = await apply(message.event) {
-            broadcast(event)
+            eventQueue.enqueue(event)
         }
         if !message.userIds.isEmpty {
             let userIds = message.userIds
@@ -435,17 +425,16 @@ final class RealtimeService: RealtimeServiceProtocol {
         return true
     }
 
-    /// Сохраняет данные события в БД. Ошибка записи не мешает доставить событие экранам.
+    /// Сохраняет сообщение события в БД; переписки пишет только `ConversationListService`. Ошибка записи не мешает
+    /// доставить событие.
     /// - Parameter event: событие сервера.
-    /// - Returns: событие для экранов; `nil` — экранам доставлять нечего.
+    /// - Returns: событие для очереди; `nil` — доставлять нечего.
     private func apply(_ event: WebSocketServerEvent) async -> RealtimeEvent? {
         do {
             switch event {
-            case let .conversationCreated(conversation):
-                try await conversationStorage.save(conversation: conversation)
-            case let .messageReceived(message), let .messageEdited(message):
+            case let .messageReceived(message, _), let .messageEdited(message, _):
                 try await messageStorage.save(message: message)
-            case .connected, .connectionError, .unknown:
+            case .conversationCreated, .connected, .connectionError, .unknown:
                 break
             }
         } catch {
@@ -454,20 +443,15 @@ final class RealtimeService: RealtimeServiceProtocol {
         return realtimeEvent(for: event)
     }
 
-    /// Событие для экранов без записи в БД.
+    /// Событие для очереди без записи в БД.
     /// - Parameter event: событие сервера.
     private func realtimeEvent(for event: WebSocketServerEvent) -> RealtimeEvent? {
         switch event {
         case let .conversationCreated(conversation): return .conversationCreated(conversation)
-        case let .messageReceived(message): return .messageReceived(message)
-        case let .messageEdited(message): return .messageEdited(message)
+        case let .messageReceived(message, lastMessage): return .messageReceived(message, lastMessage)
+        case let .messageEdited(message, lastMessage): return .messageEdited(message, lastMessage)
         case .connected, .connectionError, .unknown: return nil
         }
-    }
-
-    /// Доставляет событие всем подписчикам.
-    private func broadcast(_ event: RealtimeEvent) {
-        subscribers.values.forEach { $0.yield(event) }
     }
 }
 

@@ -12,7 +12,8 @@ final class MessageSendQueueTests: XCTestCase {
     private var messageStorage: MessageStorageServiceMock!
     private var outgoingStorage: OutgoingMessageStorageServiceMock!
     private var sessionService: SessionService!
-    private var realtimeService: RealtimeServiceMock!
+    private var eventQueue: RealtimeEventQueueMock!
+    private var positionUpdater: ConversationPositionUpdatingMock!
 
     override func setUp() async throws {
         try await super.setUp()
@@ -22,7 +23,8 @@ final class MessageSendQueueTests: XCTestCase {
         let userDefaultsService = UserDefaultsServiceMock(currentUser: User(userId: 1, login: "ivan", name: "Ivan", avatar: nil))
         sessionService = SessionService(userDefaultsService: userDefaultsService, localStorageCleaner: LocalStorageCleanerMock())
         await sessionService.restore()
-        realtimeService = RealtimeServiceMock()
+        eventQueue = RealtimeEventQueueMock()
+        positionUpdater = ConversationPositionUpdatingMock()
     }
 
     // MARK: - Отправка
@@ -59,7 +61,8 @@ final class MessageSendQueueTests: XCTestCase {
     }
 
     /// Кейс: сервер принял сообщение.
-    /// Ожидание: созданное сообщение опубликовано подписчикам и сохранено в БД, из очереди сообщение убрано.
+    /// Ожидание: переписка поднята в списке чатов, созданное сообщение опубликовано подписчикам и сохранено в БД,
+    /// из очереди сообщение убрано.
     func test_enqueue_success_publishesSavesAndRemoves() async {
         let sut = makeSUT()
         let sent = Message.make(id: 2, clientId: "c1")
@@ -73,7 +76,20 @@ final class MessageSendQueueTests: XCTestCase {
 
         await yieldUntil { published == [sent] }
         await yieldUntil { [unowned self] in messageStorage.savedMessages == [sent] }
+        XCTAssertEqual(positionUpdater.sentMessages, [sent])
         subscription.cancel()
+    }
+
+    /// Кейс: сервер отклонил отправку.
+    /// Ожидание: переписка в списке чатов не поднимается.
+    func test_enqueue_failure_doesNotLiftConversation() async {
+        let sut = makeSUT()
+        messageService.stubbedSentMessage = .failure(NetworkError.transport(URLError(.notConnectedToInternet)))
+
+        sut.enqueue(text: "Привет", conversationId: 1)
+
+        await yieldUntil { sut.outgoingMessages.first?.status == .failed }
+        XCTAssertTrue(positionUpdater.sentMessages.isEmpty)
     }
 
     /// Кейс: в очереди два сообщения; сервер принял первое, а его запись в БД ещё не завершилась.
@@ -244,7 +260,8 @@ final class MessageSendQueueTests: XCTestCase {
 
     // MARK: - Подтверждение помимо ответа
 
-    /// Кейс: событие WebSocket о собственном сообщении пришло раньше ответа `/messages/send` (чат может быть закрыт).
+    /// Кейс: событие WebSocket о собственном сообщении пришло через очередь событий раньше ответа `/messages/send`
+    /// (чат может быть закрыт).
     /// Ожидание: сообщение сразу убрано из очереди; ответ, пришедший следом, его не возвращает.
     func test_realtimeEvent_ownMessage_removesFromQueue() async {
         let sut = makeSUT()
@@ -255,7 +272,7 @@ final class MessageSendQueueTests: XCTestCase {
         sut.enqueue(text: "Привет", conversationId: 1)
         await yieldUntil { gate.isWaiting }
 
-        realtimeService.send(.messageReceived(sent))
+        await eventQueue.send(.messageReceived(sent, LastMessage(message: sent)))
 
         await yieldUntil { sut.outgoingMessages.isEmpty }
         gate.open()
@@ -272,7 +289,7 @@ final class MessageSendQueueTests: XCTestCase {
         sut.enqueue(text: "Привет", conversationId: 1)
         await yieldUntil { gate.isWaiting }
 
-        realtimeService.send(.messageReceived(.make(id: 2, senderId: 2, clientId: "c1")))
+        await eventQueue.send(.messageReceived(.make(id: 2, senderId: 2, clientId: "c1"), .make(id: 2)))
         sut.removeConfirmed(by: [.make(id: 3, senderId: 2, clientId: "c1")])
 
         await Task.yield()
@@ -376,7 +393,8 @@ final class MessageSendQueueTests: XCTestCase {
             messageStorage: messageStorage,
             outgoingMessageStorage: outgoingStorage,
             sessionService: sessionService,
-            realtimeService: realtimeService,
+            eventQueue: eventQueue,
+            positionUpdater: positionUpdater,
             now: { [now] in now },
             makeClientId: {
                 counter += 1

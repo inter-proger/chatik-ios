@@ -6,46 +6,36 @@
 import Foundation
 @testable import Chatik
 
-/// Мок хранилища переписок: отдаёт заданные переписки и запоминает сохранённые.
+/// Мок хранилища списка переписок: отдаёт заданный кэш и запоминает записи.
 final class ConversationStorageServiceMock: ConversationStorageServiceProtocol {
-    /// Что возвращают `fetchAll()` и `fetchLatest(limit:)`.
-    var stubbedConversations: Result<[Conversation], Error> = .success([])
-    /// Ошибка, которой завершается любое сохранение; `nil` — сохранение успешно.
-    var stubbedSaveError: Error?
-    private(set) var savedPages: [(page: ConversationsPage, isFirstPage: Bool)] = []
-    private(set) var savedConversations: [Conversation] = []
-    /// Вызывается внутри `fetchLatest` до возврата результата — пока идёт чтение кэша.
-    var onFetchLatest: (@MainActor () async -> Void)?
-    /// Лимиты, с которыми вызывался `fetchLatest`.
-    private(set) var fetchLatestLimits: [Int] = []
+    /// Что возвращает `fetchList()`.
+    var stubbedList: Result<(conversations: [Conversation], state: ConversationListState), Error> = .success(([], ConversationListState()))
+    /// Вызывается внутри `fetchList` до возврата результата — пока идёт чтение кэша.
+    var onFetchList: (@MainActor () async -> Void)?
+    /// Записи `save(conversations:state:)` по порядку.
+    private(set) var saves: [(conversations: [Conversation], state: ConversationListState?)] = []
+    /// Записи `replaceList(with:state:)` по порядку.
+    private(set) var replacements: [(conversations: [Conversation], state: ConversationListState)] = []
 
-    func save(conversation: Conversation) async throws {
-        try await save(conversations: [conversation])
+    /// Состояние из последней записи любого вида, которая его меняла.
+    private(set) var lastState: ConversationListState?
+
+    func fetchList() async throws -> (conversations: [Conversation], state: ConversationListState) {
+        await onFetchList?()
+        return try stubbedList.get()
     }
 
-    func save(conversations: [Conversation]) async throws {
-        if let stubbedSaveError { throw stubbedSaveError }
-        savedConversations += conversations
+    func save(conversations: [Conversation], state: ConversationListState?) async throws {
+        saves.append((conversations, state))
+        lastState = state ?? lastState
     }
 
-    func save(page: ConversationsPage, isFirstPage: Bool) async throws {
-        if let stubbedSaveError { throw stubbedSaveError }
-        savedPages.append((page, isFirstPage))
-    }
-
-    func fetchAll() async throws -> [Conversation] {
-        try stubbedConversations.get()
-    }
-
-    func fetchLatest(limit: Int) async throws -> [Conversation] {
-        fetchLatestLimits.append(limit)
-        await onFetchLatest?()
-        return Array(try stubbedConversations.get().prefix(limit))
+    func replaceList(with conversations: [Conversation], state: ConversationListState) async throws {
+        replacements.append((conversations, state))
+        lastState = state
     }
 
     func find(byId id: Int) async throws -> Conversation? {
-        try stubbedConversations.get().first { $0.id == id }
+        try stubbedList.get().conversations.first { $0.id == id }
     }
-
-    func delete(byId id: Int) async throws {}
 }

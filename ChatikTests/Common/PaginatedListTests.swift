@@ -178,31 +178,6 @@ final class PaginatedListTests: XCTestCase {
         XCTAssertTrue(recorder.contexts.isEmpty)
     }
 
-    // MARK: - Локальная вставка
-
-    /// Кейс: элемент вставлен локально, затем грузится следующая страница.
-    /// Ожидание: элемент в начале списка, сдвиг следующей страницы считается по полученному с сервера.
-    func test_insertIfAbsent_doesNotShiftNextPageContext() async {
-        let recorder = ContextRecorder()
-        await sut.refresh(load: page(ids: [1, 2], hasNext: true))
-
-        sut.insertIfAbsent(Item(id: 99))
-        await sut.loadNextPage(load: page(ids: [3], hasNext: false, recorder: recorder))
-
-        XCTAssertEqual(sut.items.map(\.id), [99, 1, 2, 3])
-        XCTAssertEqual(recorder.contexts.last?.loadedCount, 2)
-    }
-
-    /// Кейс: вставляется элемент, который уже есть в списке.
-    /// Ожидание: список не меняется — дубликата не появляется.
-    func test_insertIfAbsent_alreadyListed_doesNothing() async {
-        await sut.refresh(load: page(ids: [1, 2], hasNext: false))
-
-        sut.insertIfAbsent(Item(id: 2))
-
-        XCTAssertEqual(sut.items.map(\.id), [1, 2])
-    }
-
     /// Кейс: список пуст и ничего не грузится / грузится первая страница.
     /// Ожидание: пустым считается только список без активной загрузки — иначе экран мигал бы заглушкой.
     func test_isEmpty_accountsForFirstPageLoading() async {
@@ -216,54 +191,6 @@ final class PaginatedListTests: XCTestCase {
 
         XCTAssertFalse(isEmptyDuringLoad)
         XCTAssertFalse(sut.isEmpty)
-    }
-
-    // MARK: - Отмена
-
-    /// Кейс: идёт загрузка первой страницы, вызван `cancelLoading()`; затем загрузчик всё-таки ответил.
-    /// Ожидание: флаг загрузки снят сразу, опоздавший ответ отброшен — итог `superseded`, список прежний.
-    func test_cancelLoading_duringRefresh_discardsResponse() async {
-        await sut.refresh(load: page(ids: [1], hasNext: false))
-        let gate = Gate()
-        var outcome: PaginationOutcome?
-        let refresh = Task { outcome = await self.sut.refresh(load: self.page(ids: [2], hasNext: false, gate: gate)) }
-        await yieldUntil { gate.isWaiting }
-
-        await sut.cancelLoading()
-        let isLoadingAfterCancel = sut.isLoadingFirstPage
-        gate.open()
-        await refresh.value
-
-        XCTAssertFalse(isLoadingAfterCancel)
-        XCTAssertEqual(sut.items.map(\.id), [1])
-        guard case .superseded = try? XCTUnwrap(outcome) else { return XCTFail("Ожидался superseded") }
-    }
-
-    /// Кейс: идёт подгрузка следующей страницы, вызван `cancelLoading()`.
-    /// Ожидание: `cancelLoading()` возвращается только после завершения подгрузки; её страница не дописана,
-    /// флаг подгрузки снят, а сама задача подгрузки отменена.
-    func test_cancelLoading_duringNextPage_waitsAndDiscardsPage() async throws {
-        await sut.refresh(load: page(ids: [1, 2], hasNext: true))
-        let gate = Gate()
-        var isLoaderCancelled = false
-        let load: PaginatedList<Item>.Load = { _ in
-            await gate.wait()
-            isLoaderCancelled = Task.isCancelled
-            return PaginatedListPage(items: [Item(id: 3)], hasNext: false)
-        }
-        sut.prefetchNextPageIfNeeded(currentItem: try XCTUnwrap(sut.items.last), load: load, onOutcome: { _ in })
-        await yieldUntil { gate.isWaiting }
-
-        var isCancelFinished = false
-        let cancel = Task { await self.sut.cancelLoading(); isCancelFinished = true }
-        await yieldUntil { [unowned self] in !sut.isLoadingNextPage }
-        let isFinishedBeforeLoaderReturned = isCancelFinished
-        gate.open()
-        await cancel.value
-
-        XCTAssertFalse(isFinishedBeforeLoaderReturned)
-        XCTAssertTrue(isLoaderCancelled)
-        XCTAssertEqual(sut.items.map(\.id), [1, 2])
     }
 
     // MARK: - Сверка первой страницы
@@ -461,26 +388,6 @@ final class PaginatedListTests: XCTestCase {
 
         XCTAssertEqual(recorder.contexts, [PaginationContext(loadedCount: 2, cursor: nil)])
         XCTAssertEqual(sut.items.map(\.id), [1, 2, 3])
-    }
-
-    /// Кейс: пока читался кэш, в пустой список локально вставлен элемент.
-    /// Ожидание: кэш не затирает вставленный элемент — он актуальнее.
-    func test_refresh_withCache_insertDuringCacheRead_keepsInsertedItem() async {
-        let gate = Gate()
-        var isCacheRead = false
-        let cached: PaginatedList<Item>.Cached = { [unowned self] in
-            sut.insertIfAbsent(Item(id: 99))
-            isCacheRead = true
-            return [Item(id: 10)]
-        }
-        let refresh = Task { await self.sut.refresh(cached: cached, load: self.page(ids: [1], hasNext: false, gate: gate)) }
-        await yieldUntil { gate.isWaiting && isCacheRead }
-
-        let itemsAfterCacheRead = sut.items.map(\.id)
-        gate.open()
-        await refresh.value
-
-        XCTAssertEqual(itemsAfterCacheRead, [99])
     }
 
     // MARK: - Helpers

@@ -6,7 +6,8 @@
 import SwiftUI
 
 /// Экран списка чатов: список переписок с бесшовной подгрузкой страниц, кнопки профиля
-/// и создания диалога. Заголовок всегда компактный — по центру панели навигации.
+/// и создания диалога. Заголовок всегда компактный — по центру панели навигации; пока список синхронизируется
+/// с сервером, вместо названия — «Обновление…» с индикатором, а список из кэша остаётся интерактивным.
 struct ChatListView: View {
     @State private var viewModel: ChatListViewModel
 
@@ -23,11 +24,15 @@ struct ChatListView: View {
             onSelect: viewModel.didSelectConversation
         )
         .overlay { stateOverlay }
-        .refreshable { await viewModel.loadFirstPage() }
-        .task { await viewModel.loadFirstPage() }
+        .refreshable { await viewModel.refresh() }
+        .task { await viewModel.loadIfNeeded() }
+        .task { await viewModel.observeDayChanges() }
         .navigationTitle(ChatListStrings.title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            ToolbarItem(placement: .principal) {
+                titleView
+            }
             ToolbarItem(placement: .topBarLeading) {
                 profileButton
             }
@@ -42,13 +47,29 @@ struct ChatListView: View {
         }
     }
 
-    /// Прелоадер первой страницы или сообщение о пустом списке поверх списка.
+    /// Прелоадер первой загрузки или сообщение о пустом списке поверх списка. Пока идёт синхронизация поверх
+    /// кэша, ни того ни другого нет — об обновлении говорит заголовок.
     @ViewBuilder
     private var stateOverlay: some View {
-        if viewModel.isLoadingFirstPage && viewModel.conversations.isEmpty {
+        if viewModel.isLoadingFirstPage {
             ProgressView()
         } else if viewModel.isEmpty {
             ContentUnavailableView(ChatListStrings.empty, systemImage: "bubble.left.and.bubble.right")
+        }
+    }
+
+    /// Заголовок: название экрана или, пока идёт синхронизация, индикатор и «Обновление…».
+    @ViewBuilder
+    private var titleView: some View {
+        if viewModel.isSyncing {
+            HStack(spacing: 6) {
+                ProgressView()
+                Text(ChatListStrings.updating)
+            }
+            .font(.headline)
+        } else {
+            Text(ChatListStrings.title)
+                .font(.headline)
         }
     }
 

@@ -14,7 +14,7 @@ final class RealtimeServiceTests: XCTestCase {
     private var factory: WebSocketConnectionFactoryMock!
     private var sessionService: SessionService!
     private var authService: AuthService!
-    private var conversationStorage: ConversationStorageServiceMock!
+    private var eventQueue: RealtimeEventQueueMock!
     private var messageStorage: MessageStorageServiceMock!
     private var userCache: UserCacheServiceMock!
     private var sleeper: SleepController!
@@ -28,7 +28,7 @@ final class RealtimeServiceTests: XCTestCase {
         sessionService = SessionService(userDefaultsService: userDefaultsService, localStorageCleaner: LocalStorageCleanerMock())
         await sessionService.restore()
         authService = AuthService(networkService: NetworkServiceMock())
-        conversationStorage = ConversationStorageServiceMock()
+        eventQueue = RealtimeEventQueueMock()
         messageStorage = MessageStorageServiceMock()
         userCache = UserCacheServiceMock()
         sleeper = SleepController()
@@ -38,7 +38,7 @@ final class RealtimeServiceTests: XCTestCase {
             connectionFactory: factory,
             sessionService: sessionService,
             authService: authService,
-            conversationStorage: conversationStorage,
+            eventQueue: eventQueue,
             messageStorage: messageStorage,
             userCache: userCache,
             backoff: ReconnectBackoff(randomFactor: { 1 }),
@@ -73,14 +73,11 @@ final class RealtimeServiceTests: XCTestCase {
     }
 
     /// Кейс: сервер ответил `auth` / `connected`.
-    /// Ожидание: подписчики получили `.connected` — сигнал синхронизироваться через REST.
-    func test_connected_broadcastsConnected() async throws {
-        var iterator = sut.events().makeAsyncIterator()
-
+    /// Ожидание: в очередь событий положен `.connected` — сигнал синхронизироваться через REST.
+    func test_connected_enqueuesConnected() async throws {
         _ = try await startAndConnect()
 
-        let event = await iterator.next()
-        XCTAssertEqual(event, .connected)
+        await waitUntil { [unowned self] in eventQueue.enqueued == [.connected] }
     }
 
     /// Кейс: `/global/start` вернул `null`, а локально сессия открыта (сессию завершили на сервере).
@@ -113,42 +110,37 @@ final class RealtimeServiceTests: XCTestCase {
     // MARK: - События
 
     /// Кейс: после `connected` пришло `messages` / `received` с `userIds`.
-    /// Ожидание: сообщение сохранено в БД и доставлено подписчикам, отправитель запрошен в кэше пользователей,
-    /// серверу ушло подтверждение с `uid` события.
-    func test_messageReceived_savesBroadcastsLoadsUsersAndAcknowledges() async throws {
+    /// Ожидание: сообщение сохранено в БД, событие с превью положено в очередь, отправитель запрошен в кэше
+    /// пользователей, серверу ушло подтверждение с `uid` события.
+    func test_messageReceived_savesEnqueuesLoadsUsersAndAcknowledges() async throws {
         let connection = try await startAndConnect()
-        var iterator = sut.events().makeAsyncIterator()
 
-        connection.deliver(WebSocketServerMessage(uid: "e1", group: "messages", event: .messageReceived(.stub), userIds: [1]))
+        connection.deliver(WebSocketServerMessage(uid: "e1", group: "messages", event: .messageReceived(.stub, .make(id: 15)), userIds: [1]))
 
-        let event = await iterator.next()
         await waitUntil { connection.sent.count == 2 }
         await waitUntil { [unowned self] in !userCache.loadRequests.isEmpty }
-        XCTAssertEqual(event, .messageReceived(.stub))
+        XCTAssertEqual(eventQueue.enqueued, [.connected, .messageReceived(.stub, .make(id: 15))])
         XCTAssertEqual(messageStorage.savedMessages, [.stub])
         XCTAssertEqual(userCache.loadRequests, [[1]])
         XCTAssertEqual(connection.sent.last, .acknowledge(receivedUid: "e1"))
     }
 
     /// Кейс: после `connected` пришли `messages` / `edited` и `conversations` / `singleCreated`.
-    /// Ожидание: сообщение и переписка сохранены в БД и доставлены подписчикам.
-    func test_editedAndConversationCreated_saveAndBroadcast() async throws {
+    /// Ожидание: сообщение сохранено в БД, оба события положены в очередь по порядку; переписку сервис в БД не пишет —
+    /// это делает только список переписок.
+    func test_editedAndConversationCreated_saveMessageAndEnqueue() async throws {
         let connection = try await startAndConnect()
-        var iterator = sut.events().makeAsyncIterator()
 
-        connection.deliver(WebSocketServerMessage(uid: "e1", group: "messages", event: .messageEdited(.editedStub), userIds: []))
+        connection.deliver(WebSocketServerMessage(uid: "e1", group: "messages", event: .messageEdited(.editedStub, nil), userIds: []))
         connection.deliver(WebSocketServerMessage(uid: "e2", group: "conversations", event: .conversationCreated(.singleStub), userIds: []))
 
-        let first = await iterator.next()
-        let second = await iterator.next()
-        XCTAssertEqual(first, .messageEdited(.editedStub))
-        XCTAssertEqual(second, .conversationCreated(.singleStub))
+        await waitUntil { connection.sent.count == 3 }
+        XCTAssertEqual(eventQueue.enqueued, [.connected, .messageEdited(.editedStub, nil), .conversationCreated(.singleStub)])
         XCTAssertEqual(messageStorage.savedMessages, [.editedStub])
-        XCTAssertEqual(conversationStorage.savedConversations, [.singleStub])
     }
 
     /// Кейс: после `connected` пришло событие неизвестной группы.
-    /// Ожидание: оно подтверждено сразу, подписчикам ничего не доставлено, в БД ничего не записано.
+    /// Ожидание: оно подтверждено сразу, в очередь ничего не положено, в БД ничего не записано.
     func test_unknownEvent_isAcknowledgedOnly() async throws {
         let connection = try await startAndConnect()
 
@@ -157,6 +149,7 @@ final class RealtimeServiceTests: XCTestCase {
         await waitUntil { connection.sent.count == 2 }
         XCTAssertEqual(connection.sent.last, .acknowledge(receivedUid: "e1"))
         XCTAssertTrue(messageStorage.savedMessages.isEmpty)
+        XCTAssertEqual(eventQueue.enqueued, [.connected])
     }
 
     /// Кейс: событие пришло до `auth` / `connected`.
@@ -167,7 +160,7 @@ final class RealtimeServiceTests: XCTestCase {
         await waitUntil { [unowned self] in factory.made.first?.sent.count == 1 }
         let connection = factory.made[0]
 
-        connection.deliver(WebSocketServerMessage(uid: "e1", group: "messages", event: .messageReceived(.stub), userIds: [1]))
+        connection.deliver(WebSocketServerMessage(uid: "e1", group: "messages", event: .messageReceived(.stub, .make(id: 15)), userIds: [1]))
         connection.deliverConnected()
         connection.deliver(WebSocketServerMessage(uid: "e2", group: "typing", event: .unknown, userIds: []))
         await waitUntil { connection.sent.count == 2 }
@@ -182,7 +175,7 @@ final class RealtimeServiceTests: XCTestCase {
         let connection = try await startAndConnect()
         await sessionService.end()
 
-        connection.deliver(WebSocketServerMessage(uid: "e1", group: "messages", event: .messageReceived(.stub), userIds: [1]))
+        connection.deliver(WebSocketServerMessage(uid: "e1", group: "messages", event: .messageReceived(.stub, .make(id: 15)), userIds: [1]))
 
         await waitUntil { connection.closeCodes == [WebSocketCloseCode.normal] }
         XCTAssertTrue(messageStorage.savedMessages.isEmpty)
@@ -389,20 +382,6 @@ final class RealtimeServiceTests: XCTestCase {
         XCTAssertEqual(globalService.tokenCallCount, 0)
     }
 
-    /// Кейс: на события подписаны два экрана, один из них отписался (его задача отменена).
-    /// Ожидание: событие получает оставшийся подписчик.
-    func test_events_deliveredToAllActiveSubscribers() async throws {
-        let connection = try await startAndConnect()
-        var active = sut.events().makeAsyncIterator()
-        let cancelled = Task { [sut] in for await _ in sut!.events() {} }
-        cancelled.cancel()
-
-        connection.deliver(WebSocketServerMessage(uid: "e1", group: "messages", event: .messageReceived(.stub), userIds: []))
-
-        let event = await active.next()
-        XCTAssertEqual(event, .messageReceived(.stub))
-    }
-
     // MARK: - Helpers
 
     /// Паузы перед переподключением — все запрошенные, кроме интервалов heartbeat.
@@ -442,7 +421,7 @@ final class RealtimeServiceTests: XCTestCase {
             connectionFactory: factory,
             sessionService: sessionService,
             authService: authService,
-            conversationStorage: conversationStorage,
+            eventQueue: eventQueue,
             messageStorage: messageStorage,
             userCache: userCache,
             backoff: ReconnectBackoff(randomFactor: { 1 }),

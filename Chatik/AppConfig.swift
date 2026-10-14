@@ -16,6 +16,8 @@ enum AppConfig {
         }
         return url
     }()
+    /// Таймаут простоя обычных запросов к API, в секундах.
+    static let requestTimeout: TimeInterval = 30
     static let licenseAgreementURL = baseURL.appending(path: "static/docs/license.pdf")
     static let privacyPolicyURL = baseURL.appending(path: "static/docs/privacy_policy.pdf")
 }

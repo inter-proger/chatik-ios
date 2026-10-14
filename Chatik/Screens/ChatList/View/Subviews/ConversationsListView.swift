@@ -5,7 +5,8 @@
 
 import SwiftUI
 
-/// Список чатов с бесшовной подгрузкой страниц.
+/// Список чатов с бесшовной подгрузкой страниц. Поднявшаяся переписка переезжает наверх с анимацией: строки
+/// идентифицируются по `conversationId`.
 struct ConversationsListView: View {
     let conversations: [ChatRowDisplayModel]
     /// Идентификатор открытой переписки — её строка подсвечена как выбранная. `nil` — подсветки нет.
@@ -30,6 +31,7 @@ struct ConversationsListView: View {
             }
         }
         .listStyle(.plain)
+        .animation(.default, value: conversations.map(\.id))
     }
 }
 

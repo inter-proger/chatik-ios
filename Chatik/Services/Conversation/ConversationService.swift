@@ -8,10 +8,12 @@ import Foundation
 protocol ConversationServiceProtocol {
     /// Создаёт личную переписку с указанным пользователем либо возвращает уже существующую.
     func createSingle(userId: Int) async throws -> Conversation
-    /// Возвращает страницу переписок текущего пользователя, сначала самые новые.
+    /// Возвращает страницу переписок текущего пользователя с учётом фильтра.
     /// Параметры передаются явно: значения по умолчанию в требовании протокола Swift не поддерживает,
     /// а объявленные только в реализации через протокол всё равно не работают.
-    func fetchConversations(offset: Int?, count: Int?) async throws -> ConversationsPage
+    func fetchConversations(filter: ConversationListFilter, count: Int?) async throws -> ConversationsPage
+    /// Возвращает переписки по списку id.
+    func fetchConversations(ids: [Int]) async throws -> ConversationsBatch
 }
 
 final class ConversationService: ConversationServiceProtocol {
@@ -31,11 +33,28 @@ final class ConversationService: ConversationServiceProtocol {
 
     /// Загружает страницу переписок через `GET /conversations/getList`.
     /// - Parameters:
-    ///   - offset: сколько первых переписок пропустить; за следующей страницей увеличивается на количество
-    ///     уже полученных. `nil` — с начала списка.
+    ///   - filter: фильтр и сдвиг (или курсор) страницы.
     ///   - count: размер страницы; `nil` — значение сервера по умолчанию (30), максимум 100.
     /// - Returns: страница переписок; запрашивать дальше имеет смысл, пока `hasNext` равен `true`.
-    func fetchConversations(offset: Int?, count: Int?) async throws -> ConversationsPage {
-        try await networkService.request(ConversationEndpoint.getList(offset: offset, count: count))
+    func fetchConversations(filter: ConversationListFilter, count: Int?) async throws -> ConversationsPage {
+        try await networkService.request(ConversationEndpoint.getList(filter: filter, count: count))
+    }
+
+    /// Загружает переписки по id через `GET /conversations/getBatch`. Больше `ConversationEndpoint.maxBatchCount`
+    /// id за раз сервер не принимает — лишние запрашиваются следующими запросами, ответы склеиваются.
+    /// - Parameter ids: идентификаторы переписок; повторы игнорируются.
+    /// - Returns: найденные переписки в порядке запроса и id ненайденных.
+    func fetchConversations(ids: [Int]) async throws -> ConversationsBatch {
+        var seenIds = Set<Int>()
+        let uniqueIds = ids.filter { seenIds.insert($0).inserted }
+        var conversations: [Conversation] = []
+        var notFoundIds: [Int] = []
+        for start in stride(from: 0, to: uniqueIds.count, by: ConversationEndpoint.maxBatchCount) {
+            let chunk = Array(uniqueIds[start..<min(start + ConversationEndpoint.maxBatchCount, uniqueIds.count)])
+            let batch: ConversationsBatch = try await networkService.request(ConversationEndpoint.getBatch(ids: chunk))
+            conversations += batch.conversations
+            notFoundIds += batch.notFoundIds
+        }
+        return ConversationsBatch(conversations: conversations, notFoundIds: notFoundIds)
     }
 }

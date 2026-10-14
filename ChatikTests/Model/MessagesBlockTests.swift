@@ -17,7 +17,7 @@ final class MessagesBlockTests: XCTestCase {
           "messages": [
             {
               "messageId": 15, "clientId": "6f1c2a9e-4b7d-4e3a-9c51-0d2f8b6a7e14", "conversationId": 1, "blockId": 2, "senderId": 1, "type": "text", "text": "Привет!",
-              "isEdited": false, "createdAt": 1790846400, "updatedAt": 1790846400
+              "isEdited": false, "createdAt": 1790846400000, "updatedAt": 1790846400000
             }
           ]
         }

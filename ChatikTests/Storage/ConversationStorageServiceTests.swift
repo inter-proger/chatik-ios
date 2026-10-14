@@ -25,11 +25,12 @@ final class ConversationStorageServiceTests: XCTestCase {
 
     // MARK: - Сохранение
 
-    /// Кейс: сохранены личная переписка (с id собеседника) и групповая (с названием и аватаром).
-    /// Ожидание: обе читаются из БД без потерь, включая `opponentUserId`; аватар попал в хранилище файлов,
-    /// а пользователей переписка не создаёт — они живут в кэше пользователей.
-    func test_saveConversations_roundTripsAndStoresAvatar() async throws {
-        try await sut.save(conversations: [.singleStub, .groupStub])
+    /// Кейс: сохранены личная переписка (с id собеседника, без сообщений) и групповая (с названием, аватаром
+    /// и последним сообщением).
+    /// Ожидание: обе читаются из БД без потерь, включая `lastMessage` и время в миллисекундах; аватар попал
+    /// в хранилище файлов, а пользователей переписка не создаёт — они живут в кэше пользователей.
+    func test_save_roundTripsAndStoresAvatar() async throws {
+        try await sut.save(conversations: [.singleStub, .groupStub], state: ConversationListState())
 
         let groupFound = try await sut.find(byId: Conversation.groupStub.id)
         let singleFound = try await sut.find(byId: Conversation.singleStub.id)
@@ -37,183 +38,217 @@ final class ConversationStorageServiceTests: XCTestCase {
         let files = try await FileStorageService(container: container).fetchAll()
         XCTAssertEqual(groupFound, .groupStub)
         XCTAssertEqual(singleFound, .singleStub)
-        XCTAssertEqual(singleFound?.opponentUserId, 2)
         XCTAssertTrue(users.isEmpty)
         XCTAssertEqual(files, [.stub])
     }
 
-    /// Кейс: переписка сохранена, затем сохранена повторно с тем же `conversationId` и новым названием.
-    /// Ожидание: в БД одна запись с обновлённым названием.
-    func test_save_existingId_updatesRecord() async throws {
-        try await sut.save(conversation: .groupStub)
+    /// Кейс: последнее сообщение неизвестного типа без текста.
+    /// Ожидание: читается из БД как есть — тип `.unknown`, текст `nil`.
+    func test_save_lastMessageWithoutText_roundTrips() async throws {
+        let conversation = Conversation.make(id: 1).with(position: .stub, lastMessage: LastMessage(messageId: 3, type: .unknown, text: nil, updatedAt: .stub(7)))
 
-        try await sut.save(conversation: makeGroup(id: Conversation.groupStub.id, name: "Новое название"))
+        try await sut.save(conversations: [conversation], state: ConversationListState())
 
-        let conversations = try await sut.fetchAll()
-        XCTAssertEqual(conversations.map(\.name), ["Новое название"])
+        let found = try await sut.find(byId: 1)
+        XCTAssertEqual(found, conversation)
     }
 
-    /// Кейс: в БД переписка с более новым `updatedAt` (пришла событием WebSocket), затем сохраняется более старая
-    /// версия (ответ REST, собранный раньше).
-    /// Ожидание: запись не откатилась — название осталось от новой версии.
-    func test_save_olderVersion_keepsNewerRecord() async throws {
-        let newer = makeGroup(id: 1, name: "Новое").with(updatedAt: Date(timeIntervalSince1970: 1_790_846_500))
-        try await sut.save(conversation: newer)
+    /// Кейс: состояние синхронизации записано, затем перезаписано.
+    /// Ожидание: читается последнее состояние; запись одна.
+    func test_save_state_roundTripsAndOverwrites() async throws {
+        let first = ConversationListState(isLoaded: true, hasMorePages: true, positionWatermark: .stub, positionWatermarkCeiling: nil, infoWatermark: .stub(-5))
+        let second = ConversationListState(isLoaded: true, hasMorePages: false, positionWatermark: .stub(10), positionWatermarkCeiling: .stub(3), infoWatermark: nil)
+        try await sut.save(conversations: [], state: first)
 
-        try await sut.save(conversation: makeGroup(id: 1, name: "Старое"))
+        try await sut.save(conversations: [], state: second)
 
-        let conversations = try await sut.fetchAll()
-        XCTAssertEqual(conversations, [newer])
+        let stored = try await sut.fetchList()
+        let records = try await container.performRead { context in
+            try context.count(for: ConversationListStateEntity.makeFetchRequest())
+        }
+        XCTAssertEqual(stored.state, second)
+        XCTAssertEqual(records, 1)
     }
 
-    /// Кейс: личная переписка пересохранена группой — у неё больше нет собеседника.
+    /// Кейс: в БД нет записи состояния синхронизации (первый запуск).
+    /// Ожидание: возвращается состояние по умолчанию — список не загружен, водяных знаков нет.
+    func test_fetchList_withoutState_returnsDefaultState() async throws {
+        let stored = try await sut.fetchList()
+
+        XCTAssertEqual(stored.state, ConversationListState())
+        XCTAssertTrue(stored.conversations.isEmpty)
+    }
+
+    /// Кейс: в БД записано состояние синхронизации; затем переписка сохранена без состояния (`state: nil`).
+    /// Ожидание: переписка записана, сохранённое состояние не изменилось.
+    func test_save_nilState_keepsStoredState() async throws {
+        let state = ConversationListState(isLoaded: true, hasMorePages: true, positionWatermark: .stub, positionWatermarkCeiling: nil, infoWatermark: .stub)
+        try await sut.save(conversations: [], state: state)
+
+        try await sut.save(conversations: [Conversation.make(id: 1)], state: nil)
+
+        let stored = try await sut.fetchList()
+        XCTAssertEqual(stored.conversations.map(\.id), [1])
+        XCTAssertEqual(stored.state, state)
+    }
+
+    /// Кейс: в БД переписка с более поздней позицией и более новой информацией, затем сохраняется более старая
+    /// версия обоих (страница, собранная раньше события).
+    /// Ожидание: правила слияния не дают откатить ни позицию, ни информацию.
+    func test_save_olderVersion_keepsNewerPositionAndInfo() async throws {
+        let newer = Conversation.make(id: 1)
+            .with(name: "Новое", updatedInfoAt: .stub(5000))
+            .with(position: .stub(5000), lastMessage: .make(id: 16, updatedAt: .stub(5000)))
+        try await sut.save(conversations: [newer], state: ConversationListState())
+
+        try await sut.save(conversations: [Conversation.make(id: 1)], state: ConversationListState())
+
+        let found = try await sut.find(byId: 1)
+        XCTAssertEqual(found, newer)
+    }
+
+    /// Кейс: в БД группа с аватаром и более новой информацией; сохраняется версия с более поздней позицией,
+    /// но старой информацией без аватара.
+    /// Ожидание: позиция взята, а аватар остался связан с перепиской — он из сохранённой версии.
+    func test_save_newerPositionOlderInfo_keepsStoredAvatar() async throws {
+        let stored = Conversation.groupStub.with(name: "Команда", updatedInfoAt: .stub(9000))
+        try await sut.save(conversations: [stored], state: ConversationListState())
+        let incoming = Conversation(
+            conversationId: stored.conversationId, type: .group, memberIds: stored.memberIds, name: "Старое", avatar: nil,
+            opponentUserId: nil, lastMessage: .make(id: 99, updatedAt: .stub(9999)), positionUpdatedAt: .stub(9999), updatedInfoAt: .stub
+        )
+
+        try await sut.save(conversations: [incoming], state: ConversationListState())
+
+        let found = try await sut.find(byId: stored.conversationId)
+        XCTAssertEqual(found?.avatar, .stub)
+        XCTAssertEqual(found?.name, "Команда")
+        XCTAssertEqual(found?.positionUpdatedAt, .stub(9999))
+    }
+
+    /// Кейс: личная переписка пересохранена группой с более новой информацией — у неё больше нет собеседника.
     /// Ожидание: `opponentUserId` в БД обнулён, а не остался от прежней версии.
     func test_save_opponentRemoved_clearsOpponentId() async throws {
-        try await sut.save(conversation: makeSingle(id: 1, opponentUserId: 5))
+        let single = Conversation(
+            conversationId: 1, type: .single, memberIds: [1, 5], name: nil, avatar: nil, opponentUserId: 5,
+            lastMessage: nil, positionUpdatedAt: .stub, updatedInfoAt: .stub
+        )
+        try await sut.save(conversations: [single], state: ConversationListState())
 
-        try await sut.save(conversation: makeGroup(id: 1))
+        try await sut.save(conversations: [Conversation.make(id: 1, updatedInfoAt: .stub(1))], state: ConversationListState())
 
         let found = try await sut.find(byId: 1)
         XCTAssertNil(found?.opponentUserId)
     }
 
-    /// Кейс: переписки сохранены вразнобой.
-    /// Ожидание: выборка отдаёт их по убыванию `conversationId` — как сервер.
-    func test_fetchAll_sortedByIdDescending() async throws {
-        try await sut.save(conversations: [makeGroup(id: 2), makeGroup(id: 3), makeGroup(id: 1)])
+    // MARK: - Порядок списка
 
-        let conversations = try await sut.fetchAll()
+    /// Кейс: переписки с разными позициями и две с одинаковой позицией сохранены вразнобой.
+    /// Ожидание: выборка отдаёт их по убыванию позиции, при равенстве — по убыванию `conversationId`.
+    func test_fetchList_sortedByPositionThenId() async throws {
+        let conversations = [
+            Conversation.make(id: 1, position: .stub(300)),
+            Conversation.make(id: 2, position: .stub(100)),
+            Conversation.make(id: 3, position: .stub(200)),
+            Conversation.make(id: 4, position: .stub(100)),
+        ]
+        try await sut.save(conversations: conversations, state: ConversationListState())
 
-        XCTAssertEqual(conversations.map(\.id), [3, 2, 1])
+        let stored = try await sut.fetchList()
+
+        XCTAssertEqual(stored.conversations.map(\.id), [1, 3, 4, 2])
     }
 
-    /// Кейс: в БД пять переписок, запрошены три самые новые.
-    /// Ожидание: возвращены три переписки с наибольшими `conversationId`, по убыванию.
-    func test_fetchLatest_returnsNewestWithinLimit() async throws {
-        try await sut.save(conversations: (1...5).map { makeGroup(id: $0) })
-
-        let conversations = try await sut.fetchLatest(limit: 3)
-
-        XCTAssertEqual(conversations.map(\.id), [5, 4, 3])
-    }
-
-    /// Кейс: в БД есть переписка без обязательного поля `type`.
-    /// Ожидание: выборка её пропускает, остальные записи возвращаются.
-    func test_fetchAll_skipsBrokenRecords() async throws {
-        try await sut.save(conversation: .groupStub)
+    /// Кейс: в БД есть переписка без обязательного поля `type` и переписка с битым последним сообщением
+    /// (есть `lastMessageId`, нет `lastMessageType`).
+    /// Ожидание: выборка их пропускает, остальные записи возвращаются.
+    func test_fetchList_skipsBrokenRecords() async throws {
+        try await sut.save(conversations: [.groupStub], state: ConversationListState())
         try await container.performWrite { context in
-            let broken = ConversationEntity(context: context)
-            broken.conversationId = 100
-            broken.memberIds = try JSONEncoder().encode([1, 2])
+            let withoutType = ConversationEntity(context: context)
+            withoutType.conversationId = 100
+            withoutType.memberIds = try JSONEncoder().encode([1, 2])
+            let brokenLast = ConversationEntity(context: context)
+            brokenLast.conversationId = 101
+            brokenLast.type = ConversationType.group.rawValue
+            brokenLast.memberIds = try JSONEncoder().encode([1, 2])
+            brokenLast.lastMessageId = 5
             try context.save()
         }
 
-        let conversations = try await sut.fetchAll()
+        let stored = try await sut.fetchList()
 
-        XCTAssertEqual(conversations.map(\.id), [Conversation.groupStub.id])
+        XCTAssertEqual(stored.conversations.map(\.id), [Conversation.groupStub.id])
     }
 
-    /// Кейс: `find` и `delete` по `conversationId`, которого нет в БД.
-    /// Ожидание: не падают; `find` возвращает `nil`, остальные записи не тронуты.
-    func test_findAndDelete_missingId_doNothing() async throws {
-        try await sut.save(conversation: .groupStub)
+    // MARK: - Замена списка
 
-        let found = try await sut.find(byId: 999)
-        try await sut.delete(byId: 999)
+    /// Кейс: в БД переписки 1…5; список заменён переписками [5, 3] с новым состоянием.
+    /// Ожидание: остались только 5 и 3, состояние записано; аватары удалённых переписок остались в файлах.
+    func test_replaceList_removesMissingAndStoresState() async throws {
+        try await sut.save(conversations: (1...5).map { Conversation.make(id: $0) } + [.groupStub], state: ConversationListState())
+        let state = ConversationListState(isLoaded: true, hasMorePages: true, positionWatermark: .stub, positionWatermarkCeiling: nil, infoWatermark: .stub)
 
-        let conversations = try await sut.fetchAll()
-        XCTAssertNil(found)
-        XCTAssertEqual(conversations, [.groupStub])
-    }
+        try await sut.replaceList(with: [Conversation.make(id: 5), Conversation.make(id: 3)], state: state)
 
-    /// Кейс: групповая переписка с аватаром удалена по `conversationId`.
-    /// Ожидание: переписки нет в БД, аватар остался в хранилище файлов.
-    func test_delete_keepsAvatar() async throws {
-        try await sut.save(conversation: .groupStub)
-
-        try await sut.delete(byId: Conversation.groupStub.id)
-
-        let found = try await sut.find(byId: Conversation.groupStub.id)
+        let stored = try await sut.fetchList()
         let files = try await FileStorageService(container: container).fetchAll()
-        XCTAssertNil(found)
+        XCTAssertEqual(Set(stored.conversations.map(\.id)), [5, 3])
+        XCTAssertEqual(stored.state, state)
         XCTAssertEqual(files, [.stub])
     }
 
-    // MARK: - Страницы
+    /// Кейс: в БД переписка с последним сообщением; список заменён версией сервера, где последнее сообщение
+    /// удалено (`lastMessage: nil`), позиция ушла назад, а информация старше сохранённой.
+    /// Ожидание: записана ровно версия сервера — без слияния с сохранённой, как и в списке в памяти.
+    func test_replaceList_overwritesWithoutMerging() async throws {
+        let stored = Conversation.make(id: 1)
+            .with(name: "Старое", updatedInfoAt: .stub(500))
+            .with(position: .stub(100), lastMessage: .make(id: 9, updatedAt: .stub(100)))
+        try await sut.save(conversations: [stored], state: ConversationListState())
+        let server = Conversation.make(id: 1, updatedInfoAt: .stub(10)).with(position: .stub(50), lastMessage: nil)
 
-    /// Кейс: в БД переписки 1…5; первая страница с сервера — [5, 3], `hasNext: true`.
-    /// Ожидание: удалена только переписка 4 — она в покрытом страницей диапазоне, но её нет на сервере;
-    /// переписки ниже страницы (1, 2) не тронуты.
-    func test_savePage_firstPageWithNext_removesMissingWithinRange() async throws {
-        try await sut.save(conversations: (1...5).map { makeGroup(id: $0) })
-        let page = ConversationsPage(conversations: [makeGroup(id: 5), makeGroup(id: 3)], hasNext: true)
+        try await sut.replaceList(with: [server], state: ConversationListState(isLoaded: true))
 
-        try await sut.save(page: page, isFirstPage: true)
-
-        let conversations = try await sut.fetchAll()
-        XCTAssertEqual(conversations.map(\.id), [5, 3, 2, 1])
+        let found = try await sut.find(byId: 1)
+        XCTAssertEqual(found, server)
     }
 
-    /// Кейс: в БД переписки 1…3; первая страница с сервера — [3], `hasNext: false`.
-    /// Ожидание: остальные переписки удалены — страница описывает весь список на сервере.
-    func test_savePage_onlyPage_removesAllMissing() async throws {
-        try await sut.save(conversations: (1...3).map { makeGroup(id: $0) })
+    /// Кейс: в БД группа с аватаром; список заменён её версией без аватара.
+    /// Ожидание: аватар отвязан от переписки — замена не подставляет сохранённый.
+    func test_replaceList_avatarRemoved_clearsAvatar() async throws {
+        try await sut.save(conversations: [.groupStub], state: ConversationListState())
+        let server = Conversation(
+            conversationId: Conversation.groupStub.conversationId, type: .group, memberIds: Conversation.groupStub.memberIds,
+            name: Conversation.groupStub.name, avatar: nil, opponentUserId: nil, lastMessage: Conversation.groupStub.lastMessage,
+            positionUpdatedAt: Conversation.groupStub.positionUpdatedAt, updatedInfoAt: Conversation.groupStub.updatedInfoAt
+        )
 
-        try await sut.save(page: ConversationsPage(conversations: [makeGroup(id: 3)], hasNext: false), isFirstPage: true)
+        try await sut.replaceList(with: [server], state: ConversationListState(isLoaded: true))
 
-        let conversations = try await sut.fetchAll()
-        XCTAssertEqual(conversations.map(\.id), [3])
+        let found = try await sut.find(byId: server.conversationId)
+        XCTAssertNil(found?.avatar)
     }
 
-    /// Кейс: в БД есть переписки; первая страница с сервера пуста.
-    /// Ожидание: БД переписок очищена — на сервере переписок нет.
-    func test_savePage_emptyFirstPage_removesAll() async throws {
-        try await sut.save(conversations: [.singleStub, .groupStub])
+    /// Кейс: список заменён пустым.
+    /// Ожидание: в БД не осталось переписок.
+    func test_replaceList_empty_removesAll() async throws {
+        try await sut.save(conversations: [.singleStub, .groupStub], state: ConversationListState())
 
-        try await sut.save(page: ConversationsPage(conversations: [], hasNext: false), isFirstPage: true)
+        try await sut.replaceList(with: [], state: ConversationListState(isLoaded: true))
 
-        let conversations = try await sut.fetchAll()
-        XCTAssertTrue(conversations.isEmpty)
+        let stored = try await sut.fetchList()
+        XCTAssertTrue(stored.conversations.isEmpty)
+        XCTAssertTrue(stored.state.isLoaded)
     }
 
-    /// Кейс: в БД переписки 1…10; не первая страница — [8, 6], `hasNext: true`.
-    /// Ожидание: удалена только переписка 7 — выше и ниже диапазона страницы ничего не тронуто.
-    func test_savePage_nextPage_removesMissingOnlyWithinPage() async throws {
-        try await sut.save(conversations: (1...10).map { makeGroup(id: $0) })
-        let page = ConversationsPage(conversations: [makeGroup(id: 8), makeGroup(id: 6)], hasNext: true)
+    /// Кейс: `find` по `conversationId`, которого нет в БД.
+    /// Ожидание: `nil`, без ошибки.
+    func test_find_missingId_returnsNil() async throws {
+        try await sut.save(conversations: [.groupStub], state: ConversationListState())
 
-        try await sut.save(page: page, isFirstPage: false)
+        let found = try await sut.find(byId: 999)
 
-        let conversations = try await sut.fetchAll()
-        XCTAssertEqual(conversations.map(\.id), [10, 9, 8, 6, 5, 4, 3, 2, 1])
-    }
-
-    /// Кейс: страница с сервера содержит новые данные уже сохранённой переписки.
-    /// Ожидание: переписка обновлена, а не удалена и не продублирована.
-    func test_savePage_updatesExisting() async throws {
-        try await sut.save(conversation: makeGroup(id: 1, name: "Старое"))
-
-        try await sut.save(page: ConversationsPage(conversations: [makeGroup(id: 1, name: "Новое")], hasNext: false), isFirstPage: true)
-
-        let conversations = try await sut.fetchAll()
-        XCTAssertEqual(conversations.map(\.name), ["Новое"])
-    }
-
-    // MARK: - Helpers
-
-    /// Групповая переписка без аватара.
-    /// - Parameters:
-    ///   - id: идентификатор переписки.
-    ///   - name: название группы.
-    private func makeGroup(id: Int, name: String = "Группа") -> Conversation {
-        Conversation(conversationId: id, type: .group, memberIds: [1, 2, 3], name: name, avatar: nil, opponentUserId: nil, updatedAt: Date(timeIntervalSince1970: 1_790_846_400))
-    }
-
-    /// Личная переписка с указанным собеседником.
-    /// - Parameters:
-    ///   - id: идентификатор переписки.
-    ///   - opponentUserId: id собеседника.
-    private func makeSingle(id: Int, opponentUserId: Int) -> Conversation {
-        Conversation(conversationId: id, type: .single, memberIds: [1, opponentUserId], name: nil, avatar: nil, opponentUserId: opponentUserId, updatedAt: Date(timeIntervalSince1970: 1_790_846_400))
+        XCTAssertNil(found)
     }
 }

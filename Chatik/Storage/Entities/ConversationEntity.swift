@@ -16,11 +16,19 @@ final class ConversationEntity: NSManagedObject, StorageEntity {
     @NSManaged var avatar: FileEntity?
     /// Id собеседника; `nil` — собеседника нет (группа).
     @NSManaged var opponentUserId: NSNumber?
-    /// Время изменения полей переписки. Записям, сохранённым до появления поля, миграция проставляет 1970 год:
-    /// любая версия с сервера их новее.
-    @NSManaged var updatedAt: Date?
+    /// Поля `LastMessage`; `lastMessageId == nil` — последнего сообщения нет.
+    @NSManaged var lastMessageId: NSNumber?
+    @NSManaged var lastMessageType: String?
+    @NSManaged var lastMessageText: String?
+    /// `LastMessage.updatedAt` в миллисекундах.
+    @NSManaged var lastMessageUpdatedAt: NSNumber?
+    /// `positionUpdatedAt` в миллисекундах; по нему сортируется список.
+    @NSManaged var positionUpdatedAt: Int64
+    /// `updatedInfoAt` в миллисекундах.
+    @NSManaged var updatedInfoAt: Int64
 
     static let idKey = "conversationId"
+    static let positionKey = "positionUpdatedAt"
 
     var storageId: Int { Int(conversationId) }
 
@@ -35,27 +43,29 @@ final class ConversationEntity: NSManagedObject, StorageEntity {
         name = conversation.name
         self.avatar = avatar
         opponentUserId = conversation.opponentUserId.map { NSNumber(value: $0) }
-        updatedAt = conversation.updatedAt
+        lastMessageId = conversation.lastMessage.map { NSNumber(value: $0.messageId) }
+        lastMessageType = conversation.lastMessage?.type.rawValue
+        lastMessageText = conversation.lastMessage?.text
+        lastMessageUpdatedAt = conversation.lastMessage.map { NSNumber(value: $0.updatedAt.milliseconds) }
+        positionUpdatedAt = conversation.positionUpdatedAt.milliseconds
+        updatedInfoAt = conversation.updatedInfoAt.milliseconds
     }
 
-    /// `true`, если в записи версия переписки новее `conversation`: такую запись перезаписывать нельзя —
-    /// событие WebSocket могло прийти раньше ответа REST с более старыми данными.
-    /// - Parameter conversation: версия, которую собираются сохранить.
-    func isNewer(than conversation: Conversation) -> Bool {
-        guard let updatedAt else { return false }
-        return updatedAt > conversation.updatedAt
-    }
-
-    /// Сохраняет переписки вместе с аватарами в контексте (upsert по `conversationId`),
-    /// не вызывая `save()`. Запись, в которой версия новее сохраняемой, не меняется.
+    /// Сохраняет переписки вместе с аватарами в контексте (upsert по `conversationId`), не вызывая `save()`.
+    /// По умолчанию существующая запись сливается с сохраняемой версией по правилам `ConversationMerger` —
+    /// страховка на случай, если в БД окажется версия новее: позиция и информация не откатываются.
     /// - Parameters:
     ///   - conversations: сырые структуры переписок.
+    ///   - mergingWithStored: `false` — запись перезаписывается как есть (замена списка целиком).
     ///   - context: фоновый контекст записи.
-    static func upsert(_ conversations: [Conversation], in context: NSManagedObjectContext) throws {
+    static func upsert(_ conversations: [Conversation], mergingWithStored: Bool = true, in context: NSManagedObjectContext) throws {
         let avatarsById = try FileEntity.upsert(conversations.compactMap(\.avatar), in: context)
         _ = try upsert(conversations, id: \.conversationId, in: context) { entity, conversation in
-            guard !entity.isNewer(than: conversation) else { return }
-            entity.update(from: conversation, avatar: conversation.avatar.flatMap { avatarsById[$0.fileId] })
+            // У новой записи полей ещё нет, и `init?(entity:)` вернёт `nil` — тогда сливать не с чем.
+            let stored = mergingWithStored ? Conversation(entity: entity) : nil
+            let merged = stored.map { ConversationMerger.merge(.full(conversation), into: $0)?.conversation ?? $0 } ?? conversation
+            // Аватар из сохранённой версии (её информация новее) уже связан с записью — его в `avatarsById` нет.
+            entity.update(from: merged, avatar: merged.avatar.flatMap { avatarsById[$0.fileId] ?? entity.avatar })
         }
     }
 }
@@ -67,12 +77,16 @@ extension Conversation {
     init?(entity: ConversationEntity) {
         guard let rawType = entity.type,
               let memberIdsData = entity.memberIds,
-              let memberIds = try? JSONDecoder().decode([Int].self, from: memberIdsData),
-              let updatedAt = entity.updatedAt else { return nil }
+              let memberIds = try? JSONDecoder().decode([Int].self, from: memberIdsData) else { return nil }
         var avatar: RemoteFile?
         if let avatarEntity = entity.avatar {
             guard let file = RemoteFile(entity: avatarEntity) else { return nil }
             avatar = file
+        }
+        var lastMessage: LastMessage?
+        if let lastMessageId = entity.lastMessageId {
+            guard let message = LastMessage(id: lastMessageId, entity: entity) else { return nil }
+            lastMessage = message
         }
         self.init(
             conversationId: Int(entity.conversationId),
@@ -81,7 +95,26 @@ extension Conversation {
             name: entity.name,
             avatar: avatar,
             opponentUserId: entity.opponentUserId?.intValue,
-            updatedAt: updatedAt
+            lastMessage: lastMessage,
+            positionUpdatedAt: ServerTime(milliseconds: entity.positionUpdatedAt),
+            updatedInfoAt: ServerTime(milliseconds: entity.updatedInfoAt)
+        )
+    }
+}
+
+private extension LastMessage {
+    /// Собирает последнее сообщение из полей записи переписки.
+    /// - Parameters:
+    ///   - id: `lastMessageId` записи.
+    ///   - entity: запись CoreData.
+    /// - Returns: `nil`, если в записи нет обязательных полей последнего сообщения.
+    init?(id: NSNumber, entity: ConversationEntity) {
+        guard let rawType = entity.lastMessageType, let updatedAt = entity.lastMessageUpdatedAt else { return nil }
+        self.init(
+            messageId: id.intValue,
+            type: MessageType(rawValue: rawType) ?? .unknown,
+            text: entity.lastMessageText,
+            updatedAt: ServerTime(milliseconds: updatedAt.int64Value)
         )
     }
 }

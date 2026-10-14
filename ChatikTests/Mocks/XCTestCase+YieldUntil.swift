@@ -47,3 +47,15 @@ extension XCTestCase {
         XCTAssertTrue(condition(), "Условие не выполнилось за \(timeout)", file: file, line: line)
     }
 }
+
+extension XCTestCase {
+    /// Уступает main actor заданное число раз — чтобы уже поставленные задачи успели выполниться там, где
+    /// проверяется, что что-то **не** произошло.
+    /// - Parameter count: число уступок.
+    @nonobjc
+    func yieldTimes(_ count: Int = 20) async {
+        for _ in 0..<count {
+            await Task.yield()
+        }
+    }
+}

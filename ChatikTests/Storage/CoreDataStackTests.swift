@@ -28,23 +28,26 @@ final class CoreDataStackTests: XCTestCase {
 
         let container = CoreDataStack.makeContainer(storeURL: storeURL)
         let storage = ConversationStorageService(container: container)
-        try await storage.save(conversation: .groupStub)
+        try await storage.save(conversations: [.groupStub], state: ConversationListState())
 
-        let conversations = try await storage.fetchAll()
+        let stored = try await storage.fetchList()
         XCTAssertEqual(container.persistentStoreCoordinator.persistentStores.count, 1)
-        XCTAssertEqual(conversations, [.groupStub])
+        XCTAssertEqual(stored.conversations, [.groupStub])
     }
 
     /// Кейс: хранилище исправно, контейнер открыт повторно (перезапуск приложения).
-    /// Ожидание: данные на месте — пересоздаётся только хранилище, которое не открылось.
+    /// Ожидание: данные и состояние синхронизации на месте — пересоздаётся только хранилище, которое не открылось,
+    /// а очистка кэша со временем в секундах не трогает хранилище текущей версии.
     func test_makeContainer_validStore_keepsData() async throws {
+        let state = ConversationListState(isLoaded: true, hasMorePages: true, positionWatermark: .stub, positionWatermarkCeiling: nil, infoWatermark: .stub)
         try await ConversationStorageService(container: CoreDataStack.makeContainer(storeURL: storeURL))
-            .save(conversation: .groupStub)
+            .save(conversations: [.groupStub], state: state)
 
         let reopened = ConversationStorageService(container: CoreDataStack.makeContainer(storeURL: storeURL))
 
-        let conversations = try await reopened.fetchAll()
-        XCTAssertEqual(conversations, [.groupStub])
+        let stored = try await reopened.fetchList()
+        XCTAssertEqual(stored.conversations, [.groupStub])
+        XCTAssertEqual(stored.state, state)
     }
 
     /// Кейс: storage-сервис работает через контейнер, хранилище которого открывается в фоне; запрос пришёл сразу.
@@ -55,76 +58,87 @@ final class CoreDataStackTests: XCTestCase {
             CoreDataStack.makeContainer(storeURL: storeURL)
         })
 
-        try await storage.save(conversation: .groupStub)
+        try await storage.save(conversations: [.groupStub], state: ConversationListState())
 
-        let conversations = try await storage.fetchAll()
-        XCTAssertEqual(conversations, [.groupStub])
+        let stored = try await storage.fetchList()
+        XCTAssertEqual(stored.conversations, [.groupStub])
+    }
+
+    /// Кейс: хранилище создано пятой версией модели — время в секундах; в нём переписка, сообщение,
+    /// неотправленное сообщение и пользователь.
+    /// Ожидание: хранилище мигрировано, а не пересоздано: переписки и сообщения со старым временем удалены,
+    /// очередь отправки и пользователи на месте, новые сообщения сохраняются.
+    func test_makeContainer_fifthModelVersion_clearsServerTimeCacheAndKeepsOutgoing() async throws {
+        try makeStore(modelVersion: "Chatik 5") { context in
+            try self.insertConversation(id: 7, into: context)
+            let message = NSEntityDescription.insertNewObject(forEntityName: "MessageEntity", into: context)
+            message.setValue(1, forKey: "messageId")
+            message.setValue(7, forKey: "conversationId")
+            message.setValue("c1", forKey: "clientId")
+            message.setValue("text", forKey: "type")
+            message.setValue("Старое", forKey: "text")
+            message.setValue(Date(timeIntervalSince1970: 1_790_846_400), forKey: "createdAt")
+            message.setValue(Date(timeIntervalSince1970: 1_790_846_400), forKey: "updatedAt")
+            let outgoing = NSEntityDescription.insertNewObject(forEntityName: "OutgoingMessageEntity", into: context)
+            outgoing.setValue("pending", forKey: "clientId")
+            outgoing.setValue(7, forKey: "conversationId")
+            outgoing.setValue(1, forKey: "senderId")
+            outgoing.setValue("Не отправлено", forKey: "text")
+            outgoing.setValue("failed", forKey: "status")
+            outgoing.setValue(Date(timeIntervalSince1970: 1_790_846_400), forKey: "createdAt")
+            try self.insertUser(id: 2, into: context)
+        }
+
+        let container = CoreDataStack.makeContainer(storeURL: storeURL)
+        let messageStorage = MessageStorageService(container: container)
+        let messages = try await messageStorage.fetchLatest(conversationId: 7, limit: 10)
+        try await messageStorage.save(message: .make(id: 2, conversationId: 7))
+
+        let stored = try await ConversationStorageService(container: container).fetchList()
+        let outgoing = try await OutgoingMessageStorageService(container: container).fetchAll()
+        let users = try await UserStorageService(container: container).findStored(byIds: [2])
+        let saved = try await messageStorage.fetchLatest(conversationId: 7, limit: 10)
+        XCTAssertTrue(stored.conversations.isEmpty)
+        XCTAssertEqual(stored.state, ConversationListState())
+        XCTAssertTrue(messages.isEmpty)
+        XCTAssertEqual(outgoing.map(\.clientId), ["pending"])
+        XCTAssertEqual(users.map(\.user.userId), [2])
+        XCTAssertEqual(saved.map(\.id), [2])
     }
 
     /// Кейс: хранилище создано первой версией модели (собеседник переписки — связь с `UserEntity`, без `cachedAt`).
-    /// Ожидание: при открытии текущей версией данные мигрированы, а не удалены: переписки и пользователи на месте,
-    /// `opponentUserId` и `cachedAt` пусты — в первой версии их не было.
-    func test_makeContainer_firstModelVersion_migratesData() async throws {
+    /// Ожидание: хранилище мигрировано: пользователи на месте (`cachedAt` пуст — в первой версии его не было),
+    /// а переписки удалены — время в них в секундах.
+    func test_makeContainer_firstModelVersion_migratesUsersAndClearsConversations() async throws {
         try makeStore(modelVersion: "Chatik") { context in
-            let user = NSEntityDescription.insertNewObject(forEntityName: "UserEntity", into: context)
-            user.setValue(2, forKey: "userId")
-            user.setValue("petr", forKey: "login")
-            user.setValue("Petr", forKey: "name")
-            let conversation = NSEntityDescription.insertNewObject(forEntityName: "ConversationEntity", into: context)
-            conversation.setValue(7, forKey: "conversationId")
-            conversation.setValue("single", forKey: "type")
-            conversation.setValue(try JSONEncoder().encode([1, 2]), forKey: "memberIds")
+            let user = try self.insertUser(id: 2, into: context)
+            let conversation = try self.insertConversation(id: 7, into: context)
             conversation.setValue(user, forKey: "opponentUser")
         }
 
         let container = CoreDataStack.makeContainer(storeURL: storeURL)
 
-        let conversations = try await ConversationStorageService(container: container).fetchAll()
+        let stored = try await ConversationStorageService(container: container).fetchList()
         let users = try await UserStorageService(container: container).findStored(byIds: [2])
-        XCTAssertEqual(conversations.map(\.id), [7])
-        XCTAssertNil(conversations.first?.opponentUserId)
+        XCTAssertTrue(stored.conversations.isEmpty)
         XCTAssertEqual(users, [StoredUser(user: User(userId: 2, login: "petr", name: "Petr", avatar: nil), cachedAt: .distantPast)])
     }
 
     /// Кейс: хранилище создано второй версией модели (без сообщений).
-    /// Ожидание: при открытии текущей версией переписки на месте, а сообщения можно сохранять и читать.
-    func test_makeContainer_secondModelVersion_migratesData() async throws {
+    /// Ожидание: хранилище мигрировано — сообщения можно сохранять и читать; переписки со временем в секундах удалены.
+    func test_makeContainer_secondModelVersion_migratesStore() async throws {
         try makeStore(modelVersion: "Chatik 2") { context in
-            let conversation = NSEntityDescription.insertNewObject(forEntityName: "ConversationEntity", into: context)
-            conversation.setValue(7, forKey: "conversationId")
-            conversation.setValue("group", forKey: "type")
-            conversation.setValue(try JSONEncoder().encode([1, 2]), forKey: "memberIds")
+            try self.insertConversation(id: 7, into: context)
         }
 
         let container = CoreDataStack.makeContainer(storeURL: storeURL)
         let messageStorage = MessageStorageService(container: container)
         try await messageStorage.save(message: .make(id: 1, conversationId: 7))
 
-        let conversations = try await ConversationStorageService(container: container).fetchAll()
+        let stored = try await ConversationStorageService(container: container).fetchList()
         let messages = try await messageStorage.fetchLatest(conversationId: 7, limit: 10)
-        XCTAssertEqual(conversations.map(\.id), [7])
+        XCTAssertTrue(stored.conversations.isEmpty)
         XCTAssertEqual(messages.map(\.id), [1])
-    }
-
-    /// Кейс: хранилище создано третьей версией модели (у переписки нет `updatedAt`).
-    /// Ожидание: при открытии текущей версией переписка на месте, а её `updatedAt` — 1970 год: любая версия
-    /// с сервера новее и перезапишет её.
-    func test_makeContainer_thirdModelVersion_migratesConversationsWithOldestUpdatedAt() async throws {
-        try makeStore(modelVersion: "Chatik 3") { context in
-            let conversation = NSEntityDescription.insertNewObject(forEntityName: "ConversationEntity", into: context)
-            conversation.setValue(Conversation.groupStub.id, forKey: "conversationId")
-            conversation.setValue("group", forKey: "type")
-            conversation.setValue(try JSONEncoder().encode([1, 2, 3]), forKey: "memberIds")
-            conversation.setValue("Старое", forKey: "name")
-        }
-
-        let storage = ConversationStorageService(container: CoreDataStack.makeContainer(storeURL: storeURL))
-        let migrated = try await storage.fetchAll()
-        try await storage.save(conversation: .groupStub.with(updatedAt: Date(timeIntervalSince1970: 1)))
-
-        let updated = try await storage.fetchAll()
-        XCTAssertEqual(migrated.map(\.updatedAt), [Date(timeIntervalSince1970: 0)])
-        XCTAssertEqual(updated.map(\.name), ["Команда"])
     }
 
     // MARK: - Helpers
@@ -148,5 +162,31 @@ final class CoreDataStackTests: XCTestCase {
             try context.save()
         }
         try coordinator.remove(store)
+    }
+
+    /// Вставляет переписку прежней версии модели — только поля, общие для всех версий.
+    /// - Parameters:
+    ///   - id: `conversationId`.
+    ///   - context: контекст прежней версии модели.
+    @discardableResult
+    private func insertConversation(id: Int, into context: NSManagedObjectContext) throws -> NSManagedObject {
+        let conversation = NSEntityDescription.insertNewObject(forEntityName: "ConversationEntity", into: context)
+        conversation.setValue(id, forKey: "conversationId")
+        conversation.setValue("group", forKey: "type")
+        conversation.setValue(try JSONEncoder().encode([1, 2]), forKey: "memberIds")
+        return conversation
+    }
+
+    /// Вставляет пользователя прежней версии модели.
+    /// - Parameters:
+    ///   - id: `userId`.
+    ///   - context: контекст прежней версии модели.
+    @discardableResult
+    private func insertUser(id: Int, into context: NSManagedObjectContext) throws -> NSManagedObject {
+        let user = NSEntityDescription.insertNewObject(forEntityName: "UserEntity", into: context)
+        user.setValue(id, forKey: "userId")
+        user.setValue("petr", forKey: "login")
+        user.setValue("Petr", forKey: "name")
+        return user
     }
 }

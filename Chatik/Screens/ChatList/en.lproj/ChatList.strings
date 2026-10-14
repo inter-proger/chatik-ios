@@ -19,3 +19,9 @@
 
 /* Row title when the opponent no longer exists on the server */
 "chat_list.row.deleted_user" = "Deleted user";
+
+/* Navigation title while the chat list is synchronizing with the server */
+"chat_list.updating" = "Updating…";
+
+/* Row preview when the last message has no text or its type is not supported */
+"chat_list.row.message" = "Message";

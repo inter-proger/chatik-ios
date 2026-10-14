@@ -11,8 +11,10 @@ final class WebSocketMessagesTests: XCTestCase {
 
     private let messageJSON = """
     { "messageId": 15, "clientId": "6f1c2a9e-4b7d-4e3a-9c51-0d2f8b6a7e14", "conversationId": 1, "blockId": 2, "senderId": 1, "type": "text", "text": "Привет!",
-      "isEdited": false, "createdAt": 1790846400, "updatedAt": 1790846400 }
+      "isEdited": false, "createdAt": 1790846400000, "updatedAt": 1790846400000 }
     """
+
+    private let lastMessageJSON = #"{ "messageId": 15, "type": "text", "text": "Привет!", "updatedAt": 1790846400000 }"#
 
     /// Разбирает сообщение сервера из JSON.
     private func decode(_ json: String) throws -> WebSocketServerMessage {
@@ -31,30 +33,40 @@ final class WebSocketMessagesTests: XCTestCase {
         XCTAssertFalse(error.requiresAcknowledgement)
     }
 
-    /// Кейс: `messages` / `received` из документации с `userIds`.
-    /// Ожидание: сообщение разобрано целиком, `userIds` прочитаны, подтверждение требуется.
+    /// Кейс: `messages` / `received` из документации с `lastMessage` и `userIds`.
+    /// Ожидание: сообщение и превью разобраны целиком, `userIds` прочитаны, подтверждение требуется.
     func test_decode_messageReceived() throws {
-        let json = #"{"uid":"7d2b","group":"messages","event":"received","body":{"message":\#(messageJSON)},"userIds":[1]}"#
+        let json = #"{"uid":"7d2b","group":"messages","event":"received","body":{"message":\#(messageJSON),"lastMessage":\#(lastMessageJSON)},"userIds":[1]}"#
 
         let message = try decode(json)
 
         XCTAssertEqual(message.uid, "7d2b")
-        XCTAssertEqual(message.event, .messageReceived(.stub))
+        XCTAssertEqual(message.event, .messageReceived(.stub, .make(id: 15)))
         XCTAssertEqual(message.userIds, [1])
         XCTAssertTrue(message.requiresAcknowledgement)
     }
 
-    /// Кейс: `messages` / `edited` и `conversations` / `singleCreated`.
-    /// Ожидание: события разобраны в соответствующие случаи.
+    /// Кейс: `received` без обязательного `lastMessage` — старый формат события.
+    /// Ожидание: событие `.unknown` — разбор не падает, но и неполное событие не применяется.
+    func test_decode_receivedWithoutLastMessage_isUnknown() throws {
+        let message = try decode(#"{"uid":"1","group":"messages","event":"received","body":{"message":\#(messageJSON)}}"#)
+
+        XCTAssertEqual(message.event, .unknown)
+    }
+
+    /// Кейс: `messages` / `edited` с `lastMessage` и без него, `conversations` / `singleCreated` в новом формате.
+    /// Ожидание: события разобраны в соответствующие случаи; у `edited` без превью — `nil`.
     func test_decode_editedAndConversationCreated() throws {
         let conversationJSON = """
         { "conversationId": 1, "type": "single", "memberIds": [1, 2], "name": null, "avatar": null,
-          "opponentUserId": 2, "updatedAt": 1790846400 }
+          "opponentUserId": 2, "lastMessage": null, "positionUpdatedAt": 1790846400000, "updatedInfoAt": 1790846400000 }
         """
+        let editedLast = try decode(#"{"uid":"1","group":"messages","event":"edited","body":{"message":\#(messageJSON),"lastMessage":\#(lastMessageJSON)}}"#)
         let edited = try decode(#"{"uid":"1","group":"messages","event":"edited","body":{"message":\#(messageJSON)}}"#)
         let created = try decode(#"{"uid":"2","group":"conversations","event":"singleCreated","body":{"conversation":\#(conversationJSON)},"userIds":[1,2]}"#)
 
-        XCTAssertEqual(edited.event, .messageEdited(.stub))
+        XCTAssertEqual(editedLast.event, .messageEdited(.stub, .make(id: 15)))
+        XCTAssertEqual(edited.event, .messageEdited(.stub, nil))
         XCTAssertEqual(edited.userIds, [])
         XCTAssertEqual(created.event, .conversationCreated(.singleStub))
     }

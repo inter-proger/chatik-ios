@@ -123,8 +123,6 @@ final class MessageStorageServiceTests: XCTestCase {
             broken.messageId = 2
             broken.conversationId = 1
             broken.type = MessageType.text.rawValue
-            broken.createdAt = .distantPast
-            broken.updatedAt = .distantPast
             try context.save()
         }
 

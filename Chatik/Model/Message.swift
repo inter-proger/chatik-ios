@@ -7,7 +7,7 @@ import Foundation
 
 /// Тип сообщения. Список будет расширяться: неизвестные значения читаются как `.unknown`,
 /// чтобы новый тип с сервера не ломал разбор всего списка.
-enum MessageType: String, Decodable, Equatable {
+enum MessageType: String, Decodable, Hashable, Sendable {
     /// Текстовое сообщение.
     case text
     /// Тип, которого клиент ещё не знает.
@@ -35,9 +35,9 @@ struct Message: Equatable, Identifiable {
     let text: String
     /// Было ли сообщение отредактировано.
     let isEdited: Bool
-    let createdAt: Date
+    let createdAt: ServerTime
     /// Время изменения; у неотредактированного сообщения равно `createdAt`.
-    let updatedAt: Date
+    let updatedAt: ServerTime
 
     var id: Int { messageId }
 }
@@ -47,7 +47,7 @@ extension Message: Decodable {
         case messageId, clientId, conversationId, blockId, senderId, type, text, isEdited, createdAt, updatedAt
     }
 
-    /// Разбирает сообщение; `createdAt` и `updatedAt` приходят Unix timestamp в секундах.
+    /// Разбирает сообщение; `createdAt` и `updatedAt` приходят Unix timestamp в миллисекундах.
     /// Объявлен в extension, чтобы у структуры остался memberwise init.
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -59,8 +59,8 @@ extension Message: Decodable {
         type = try container.decode(MessageType.self, forKey: .type)
         text = try container.decode(String.self, forKey: .text)
         isEdited = try container.decode(Bool.self, forKey: .isEdited)
-        createdAt = Date(timeIntervalSince1970: try container.decode(TimeInterval.self, forKey: .createdAt))
-        updatedAt = Date(timeIntervalSince1970: try container.decode(TimeInterval.self, forKey: .updatedAt))
+        createdAt = try container.decode(ServerTime.self, forKey: .createdAt)
+        updatedAt = try container.decode(ServerTime.self, forKey: .updatedAt)
     }
 }
 

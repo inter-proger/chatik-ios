@@ -30,7 +30,8 @@ protocol MessageSendQueueProtocol: AuthServiceObserver {
 ///
 /// Новое сообщение получает `clientId`, сразу появляется в `outgoingMessages` в статусе «отправляется» и сохраняется
 /// в БД. Запросы `/messages/send` уходят по одному в порядке отправки, чтобы сообщения создавались на сервере в том
-/// же порядке. Ответ сервера публикуется в `sentMessages()`, убирает сообщение из очереди и сохраняется в БД
+/// же порядке. Ответ сервера поднимает переписку в списке чатов (`ConversationPositionUpdating`), публикуется
+/// в `sentMessages()`, убирает сообщение из очереди и сохраняется в БД
 /// (неотправленная копия удаляется там же, см. `MessageStorageService`). Событие WebSocket или страница переписки
 /// с тем же `clientId` тоже подтверждают доставку. При ошибке сообщение и все ждущие отправки после него переходят
 /// в статус «не отправлено» — так порядок не нарушится; каждое можно отправить повторно с тем же `clientId` или
@@ -65,14 +66,18 @@ final class MessageSendQueue: MessageSendQueueProtocol {
     /// `true` между `authServiceWillLogout` и `authServiceDidLogout`: новые сообщения не принимаются.
     private var isLoggingOut = false
     private var subscribers: [UUID: AsyncStream<Message>.Continuation] = [:]
-    private var realtimeObservation: Task<Void, Never>?
+    private let positionUpdater: ConversationPositionUpdating
+    /// Подписка на очередь событий WebSocket — подтверждения собственных сообщений. Берётся в `init`: очередь
+    /// создаётся раньше соединения, и события не пройдут мимо.
+    private var eventSubscription: RealtimeSubscription?
 
     /// - Parameters:
     ///   - messageService: отправка `/messages/send`.
     ///   - messageStorage: куда сохраняются отправленные сообщения.
     ///   - outgoingMessageStorage: хранилище очереди в БД.
     ///   - sessionService: текущий пользователь — отправитель.
-    ///   - realtimeService: события WebSocket — подтверждения собственных сообщений.
+    ///   - eventQueue: очередь событий WebSocket — подтверждения собственных сообщений.
+    ///   - positionUpdater: список чатов — поднимает переписку по ответу на отправку.
     ///   - now: текущее время; подменяется в тестах.
     ///   - makeClientId: генератор `clientId` новых сообщений (UUID v4); подменяется в тестах.
     init(
@@ -80,7 +85,8 @@ final class MessageSendQueue: MessageSendQueueProtocol {
         messageStorage: MessageStorageServiceProtocol,
         outgoingMessageStorage: OutgoingMessageStorageServiceProtocol,
         sessionService: SessionServiceProtocol,
-        realtimeService: RealtimeServiceProtocol,
+        eventQueue: RealtimeEventQueueProtocol,
+        positionUpdater: ConversationPositionUpdating,
         now: @escaping () -> Date = { Date() },
         makeClientId: @escaping () -> String = { UUID().uuidString }
     ) {
@@ -90,11 +96,9 @@ final class MessageSendQueue: MessageSendQueueProtocol {
         self.sessionService = sessionService
         self.now = now
         self.makeClientId = makeClientId
-        let events = realtimeService.events()
-        realtimeObservation = Task { [weak self] in
-            for await event in events {
-                self?.handle(event)
-            }
+        self.positionUpdater = positionUpdater
+        eventSubscription = eventQueue.subscribe { [weak self] event in
+            self?.handle(event)
         }
     }
 
@@ -227,10 +231,12 @@ final class MessageSendQueue: MessageSendQueueProtocol {
         }
     }
 
-    /// Применяет ответ сервера: публикует сообщение подписчикам, убирает его из очереди и ставит запись в БД.
-    /// Запись не ждётся — следующее сообщение отправляется сразу; неотправленная копия удаляется из БД в той же записи.
+    /// Применяет ответ сервера: поднимает переписку в списке чатов, публикует сообщение подписчикам, убирает его
+    /// из очереди и ставит запись в БД. Запись не ждётся — следующее сообщение отправляется сразу; неотправленная
+    /// копия удаляется из БД в той же записи.
     /// - Parameter message: созданное сервером сообщение.
     private func confirm(_ message: Message) {
+        positionUpdater.applySentMessage(message)
         subscribers.values.forEach { $0.yield(message) }
         removeConfirmed(by: [message])
         write("сохранить отправленное сообщение") { [messageStorage] in
@@ -272,7 +278,7 @@ final class MessageSendQueue: MessageSendQueueProtocol {
     /// - Parameter event: событие реального времени.
     private func handle(_ event: RealtimeEvent) {
         switch event {
-        case let .messageReceived(message), let .messageEdited(message):
+        case let .messageReceived(message, _), let .messageEdited(message, _):
             removeConfirmed(by: [message])
         case .connected, .conversationCreated:
             break

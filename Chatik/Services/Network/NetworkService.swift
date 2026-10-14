@@ -25,6 +25,7 @@ final class NetworkService: NetworkServiceProtocol {
     private let cookieStorage: HTTPCookieStorage
     /// Куда складываются временные файлы с телами загрузок; каждый удаляется сразу после отправки.
     private let bodyDirectory: URL
+    private let requestTimeout: TimeInterval
     private let onUnauthorized: (@Sendable () async -> Void)?
     private let onActions: (@Sendable ([APIAction]) async -> Void)?
     private let decoder = JSONDecoder()
@@ -35,6 +36,8 @@ final class NetworkService: NetworkServiceProtocol {
     ///   - baseURL: базовый адрес API.
     ///   - cookieStorage: хранилище cookie, которое использует `session`.
     ///   - bodyDirectory: директория для временных файлов с телами загрузок.
+    ///   - requestTimeout: таймаут простоя обычных запросов (не загрузок файлов). Задан явно, а не системные 60 с:
+    ///     очередь событий WebSocket ждёт запросы под арендой, и её сторожевой таймаут должен быть заметно больше.
     ///   - onUnauthorized: вызывается, когда запрос (кроме `Endpoint.terminatesSession`) вернул код 2003 —
     ///     сессия недействительна. Cookie сессии к этому моменту уже очищены; ошибка пробрасывается
     ///     вызывающему только после завершения обработчика, чтобы к её обработке сессия уже была закрыта.
@@ -47,6 +50,7 @@ final class NetworkService: NetworkServiceProtocol {
         baseURL: URL = AppConfig.baseURL,
         cookieStorage: HTTPCookieStorage = .shared,
         bodyDirectory: URL = FileManager.default.temporaryDirectory,
+        requestTimeout: TimeInterval = AppConfig.requestTimeout,
         onUnauthorized: (@Sendable () async -> Void)? = nil,
         onActions: (@Sendable ([APIAction]) async -> Void)? = nil
     ) {
@@ -54,6 +58,7 @@ final class NetworkService: NetworkServiceProtocol {
         self.baseURL = baseURL
         self.cookieStorage = cookieStorage
         self.bodyDirectory = bodyDirectory
+        self.requestTimeout = requestTimeout
         self.onUnauthorized = onUnauthorized
         self.onActions = onActions
     }
@@ -180,15 +185,18 @@ final class NetworkService: NetworkServiceProtocol {
         }
     }
 
-    /// Собирает `URLRequest` в зависимости от HTTP-метода эндпоинта.
+    /// Собирает `URLRequest` в зависимости от HTTP-метода эндпоинта и задаёт ему таймаут.
     private func makeURLRequest(for endpoint: Endpoint) throws -> URLRequest {
         let url = baseURL.appendingPathComponent(endpoint.path)
+        var request: URLRequest
         switch endpoint.method {
         case .get:
-            return try makeGETRequest(url: url, endpoint: endpoint)
+            request = try makeGETRequest(url: url, endpoint: endpoint)
         case .post:
-            return makePOSTRequest(url: url, endpoint: endpoint)
+            request = makePOSTRequest(url: url, endpoint: endpoint)
         }
+        request.timeoutInterval = requestTimeout
+        return request
     }
 
     /// Собирает GET-запрос с параметрами в query string.

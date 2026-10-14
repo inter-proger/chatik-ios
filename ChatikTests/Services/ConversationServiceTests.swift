@@ -56,13 +56,13 @@ final class ConversationServiceTests: XCTestCase {
         }
     }
 
-    /// Кейс: запрос первой страницы списка переписок без явных параметров.
+    /// Кейс: запрос первой страницы списка без фильтра и без размера.
     /// Ожидание: GET /conversations/getList без параметров — сервер применит значения по умолчанию; страница возвращена.
     func test_fetchConversations_withoutParameters_requestsGetListWithoutQueryItems() async throws {
         let expected = ConversationsPage(conversations: [.singleStub], hasNext: false)
         networkService.stubbedResult = .success(expected)
 
-        let page = try await sut.fetchConversations(offset: nil, count: nil)
+        let page = try await sut.fetchConversations(filter: .none(offset: nil), count: nil)
 
         XCTAssertEqual(page, expected)
         let endpoint = try XCTUnwrap(networkService.requestedEndpoints.first)
@@ -71,26 +71,34 @@ final class ConversationServiceTests: XCTestCase {
         XCTAssertEqual(endpoint.parameters, [:])
     }
 
-    /// Кейс: запрос следующей страницы со сдвигом и размером страницы.
-    /// Ожидание: оба параметра уходят в запрос строками.
-    func test_fetchConversations_withParameters_passesThemToEndpoint() async throws {
+    /// Кейс: три вида фильтра списка вместе с размером страницы.
+    /// Ожидание: параметры каждого фильтра уходят строками, незаданные (сдвиг, курсор) не попадают в запрос.
+    func test_fetchConversations_filters_passParameters() async throws {
+        let cases: [(filter: ConversationListFilter, parameters: [String: String])] = [
+            (.none(offset: 30), ["offset": "30", "count": "30"]),
+            (.positionUpdatedAfter(ServerTime(milliseconds: 1_790_846_400_123), offset: nil), ["positionUpdatedAfter": "1790846400123", "count": "30"]),
+            (.positionUpdatedAfter(ServerTime(milliseconds: 5), offset: 30), ["positionUpdatedAfter": "5", "offset": "30", "count": "30"]),
+            (.updatedInfoAfter(ServerTime(milliseconds: 7), afterId: nil), ["updatedInfoAfter": "7", "count": "30"]),
+            (.updatedInfoAfter(ServerTime(milliseconds: 7), afterId: 12), ["updatedInfoAfter": "7", "updatedInfoAfterId": "12", "count": "30"]),
+        ]
         networkService.stubbedResult = .success(ConversationsPage(conversations: [], hasNext: false))
 
-        _ = try await sut.fetchConversations(offset: 30, count: 30)
+        for testCase in cases {
+            _ = try await sut.fetchConversations(filter: testCase.filter, count: 30)
+        }
 
-        let endpoint = try XCTUnwrap(networkService.requestedEndpoints.first)
-        XCTAssertEqual(endpoint.parameters, ["offset": "30", "count": "30"])
+        XCTAssertEqual(networkService.requestedEndpoints.map(\.parameters), cases.map(\.parameters))
     }
 
-    /// Кейс: задан только размер страницы.
-    /// Ожидание: незаданный `offset` в запрос не попадает.
-    func test_fetchConversations_withCountOnly_omitsOffset() async throws {
+    /// Кейс: метка фильтра после вычета запаса синхронизации стала отрицательной.
+    /// Ожидание: в запрос уходит 0 — отрицательное значение сервер отклонил бы ошибкой 1004.
+    func test_fetchConversations_negativeTime_isClampedToZero() async throws {
         networkService.stubbedResult = .success(ConversationsPage(conversations: [], hasNext: false))
 
-        _ = try await sut.fetchConversations(offset: nil, count: 10)
+        _ = try await sut.fetchConversations(filter: .positionUpdatedAfter(ServerTime(milliseconds: -5000), offset: nil), count: nil)
 
         let endpoint = try XCTUnwrap(networkService.requestedEndpoints.first)
-        XCTAssertEqual(endpoint.parameters, ["count": "10"])
+        XCTAssertEqual(endpoint.parameters, ["positionUpdatedAfter": "0"])
     }
 
     /// Кейс: сервер вернул бизнес-ошибку списка (невалидные параметры).
@@ -99,10 +107,37 @@ final class ConversationServiceTests: XCTestCase {
         networkService.stubbedResult = .failure(NetworkError.api(code: NetworkError.Code.invalidParameters))
 
         do {
-            _ = try await sut.fetchConversations(offset: -1, count: 0)
+            _ = try await sut.fetchConversations(filter: .none(offset: -1), count: 0)
             XCTFail("Expected error")
         } catch {
             XCTAssertEqual(error as? NetworkError, .api(code: 1004))
         }
+    }
+
+    /// Кейс: запрос переписок по id с повтором.
+    /// Ожидание: GET /conversations/getBatch, id через запятую без повторов; ответ отдан наружу.
+    func test_fetchConversationsByIds_requestsGetBatch() async throws {
+        let expected = ConversationsBatch(conversations: [.singleStub], notFoundIds: [9])
+        networkService.stubbedResult = .success(expected)
+
+        let batch = try await sut.fetchConversations(ids: [1, 9, 1])
+
+        XCTAssertEqual(batch, expected)
+        let endpoint = try XCTUnwrap(networkService.requestedEndpoints.first)
+        XCTAssertEqual(endpoint.path, "/conversations/getBatch")
+        XCTAssertEqual(endpoint.method, .get)
+        XCTAssertEqual(endpoint.parameters, ["conversationIds": "1,9"])
+    }
+
+    /// Кейс: id больше, чем сервер принимает за раз (150 при пределе 100).
+    /// Ожидание: два запроса — на 100 и 50 id; ответы склеены.
+    func test_fetchConversationsByIds_splitsIntoChunks() async throws {
+        networkService.stubbedResult = .success(ConversationsBatch(conversations: [.singleStub], notFoundIds: [9]))
+
+        let batch = try await sut.fetchConversations(ids: Array(1...150))
+
+        let counts = networkService.requestedEndpoints.map { $0.parameters["conversationIds"]?.split(separator: ",").count }
+        XCTAssertEqual(counts, [100, 50])
+        XCTAssertEqual(batch, ConversationsBatch(conversations: [.singleStub, .singleStub], notFoundIds: [9, 9]))
     }
 }

@@ -16,8 +16,7 @@ import Foundation
 /// - отменяет начатую подгрузку следующей страницы при загрузке первой;
 /// - сверяет начало списка с сервером, не сбрасывая подгруженные дальше страницы (`syncFirstPage`);
 /// - не допускает дубликатов: при постраничной выдаче список на сервере может сдвинуться между запросами;
-/// - считает, сколько элементов получено с сервера, отдельно от `items` — вставленные локально
-///   (например, только что созданная переписка) сдвиг следующей страницы не смещают.
+/// - считает, сколько элементов получено с сервера, — от этого числа отсчитывается следующая страница.
 @MainActor
 @Observable
 final class PaginatedList<Item: Identifiable> where Item.ID: Hashable {
@@ -162,27 +161,6 @@ final class PaginatedList<Item: Identifiable> where Item.ID: Hashable {
         }
     }
 
-    /// Отменяет идущие загрузки: ответы, которые ещё придут, отбрасываются как устаревшие, флаги загрузки снимаются.
-    /// Дожидается завершения подгрузки следующей страницы — после возврата её загрузчик уже ничего не делает.
-    /// Загрузку первой страницы ведёт задача владельца: её он отменяет и дожидается сам.
-    func cancelLoading() async {
-        generation += 1
-        isLoadingFirstPage = false
-        isLoadingNextPage = false
-        let task = nextPageTask
-        nextPageTask = nil
-        task?.cancel()
-        await task?.value
-    }
-
-    /// Вставляет элемент в начало списка, если его там ещё нет. Счётчик полученного с сервера не меняется:
-    /// локальная вставка не сдвигает выдачу, из которой берётся следующая страница.
-    /// - Parameter item: элемент, появившийся помимо загрузки (например, только что созданная переписка).
-    func insertIfAbsent(_ item: Item) {
-        guard !contains(id: item.id) else { return }
-        items.insert(item, at: 0)
-    }
-
     /// Загружает первую страницу и заменяет ею список.
     /// - Parameters:
     ///   - load: загрузчик страницы.
@@ -261,7 +239,7 @@ final class PaginatedList<Item: Identifiable> where Item.ID: Hashable {
     private func showCached(_ cached: Cached, generation: Int) async {
         let cachedItems = await cached()
         // Пока читался кэш, могли прийти ответ сервера, начаться новая загрузка или появиться элементы
-        // (локальная вставка) — всё это актуальнее кэша.
+        // (сверка первой страницы) — всё это актуальнее кэша.
         guard generation == self.generation,
               appliedFirstPageGeneration != generation,
               items.isEmpty else { return }

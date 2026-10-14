@@ -13,7 +13,7 @@ final class ChatViewModelTests: XCTestCase {
     private var messageSendQueue: MessageSendQueueMock!
     private var sessionService: SessionService!
     private var userCache: UserCacheServiceMock!
-    private var realtimeService: RealtimeServiceMock!
+    private var realtimeQueue: RealtimeEventQueueMock!
 
     override func setUp() async throws {
         try await super.setUp()
@@ -24,7 +24,7 @@ final class ChatViewModelTests: XCTestCase {
         sessionService = SessionService(userDefaultsService: userDefaultsService, localStorageCleaner: LocalStorageCleanerMock())
         await sessionService.restore()
         userCache = UserCacheServiceMock()
-        realtimeService = RealtimeServiceMock()
+        realtimeQueue = RealtimeEventQueueMock()
     }
 
     // MARK: - Список
@@ -462,7 +462,7 @@ final class ChatViewModelTests: XCTestCase {
             .success(MessagesPage(messages: [.make(id: 4), .make(id: 3)], nextBlockId: 1, hasNext: true)),
         ]
         await sut.loadFirstPage()
-        sut.handle(.messageReceived(.make(id: 2)))
+        sut.handle(.received(.make(id: 2)))
 
         await sut.loadFirstPage()
 
@@ -478,7 +478,7 @@ final class ChatViewModelTests: XCTestCase {
         messageService.stubbedPages = [.success(MessagesPage(messages: [.make(id: 1)], nextBlockId: nil, hasNext: false))]
         await sut.loadFirstPage()
 
-        sut.handle(.messageReceived(.make(id: 2, senderId: 2)))
+        sut.handle(.received(.make(id: 2, senderId: 2)))
 
         XCTAssertEqual(sut.messages.map(\.id.clientId), clientIds(2, 1))
     }
@@ -490,7 +490,7 @@ final class ChatViewModelTests: XCTestCase {
         messageService.stubbedPages = [.success(MessagesPage(messages: [.make(id: 1)], nextBlockId: nil, hasNext: false))]
         await sut.loadFirstPage()
 
-        sut.handle(.messageReceived(.make(id: 2, conversationId: 99)))
+        sut.handle(.received(.make(id: 2, conversationId: 99)))
 
         XCTAssertEqual(sut.messages.map(\.id.clientId), clientIds(1))
     }
@@ -506,7 +506,7 @@ final class ChatViewModelTests: XCTestCase {
         messageSendQueue.publishSent(.make(id: 2, clientId: "c1"))
         await yieldUntil { sut.messages.count == 2 }
 
-        sut.handle(.messageReceived(.make(id: 2, clientId: "c1")))
+        sut.handle(.received(.make(id: 2, clientId: "c1")))
 
         XCTAssertEqual(sut.messages.map(\.id.clientId), ["c1", "client-1"])
         observation.cancel()
@@ -519,8 +519,8 @@ final class ChatViewModelTests: XCTestCase {
         messageService.stubbedPages = [.success(MessagesPage(messages: [.stub], nextBlockId: nil, hasNext: false))]
         await sut.loadFirstPage()
 
-        sut.handle(.messageEdited(.editedStub))
-        sut.handle(.messageReceived(.stub))
+        sut.handle(.edited(.editedStub))
+        sut.handle(.received(.stub))
 
         XCTAssertEqual(sut.messages.map(\.text), [Message.editedStub.text])
     }
@@ -535,7 +535,7 @@ final class ChatViewModelTests: XCTestCase {
         let load = Task { await sut.loadFirstPage() }
         await yieldUntil { gate.isWaiting }
 
-        sut.handle(.messageEdited(.editedStub))
+        sut.handle(.edited(.editedStub))
         gate.open()
         await load.value
 
@@ -573,18 +573,66 @@ final class ChatViewModelTests: XCTestCase {
         await yieldUntil { sut.messages.map(\.id.clientId) == clientIds(4, 3, 2) }
     }
 
-    /// Кейс: экран подписан на события, сервис WebSocket прислал новое сообщение.
-    /// Ожидание: оно появилось в ленте; после отмены подписки задача завершается.
-    func test_observeRealtimeEvents_appliesEvents() async {
+    /// Кейс: экран подписан на очередь событий, пришло новое сообщение.
+    /// Ожидание: оно появилось в ленте; после отмены задачи она завершается и подписка снята.
+    func test_observeRealtimeEvents_appliesEventsAndUnsubscribes() async {
         let sut = makeSUT()
         let observation = Task { await sut.observeRealtimeEvents() }
-        await yieldUntil { [unowned self] in realtimeService.subscriberCount == 1 }
+        await yieldUntil { [unowned self] in realtimeQueue.subscriberCount == 1 }
 
-        realtimeService.send(.messageReceived(.make(id: 5, senderId: 2)))
+        await realtimeQueue.send(.received(.make(id: 5, senderId: 2)))
 
-        await yieldUntil { sut.messages.map(\.id.clientId) == clientIds(5) }
+        XCTAssertEqual(sut.messages.map(\.id.clientId), clientIds(5))
         observation.cancel()
         await observation.value
+        XCTAssertEqual(realtimeQueue.subscriberCount, 0)
+    }
+
+    /// Кейс: идёт запрос первой страницы, затем он завершился.
+    /// Ожидание: на время запроса обработка событий приостановлена арендой, после ответа аренда снята.
+    func test_loadFirstPage_suspendsEventQueueDuringRequest() async {
+        let sut = makeSUT()
+        let gate = Gate()
+        messageService.stubbedPages = [.success(MessagesPage(messages: [.make(id: 1)], nextBlockId: nil, hasNext: false))]
+        messageService.onFetch = { await gate.wait() }
+
+        let load = Task { await sut.loadFirstPage() }
+        await yieldUntil { gate.isWaiting }
+
+        XCTAssertEqual(realtimeQueue.activeLeaseCount, 1)
+        XCTAssertEqual(realtimeQueue.leaseReasons.map(String.init(describing:)), ["chat.firstPage"])
+        gate.open()
+        await load.value
+        XCTAssertEqual(realtimeQueue.activeLeaseCount, 0)
+    }
+
+    /// Кейс: запрос первой страницы закончился ошибкой сети.
+    /// Ожидание: аренда очереди событий всё равно снята.
+    func test_loadFirstPage_failure_releasesLease() async {
+        let sut = makeSUT()
+        messageService.stubbedPages = [.failure(NetworkError.transport(URLError(.notConnectedToInternet)))]
+
+        await sut.loadFirstPage()
+
+        XCTAssertEqual(realtimeQueue.activeLeaseCount, 0)
+        XCTAssertEqual(realtimeQueue.leaseReasons.count, 1)
+    }
+
+    /// Кейс: соединение переустановлено — экран сверяет первую страницу.
+    /// Ожидание: сверка тоже идёт под арендой, и после ответа аренда снята.
+    func test_connected_syncsUnderLease() async {
+        let sut = makeSUT()
+        messageService.stubbedPages = [
+            .success(MessagesPage(messages: [.make(id: 1)], nextBlockId: nil, hasNext: false)),
+            .success(MessagesPage(messages: [.make(id: 2), .make(id: 1)], nextBlockId: nil, hasNext: false)),
+        ]
+        await sut.loadFirstPage()
+
+        sut.handle(.connected)
+
+        await yieldUntil { sut.messages.count == 2 }
+        await yieldUntil { [unowned self] in realtimeQueue.activeLeaseCount == 0 }
+        XCTAssertEqual(realtimeQueue.leaseReasons.map(String.init(describing:)), ["chat.firstPage", "chat.syncFirstPage"])
     }
 
     // MARK: - Helpers
@@ -601,7 +649,7 @@ final class ChatViewModelTests: XCTestCase {
             userCache: userCache,
             localizationService: LocalizationService(userDefaultsService: UserDefaultsServiceMock(), systemLanguage: .ru),
             messageTextValidator: MessageTextValidator(),
-            realtimeService: realtimeService
+            realtimeQueue: realtimeQueue
         )
     }
 

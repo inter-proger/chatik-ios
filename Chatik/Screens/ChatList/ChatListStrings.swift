@@ -11,11 +11,13 @@ enum ChatListStrings {
     private static let table = "ChatList"
 
     static var title: String { localized("chat_list.title") }
+    static var updating: String { localized("chat_list.updating") }
     static var profile: String { localized("chat_list.profile") }
     static var empty: String { localized("chat_list.empty") }
     static var rowUntitled: String { localized("chat_list.row.untitled") }
     static var rowLoading: String { localized("chat_list.row.loading") }
     static var rowDeletedUser: String { localized("chat_list.row.deleted_user") }
+    static var rowMessage: String { localized("chat_list.row.message") }
     static var create: String { localized("chat_list.create") }
     static var createSingle: String { localized("chat_list.create.single") }
 

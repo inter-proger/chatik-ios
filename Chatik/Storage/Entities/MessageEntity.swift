@@ -17,8 +17,10 @@ final class MessageEntity: NSManagedObject, StorageEntity {
     @NSManaged var type: String?
     @NSManaged var text: String?
     @NSManaged var isEdited: Bool
-    @NSManaged var createdAt: Date?
-    @NSManaged var updatedAt: Date?
+    /// `createdAt` и `updatedAt` в миллисекундах. Имена отличаются от прежних атрибутов типа `Date` намеренно:
+    /// смену типа атрибута лёгкая миграция не выводит, а удаление и добавление — выводит.
+    @NSManaged var createdAtMs: Int64
+    @NSManaged var updatedAtMs: Int64
 
     static let idKey = "messageId"
     static let conversationIdKey = "conversationId"
@@ -36,16 +38,15 @@ final class MessageEntity: NSManagedObject, StorageEntity {
         type = message.type.rawValue
         text = message.text
         isEdited = message.isEdited
-        createdAt = message.createdAt
-        updatedAt = message.updatedAt
+        createdAtMs = message.createdAt.milliseconds
+        updatedAtMs = message.updatedAt.milliseconds
     }
 
     /// `true`, если в записи версия сообщения новее `message`: такую запись перезаписывать нельзя —
     /// событие WebSocket могло прийти раньше ответа REST с более старыми данными.
     /// - Parameter message: версия, которую собираются сохранить.
     func isNewer(than message: Message) -> Bool {
-        guard let updatedAt else { return false }
-        return updatedAt > message.updatedAt
+        updatedAtMs > message.updatedAt.milliseconds
     }
 
     /// Сохраняет сообщения в контексте (upsert по `messageId`), не вызывая `save()`.
@@ -69,9 +70,7 @@ extension Message {
     init?(entity: MessageEntity) {
         guard let clientId = entity.clientId,
               let rawType = entity.type,
-              let text = entity.text,
-              let createdAt = entity.createdAt,
-              let updatedAt = entity.updatedAt else { return nil }
+              let text = entity.text else { return nil }
         self.init(
             messageId: Int(entity.messageId),
             clientId: clientId,
@@ -81,8 +80,8 @@ extension Message {
             type: MessageType(rawValue: rawType) ?? .unknown,
             text: text,
             isEdited: entity.isEdited,
-            createdAt: createdAt,
-            updatedAt: updatedAt
+            createdAt: ServerTime(milliseconds: entity.createdAtMs),
+            updatedAt: ServerTime(milliseconds: entity.updatedAtMs)
         )
     }
 }

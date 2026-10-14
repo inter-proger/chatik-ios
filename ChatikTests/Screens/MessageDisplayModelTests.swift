@@ -65,7 +65,7 @@ final class MessageDisplayModelTests: XCTestCase {
     /// Кейс: сообщение типа, который клиент не знает.
     /// Ожидание: вместо текста — пояснение, что сообщение не поддерживается.
     func test_init_unknownType_showsUnsupportedText() {
-        let message = Message(messageId: 1, clientId: "a", conversationId: 1, blockId: 1, senderId: 2, type: .unknown, text: "", isEdited: false, createdAt: now, updatedAt: now)
+        let message = Message(messageId: 1, clientId: "a", conversationId: 1, blockId: 1, senderId: 2, type: .unknown, text: "", isEdited: false, createdAt: .stub, updatedAt: .stub)
 
         let sut = MessageDisplayModel(message: message, sender: nil, context: makeContext())
 

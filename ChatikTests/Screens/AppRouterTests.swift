@@ -11,11 +11,13 @@ final class AppRouterTests: XCTestCase {
     private let user = User(userId: 1, login: "ivan", name: "Ivan", avatar: nil)
     private var realtimeService: RealtimeServiceMock!
     private var messageSendQueue: MessageSendQueueMock!
+    private var conversationList: ConversationListServiceMock!
 
     override func setUp() async throws {
         try await super.setUp()
         realtimeService = RealtimeServiceMock()
         messageSendQueue = MessageSendQueueMock()
+        conversationList = ConversationListServiceMock()
     }
 
     /// Создаёт роутер над сессией с заданным сохранённым пользователем и без задержки splash.
@@ -29,6 +31,7 @@ final class AppRouterTests: XCTestCase {
             sessionService: SessionService(userDefaultsService: defaults, localStorageCleaner: LocalStorageCleanerMock()),
             localizationService: LocalizationService(userDefaultsService: defaults, systemLanguage: .ru),
             realtimeService: realtimeService,
+            conversationList: conversationList,
             messageSendQueue: messageSendQueue,
             minimumSplashDuration: minimumSplashDuration
         )
@@ -65,6 +68,23 @@ final class AppRouterTests: XCTestCase {
         XCTAssertEqual(messageSendQueue.startCallCount, 1)
     }
 
+    /// Кейс: приложение запустилось с сохранённой сессией.
+    /// Ожидание: список переписок и очередь отправки запущены раньше соединения — очередь событий не хранит события
+    /// для будущих подписчиков, и `connected` не должен пройти мимо них.
+    func test_restoreSession_startsConversationListBeforeRealtime() async {
+        let sut = makeSUT(storedUser: user)
+        var startedBeforeRealtime: [String] = []
+        realtimeService.onStart = { [unowned self] in
+            if conversationList.startCallCount == 1 { startedBeforeRealtime.append("list") }
+            if messageSendQueue.startCallCount == 1 { startedBeforeRealtime.append("sendQueue") }
+        }
+
+        await sut.restoreSession()
+
+        XCTAssertEqual(startedBeforeRealtime, ["list", "sendQueue"])
+        XCTAssertEqual(conversationList.startCallCount, 1)
+    }
+
     /// Кейс: задано минимальное время показа splash, сессия восстанавливается мгновенно.
     /// Ожидание: `restoreSession()` завершается не раньше этого времени; до завершения корень — splash.
     func test_restoreSession_holdsSplashForMinimumDuration() async {
@@ -86,6 +106,7 @@ final class AppRouterTests: XCTestCase {
             sessionService: session,
             localizationService: LocalizationService(userDefaultsService: defaults, systemLanguage: .ru),
             realtimeService: realtimeService,
+            conversationList: conversationList,
             messageSendQueue: messageSendQueue,
             minimumSplashDuration: .zero
         )

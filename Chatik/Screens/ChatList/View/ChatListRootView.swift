@@ -16,12 +16,10 @@ struct ChatListRootView: View {
         let router = ChatListRouter()
         _router = State(initialValue: router)
         _viewModel = State(initialValue: ChatListViewModel(
-            authService: DIContainer.shared.authService,
+            conversationList: DIContainer.shared.conversationListService,
             sessionService: DIContainer.shared.sessionService,
-            conversationService: DIContainer.shared.conversationService,
-            conversationStorage: DIContainer.shared.conversationStorage,
             userCache: DIContainer.shared.userCache,
-            realtimeService: DIContainer.shared.realtimeService,
+            localizationService: DIContainer.shared.localizationService,
             router: router
         ))
     }
@@ -50,14 +48,11 @@ struct ChatListRootView: View {
                             userCache: DIContainer.shared.userCache,
                             localizationService: DIContainer.shared.localizationService,
                             messageTextValidator: DIContainer.shared.messageTextValidator,
-                            realtimeService: DIContainer.shared.realtimeService
+                            realtimeQueue: DIContainer.shared.realtimeEventQueue
                         ))
                     }
                 }
         }
-        // События слушает корневой контейнер, а не экран списка: экран «исчезает», пока поверх открыта переписка,
-        // а список должен оставаться актуальным.
-        .task { await viewModel.observeRealtimeEvents() }
         .sheet(item: $router.presentedSheet) { sheet in
             switch sheet {
             case .createSingleConversation:

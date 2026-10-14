@@ -14,10 +14,10 @@ enum WebSocketServerEvent: Equatable, Sendable {
     case connectionError(errorCode: Int?)
     /// `conversations` / `singleCreated` — создана личная переписка (с точки зрения получателя).
     case conversationCreated(Conversation)
-    /// `messages` / `received` — новое сообщение.
-    case messageReceived(Message)
-    /// `messages` / `edited` — сообщение отредактировано.
-    case messageEdited(Message)
+    /// `messages` / `received` — новое сообщение и новое превью переписки.
+    case messageReceived(Message, LastMessage)
+    /// `messages` / `edited` — сообщение отредактировано; превью — только если отредактировано последнее сообщение.
+    case messageEdited(Message, LastMessage?)
     /// Событие, которого клиент не знает, или известное событие с неразборчивыми данными: игнорируется,
     /// но подтверждается — сервер будет добавлять новые события.
     case unknown
@@ -54,8 +54,14 @@ extension WebSocketServerMessage: Decodable {
         let conversation: Conversation
     }
 
-    private struct MessageBody: Decodable {
+    private struct ReceivedBody: Decodable {
         let message: Message
+        let lastMessage: LastMessage
+    }
+
+    private struct EditedBody: Decodable {
+        let message: Message
+        let lastMessage: LastMessage?
     }
 
     /// Разбирает сообщение. Заголовок (`uid`, `group`, `event`) обязателен; данные известного события, которые
@@ -84,9 +90,9 @@ extension WebSocketServerMessage: Decodable {
         case ("conversations", "singleCreated"):
             return (try? container.decode(ConversationBody.self, forKey: .body)).map { .conversationCreated($0.conversation) }
         case ("messages", "received"):
-            return (try? container.decode(MessageBody.self, forKey: .body)).map { .messageReceived($0.message) }
+            return (try? container.decode(ReceivedBody.self, forKey: .body)).map { .messageReceived($0.message, $0.lastMessage) }
         case ("messages", "edited"):
-            return (try? container.decode(MessageBody.self, forKey: .body)).map { .messageEdited($0.message) }
+            return (try? container.decode(EditedBody.self, forKey: .body)).map { .messageEdited($0.message, $0.lastMessage) }
         default:
             return nil
         }

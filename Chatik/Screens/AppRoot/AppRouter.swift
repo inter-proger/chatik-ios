@@ -24,6 +24,7 @@ final class AppRouter {
     private let sessionService: SessionServiceProtocol
     private let localizationService: LocalizationServiceProtocol
     private let realtimeService: RealtimeServiceProtocol
+    private let conversationList: ConversationListServiceProtocol
     private let messageSendQueue: MessageSendQueueProtocol
     private let minimumSplashDuration: Duration
     /// `true`, пока приложение в фоне: соединение с WebSocket закрыто и откроется при возврате.
@@ -34,6 +35,8 @@ final class AppRouter {
     ///   - localizationService: сервис языка интерфейса; его состояние восстанавливается вместе с сессией.
     ///   - realtimeService: соединение с WebSocket — открывается после восстановления сессии,
     ///     закрывается на время фона.
+    ///   - conversationList: список переписок — читает кэш и подписывается на события до открытия соединения:
+    ///     очередь событий не хранит события для будущих подписчиков.
     ///   - messageSendQueue: очередь отправки — восстанавливается из БД после восстановления сессии.
     ///   - minimumSplashDuration: минимальное время показа splash — чтобы он не мелькал на один кадр,
     ///     когда сессия восстанавливается мгновенно.
@@ -41,12 +44,14 @@ final class AppRouter {
         sessionService: SessionServiceProtocol,
         localizationService: LocalizationServiceProtocol,
         realtimeService: RealtimeServiceProtocol,
+        conversationList: ConversationListServiceProtocol,
         messageSendQueue: MessageSendQueueProtocol,
         minimumSplashDuration: Duration = .milliseconds(600)
     ) {
         self.sessionService = sessionService
         self.localizationService = localizationService
         self.realtimeService = realtimeService
+        self.conversationList = conversationList
         self.messageSendQueue = messageSendQueue
         self.minimumSplashDuration = minimumSplashDuration
     }
@@ -62,14 +67,15 @@ final class AppRouter {
     }
 
     /// Восстанавливает сохранённые язык и сессию при старте, удерживая splash не меньше `minimumSplashDuration`.
-    /// Сразу после восстановления сессии начинает работу с сервером (`/global/start`) и восстанавливает очередь
-    /// отправки — splash их не ждёт.
+    /// Сразу после восстановления сессии запускает список переписок и очередь отправки, затем начинает работу
+    /// с сервером (`/global/start`) — список должен подписаться на события раньше, чем они пойдут. Splash их не ждёт.
     func restoreSession() async {
         let splashHold = Task { try? await Task.sleep(for: minimumSplashDuration) }
         await localizationService.restore()
         await sessionService.restore()
-        realtimeService.start()
+        conversationList.start()
         messageSendQueue.start()
+        realtimeService.start()
         await splashHold.value
         isSplashFinished = true
     }

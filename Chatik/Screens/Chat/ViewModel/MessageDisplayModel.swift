@@ -74,7 +74,7 @@ extension MessageDisplayModel {
             isUnsupported: isUnsupported,
             isOutgoing: message.senderId == context.currentUserId,
             sender: sender.map(MessageSenderDisplayModel.init(cachedUser:)),
-            time: Self.formattedTime(message.createdAt, context: context),
+            time: Self.formattedTime(message.createdAt.date, context: context),
             editedLabel: message.isEdited ? ChatStrings.messageEdited : nil,
             deliveryState: .delivered,
             deliveryStateLabel: nil
@@ -103,20 +103,12 @@ extension MessageDisplayModel {
         )
     }
 
-    /// Форматирует время отправки: сегодняшнее — только время, в этом году — день, месяц и время,
-    /// раньше — ещё и год.
+    /// Форматирует время отправки в формате ленты (см. `MessageTimeFormatter`).
     /// - Parameters:
     ///   - date: время отправки.
     ///   - context: язык, календарь и текущее время.
     static func formattedTime(_ date: Date, context: MessageDisplayContext) -> String {
-        var style = Date.FormatStyle(locale: context.locale, calendar: context.calendar, timeZone: context.calendar.timeZone)
-            .hour().minute()
-        guard !context.calendar.isDate(date, inSameDayAs: context.now) else { return date.formatted(style) }
-        style = style.day().month(.abbreviated)
-        guard context.calendar.isDate(date, equalTo: context.now, toGranularity: .year) else {
-            return date.formatted(style.year())
-        }
-        return date.formatted(style)
+        MessageTimeFormatter(locale: context.locale, calendar: context.calendar, now: context.now).string(from: date)
     }
 }
 

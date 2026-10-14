@@ -48,7 +48,7 @@ final class ChatViewModel {
     let now: () -> Date
     private let messageService: MessageServiceProtocol
     private let messageStorage: MessageStorageServiceProtocol
-    private let realtimeService: RealtimeServiceProtocol
+    private let realtimeQueue: RealtimeEventQueueProtocol
     let messageSendQueue: MessageSendQueueProtocol
 
     /// - Parameters:
@@ -60,7 +60,8 @@ final class ChatViewModel {
     ///   - userCache: кэш пользователей — имена собеседника и отправителей.
     ///   - localizationService: язык форматирования времени.
     ///   - messageTextValidator: проверка текста перед отправкой.
-    ///   - realtimeService: события WebSocket — новые и отредактированные сообщения.
+    ///   - realtimeQueue: очередь событий WebSocket — новые и отредактированные сообщения; на время запроса первой
+    ///     страницы обработка событий приостанавливается.
     ///   - now: текущее время; подменяется в тестах форматирования.
     init(
         conversation: Conversation,
@@ -71,7 +72,7 @@ final class ChatViewModel {
         userCache: UserCacheServiceProtocol,
         localizationService: LocalizationServiceProtocol,
         messageTextValidator: MessageTextValidatorProtocol,
-        realtimeService: RealtimeServiceProtocol,
+        realtimeQueue: RealtimeEventQueueProtocol,
         now: @escaping () -> Date = { Date() }
     ) {
         self.conversation = conversation
@@ -82,7 +83,7 @@ final class ChatViewModel {
         self.userCache = userCache
         self.localizationService = localizationService
         self.messageTextValidator = messageTextValidator
-        self.realtimeService = realtimeService
+        self.realtimeQueue = realtimeQueue
         self.now = now
     }
 
@@ -94,15 +95,28 @@ final class ChatViewModel {
     ///
     /// Загрузка идёт в отдельной задаче: SwiftUI отменяет задачи `.task` и `.refreshable` (при уходе с экрана,
     /// при перерисовке во время обновления), и запрос оборвался бы, показав ошибку вместо новых сообщений.
+    /// На время загрузки обработка событий WebSocket приостановлена: события, пришедшие во время запроса,
+    /// применятся после ответа. Аренда берётся внутри той же задачи, поэтому уход с экрана её не обрывает.
+    /// Очередь общая: на время запроса события не получает и список чатов — осознанный компромисс,
+    /// см. `docs/conversation-list-architecture.md`.
     func loadFirstPage() async {
-        let task = Task { await list.refresh(cached: loadCachedMessages, load: loadPage) }
+        let task = Task {
+            await realtimeQueue.withProcessingSuspended(reason: "chat.firstPage") { _ in
+                await list.refresh(cached: loadCachedMessages, load: loadPage)
+            }
+        }
         show(await task.value)
     }
 
     /// Сверяет самые новые сообщения с сервером, не сбрасывая подгруженную историю: лента прокручена назад —
     /// загруженные страницы и позиция остаются на месте. Идущая загрузка первой страницы не прерывается.
+    /// Обработка событий на время запроса приостановлена, как и при загрузке.
     func syncFirstPage() async {
-        let task = Task { await list.syncFirstPage(load: loadPage) }
+        let task = Task {
+            await realtimeQueue.withProcessingSuspended(reason: "chat.syncFirstPage") { _ in
+                await list.syncFirstPage(load: loadPage)
+            }
+        }
         show(await task.value)
     }
 
@@ -173,8 +187,8 @@ final class ChatViewModel {
     /// Применяет события реального времени, пока задачу не отменят. После (пере)подключения самые новые
     /// сообщения сверяются через REST: события, пришедшие без соединения, потеряны.
     func observeRealtimeEvents() async {
-        for await event in realtimeService.events() {
-            handle(event)
+        await realtimeQueue.observe { [weak self] event in
+            self?.handle(event)
         }
     }
 
@@ -185,7 +199,7 @@ final class ChatViewModel {
         switch event {
         case .connected:
             Task { await syncFirstPage() }
-        case let .messageReceived(message), let .messageEdited(message):
+        case let .messageReceived(message, _), let .messageEdited(message, _):
             guard message.conversationId == conversation.conversationId else { return }
             applyLive(message)
         case .conversationCreated:

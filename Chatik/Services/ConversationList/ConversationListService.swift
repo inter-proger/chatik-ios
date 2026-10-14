@@ -164,7 +164,7 @@ final class ConversationListService: ConversationListServiceProtocol {
         guard session == sessionGeneration else { return }
         let applied = conversations
         setConversations(stored.conversations)
-        applied.forEach { upsert(.full($0), insertIfMissing: true) }
+        upsert(applied.map(ConversationUpdate.full), insertIfMissing: true)
         listState = stored.state
         serverLoadedCount = stored.conversations.count
         let opponentIds = stored.conversations.compactMap(\.opponentUserId)
@@ -432,7 +432,7 @@ final class ConversationListService: ConversationListServiceProtocol {
             return
         }
         listState.positionWatermarkCeiling = nil
-        let changed = page.conversations.compactMap { upsert(.full($0), insertIfMissing: true) }
+        let changed = upsert(page.conversations.map(ConversationUpdate.full), insertIfMissing: true)
         page.conversations.map(\.positionUpdatedAt).max().map(raisePositionWatermark(to:))
         persist(changed)
         startInfoSync(from: infoFrom, generation: generation)
@@ -444,7 +444,7 @@ final class ConversationListService: ConversationListServiceProtocol {
     /// - Parameter page: первая страница списка — без фильтра или с `positionUpdatedAfter`.
     private func replaceList(with page: ConversationsPage) {
         setConversations(page.conversations.sorted { $0.isOrderedBefore($1) })
-        pendingLocalUpdates?.forEach { upsert($0, insertIfMissing: true) }
+        upsert(pendingLocalUpdates ?? [], insertIfMissing: true)
         serverLoadedCount = page.conversations.count
         listState = ConversationListState(
             isLoaded: true,
@@ -462,7 +462,7 @@ final class ConversationListService: ConversationListServiceProtocol {
     /// - Parameter page: первая страница или дельта позиций.
     private func mergeAfterExpiredLease(_ page: ConversationsPage) {
         Logger.conversationList.fault("Ответ синхронизации пришёл после принудительного снятия аренды")
-        let changed = page.conversations.compactMap { upsert(.full($0), insertIfMissing: true) }
+        let changed = upsert(page.conversations.map(ConversationUpdate.full), insertIfMissing: true)
         if !listState.isLoaded {
             listState.isLoaded = true
             listState.hasMorePages = page.hasNext
@@ -513,7 +513,7 @@ final class ConversationListService: ConversationListServiceProtocol {
     /// - Parameter page: страница `updatedInfoAfter`.
     /// - Returns: последняя переписка страницы — курсор следующей; `nil` — страница пуста.
     private func applyInfoPage(_ page: ConversationsPage) -> Conversation? {
-        let changed = page.conversations.compactMap { upsert(.full($0), insertIfMissing: false) }
+        let changed = upsert(page.conversations.map(ConversationUpdate.full), insertIfMissing: false)
         guard let last = page.conversations.last else { return nil }
         listState.infoWatermark = last.updatedInfoAt
         persist(changed)
@@ -558,7 +558,7 @@ final class ConversationListService: ConversationListServiceProtocol {
             return
         }
         guard isCurrent(generation) else { return }
-        let changed = page.conversations.compactMap { upsert(.full($0), insertIfMissing: true) }
+        let changed = upsert(page.conversations.map(ConversationUpdate.full), insertIfMissing: true)
         serverLoadedCount += page.conversations.count
         listState.hasMorePages = page.hasNext
         persist(changed)
@@ -621,8 +621,9 @@ final class ConversationListService: ConversationListServiceProtocol {
 
     // MARK: - Список в памяти
 
-    /// Сливает пришедшую версию с переписками списка: известная переписка сливается и при смене позиции
-    /// перемещается, неизвестная полная — вставляется по сортировке (если разрешено).
+    /// Сливает пришедшую версию с переписками списка: известная переписка сливается на месте и при смене позиции
+    /// перемещается, неизвестная полная — вставляется по сортировке (если разрешено). Слияние без смены позиции
+    /// (правка сообщения, информация) меняет один элемент, не копируя список и индекс, как это делает пачка.
     /// - Parameters:
     ///   - update: пришедшая версия.
     ///   - insertIfMissing: вставлять ли переписку, которой нет в списке.
@@ -630,35 +631,43 @@ final class ConversationListService: ConversationListServiceProtocol {
     @discardableResult
     private func upsert(_ update: ConversationUpdate, insertIfMissing: Bool) -> Conversation? {
         guard let index = indexById[update.conversationId] else {
-            guard insertIfMissing, case let .full(conversation) = update else { return nil }
-            insert(conversation)
-            return conversation
+            return upsert([update], insertIfMissing: insertIfMissing).first
         }
         guard let result = ConversationMerger.merge(update, into: conversations[index]) else { return nil }
         guard result.isPositionChanged else {
             conversations[index] = result.conversation
             return result.conversation
         }
-        conversations.remove(at: index)
-        insert(result.conversation)
+        var reordered = conversations
+        reordered[index] = result.conversation
+        reordered.sort { $0.isOrderedBefore($1) }
+        setConversations(reordered)
         return result.conversation
     }
 
-    /// Вставляет переписку на её место по сортировке (бинарным поиском).
-    /// - Parameter conversation: переписка, которой нет в списке.
-    private func insert(_ conversation: Conversation) {
-        var low = 0
-        var high = conversations.count
-        while low < high {
-            let middle = (low + high) / 2
-            if conversation.isOrderedBefore(conversations[middle]) {
-                high = middle
-            } else {
-                low = middle + 1
-            }
+    /// Сливает пачку версий (страницу, накопленные локальные изменения) за один проход: известные переписки
+    /// сливаются на месте, неизвестные полные дописываются в конец, затем список сортируется и индекс
+    /// перестраивается один раз — а не на каждую переписку, как при поштучной вставке (O(k·n)). Наблюдатели
+    /// получают одно изменение списка на всю пачку.
+    /// - Parameters:
+    ///   - updates: пришедшие версии; повторы одной переписки сливаются по порядку.
+    ///   - insertIfMissing: вставлять ли переписки, которых нет в списке.
+    /// - Returns: изменённые переписки в итоговых версиях, каждая один раз, в порядке первого изменения.
+    @discardableResult
+    private func upsert(_ updates: [ConversationUpdate], insertIfMissing: Bool) -> [Conversation] {
+        var batch = MergeBatch(conversations: conversations, indexById: indexById)
+        for update in updates {
+            batch.apply(update, insertIfMissing: insertIfMissing)
         }
-        conversations.insert(conversation, at: low)
-        reindex()
+        guard !batch.changedIds.isEmpty else { return [] }
+        if batch.needsSort {
+            batch.conversations.sort { $0.isOrderedBefore($1) }
+            setConversations(batch.conversations)
+        } else {
+            conversations = batch.conversations
+            indexById = batch.indexById
+        }
+        return batch.changedIds.compactMap { id in indexById[id].map { conversations[$0] } }
     }
 
     /// Заменяет список целиком.
@@ -736,4 +745,48 @@ final class ConversationListService: ConversationListServiceProtocol {
 extension Logger {
     /// Лог списка переписок: сбои синхронизации не показываются пользователю — список повторит её сам.
     static let conversationList = Logger(subsystem: Bundle.main.bundleIdentifier ?? "Chatik", category: "ConversationList")
+}
+
+/// Пачка слияний над копией списка: изменения накапливаются, а сортировку и перестройку индекса делает
+/// владелец один раз в конце.
+private struct MergeBatch {
+    var conversations: [Conversation]
+    /// Индекс копии; верен для всех переписок, пока не понадобилась сортировка (`needsSort`).
+    var indexById: [Int: Int]
+    private(set) var changedIds: [Int] = []
+    /// Порядок нарушен: сменилась позиция или переписка дописана в конец.
+    private(set) var needsSort = false
+    private var changedIdSet: Set<Int> = []
+
+    init(conversations: [Conversation], indexById: [Int: Int]) {
+        self.conversations = conversations
+        self.indexById = indexById
+    }
+
+    /// Применяет одну версию: известная переписка сливается на месте, неизвестная полная дописывается в конец.
+    /// - Parameters:
+    ///   - update: пришедшая версия.
+    ///   - insertIfMissing: дописывать ли переписку, которой нет в списке.
+    mutating func apply(_ update: ConversationUpdate, insertIfMissing: Bool) {
+        guard let index = indexById[update.conversationId] else {
+            guard insertIfMissing, case let .full(conversation) = update else { return }
+            indexById[conversation.conversationId] = conversations.count
+            conversations.append(conversation)
+            markChanged(conversation.conversationId, needsSort: true)
+            return
+        }
+        guard let result = ConversationMerger.merge(update, into: conversations[index]) else { return }
+        conversations[index] = result.conversation
+        markChanged(update.conversationId, needsSort: result.isPositionChanged)
+    }
+
+    /// Запоминает изменённую переписку.
+    /// - Parameters:
+    ///   - id: `conversationId`.
+    ///   - needsSort: нарушает ли изменение порядок списка.
+    private mutating func markChanged(_ id: Int, needsSort: Bool) {
+        self.needsSort = self.needsSort || needsSort
+        guard changedIdSet.insert(id).inserted else { return }
+        changedIds.append(id)
+    }
 }

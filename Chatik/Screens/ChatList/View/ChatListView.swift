@@ -27,6 +27,7 @@ struct ChatListView: View {
         .refreshable { await viewModel.refresh() }
         .task { await viewModel.loadIfNeeded() }
         .task { await viewModel.observeDayChanges() }
+        .task { await viewModel.observeConversations() }
         .navigationTitle(ChatListStrings.title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {

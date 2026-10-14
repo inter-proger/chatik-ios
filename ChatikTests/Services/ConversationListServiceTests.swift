@@ -469,6 +469,25 @@ final class ConversationListServiceTests: XCTestCase {
         XCTAssertEqual(storage.lastState?.positionWatermark, .stub)
     }
 
+    /// Кейс: три переписки; отправленное сообщение подняло нижнюю; затем пришла правка последнего сообщения
+    /// средней (без смены позиции).
+    /// Ожидание: индекс после одиночного перемещения верен — правка применена к нужной переписке на месте,
+    /// порядок не изменился.
+    func test_singleUpdate_afterLift_keepsIndexConsistent() async {
+        let cache = [
+            Conversation.make(id: 1).with(position: .stub(-10), lastMessage: .make(id: 15, text: "Привет!")),
+            .make(id: 2, position: .stub(-20)),
+            .make(id: 3, position: .stub(-30)),
+        ]
+        await start(cache: cache, state: loadedState)
+
+        sut.applySentMessage(.make(id: 50, conversationId: 3, createdAt: .stub(500)))
+        await eventQueue.send(.edited(Message.make(id: 15, conversationId: 1, text: "Правка").withUpdatedAt(.stub(600))))
+
+        XCTAssertEqual(sut.conversations.map(\.id), [3, 1, 2])
+        XCTAssertEqual(sut.conversations.map(\.lastMessage?.text)[1], "Правка")
+    }
+
     /// Кейс: ответ `/messages/send` по переписке, которой нет в списке.
     /// Ожидание: переписка загружена через `getBatch` и вставлена с отправленным сообщением.
     func test_applySentMessage_unknownConversation_loadsBatch() async {
@@ -591,6 +610,59 @@ final class ConversationListServiceTests: XCTestCase {
 
         XCTAssertEqual(conversationService.requests.last?.filter, .none(offset: 1))
         XCTAssertEqual(sut.conversations.map(\.id), [1, 2])
+    }
+
+    /// Кейс: в списке переписки 3, 2, 1; следующая страница несёт новую переписку, повтор известной с более поздней
+    /// позицией (поднялась, пока листали) и две версии одной новой переписки.
+    /// Ожидание: страница слита за один проход — порядок по позиции, у повтора одной переписки взята более поздняя
+    /// версия; в БД каждая изменённая переписка записана один раз.
+    func test_nextPage_batchMerge_sortsOnceAndPersistsEachOnce() async {
+        let cache = [
+            Conversation.make(id: 3, position: .stub(30)),
+            Conversation.make(id: 2, position: .stub(20)),
+            Conversation.make(id: 1, position: .stub(10)),
+        ]
+        await start(cache: cache, state: noInfoState)
+        let lifted = Conversation.make(id: 1, position: .stub(50)).with(position: .stub(50), lastMessage: .make(id: 7, updatedAt: .stub(50)))
+        let newer = Conversation.make(id: 5, position: .stub(-5)).with(position: .stub(-5), lastMessage: .make(id: 8, updatedAt: .stub(-5)))
+        let nextPage = [
+            Conversation.make(id: 4, position: .stub(-1)),
+            lifted,
+            Conversation.make(id: 5, position: .stub(-9)),
+            newer,
+        ]
+        conversationService.stubbedPages = [.success(page(nextPage, hasNext: true))]
+
+        sut.loadNextPageIfNeeded(currentConversationId: 1)
+        await yieldUntil { [unowned self] in !sut.isLoadingNextPage && !storage.saves.isEmpty }
+
+        XCTAssertEqual(sut.conversations.map(\.id), [1, 3, 2, 4, 5])
+        XCTAssertEqual(sut.conversations.first { $0.id == 5 }?.positionUpdatedAt, .stub(-5))
+        XCTAssertEqual(storage.saves.last?.conversations.map(\.id), [4, 1, 5])
+    }
+
+    /// Кейс: дельта подняла несколько известных переписок и принесла новую; затем пришло событие по одной из них.
+    /// Ожидание: индекс после пачки верен — событие слилось с нужной перепиской, без `getBatch` и без дубликатов.
+    func test_delta_batchMerge_keepsIndexConsistent() async {
+        let cache = [
+            Conversation.make(id: 1, position: .stub(-10)),
+            Conversation.make(id: 2, position: .stub(-20)),
+            Conversation.make(id: 3, position: .stub(-30)),
+        ]
+        await start(cache: cache, state: noInfoState)
+        conversationService.stubbedPages = [.success(page([
+            Conversation.make(id: 3, position: .stub(40)).with(position: .stub(40), lastMessage: .make(id: 30, updatedAt: .stub(40))),
+            Conversation.make(id: 4, position: .stub(35)),
+            Conversation.make(id: 2, position: .stub(30)).with(position: .stub(30), lastMessage: .make(id: 20, updatedAt: .stub(30))),
+        ]))]
+        await connect()
+        XCTAssertEqual(sut.conversations.map(\.id), [3, 4, 2, 1])
+
+        await eventQueue.send(.received(Message.make(id: 31, conversationId: 1, createdAt: .stub(100))))
+
+        XCTAssertEqual(sut.conversations.map(\.id), [1, 3, 4, 2])
+        XCTAssertEqual(sut.conversations.first?.lastMessage?.messageId, 31)
+        XCTAssertTrue(conversationService.batchRequests.isEmpty)
     }
 
     // MARK: - Pull-to-refresh

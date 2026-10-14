@@ -11,13 +11,18 @@ import Foundation
 /// дольше экрана и сам следит за событиями WebSocket и выходом из аккаунта. ViewModel только готовит строки
 /// и передаёт ему действия пользователя.
 ///
-/// Собеседник берётся из кэша пользователей при каждом чтении `conversations`, поэтому строка обновляется сама,
-/// когда собеседник догрузится.
+/// Строки (`conversations`) пересобирает `observeConversations()`: он следит через Observation за списком,
+/// собеседниками в кэше пользователей, языком и днём «сейчас» и применяет изменения не чаще раза
+/// в `rowsUpdateInterval`, — частые события (поток сообщений, слияние страниц) не перерисовывают список
+/// на каждое изменение.
 @MainActor
 @Observable
 final class ChatListViewModel {
     /// Текст ошибки для всплывающего сообщения. `nil` — сообщение скрыто.
     var errorMessage: String?
+    /// Строки списка, сначала поднявшиеся последними. Обновляются `observeConversations()` не чаще раза
+    /// в `rowsUpdateInterval`.
+    private(set) var conversations: [ChatRowDisplayModel] = []
     /// «Сейчас» для формата времени строк: от него зависит, какие строки показывают только время («сегодня»).
     /// Хранится, а не берётся из `now()` при каждом чтении — смену дня Observation иначе не заметил бы.
     private(set) var referenceDate: Date
@@ -28,6 +33,23 @@ final class ChatListViewModel {
     private let localizationService: LocalizationServiceProtocol
     private let router: ChatListRouter
     private let now: () -> Date
+    private let makeRow: RowBuilder
+    /// Собранные строки по `conversationId` вместе с данными, из которых они собраны: при изменении списка
+    /// заново собираются только изменившиеся строки, а не все с форматированием времени. Не наблюдается —
+    /// это кэш вычисления, а не состояние экрана.
+    @ObservationIgnored private var rowCache: [Int: CachedRow] = [:]
+    /// Язык, календарь и день, с которыми собраны строки кэша; сменились — кэш сбрасывается.
+    @ObservationIgnored private var rowCacheContext: RowFormatContext?
+
+    private let sleep: Sleep
+
+    /// Минимальный интервал между обновлениями строк списка.
+    static let rowsUpdateInterval: Duration = .milliseconds(500)
+
+    /// Ожидание между обновлениями строк; подменяется в тестах.
+    typealias Sleep = @MainActor (Duration) async throws -> Void
+    /// Собирает строку списка из переписки, собеседника и формата времени.
+    typealias RowBuilder = @MainActor (Conversation, CachedUser?, MessageTimeFormatter) -> ChatRowDisplayModel
 
     /// - Parameters:
     ///   - conversationList: список переписок.
@@ -36,13 +58,17 @@ final class ChatListViewModel {
     ///   - localizationService: язык форматирования времени.
     ///   - router: переходы с экрана.
     ///   - now: текущее время; подменяется в тестах форматирования.
+    ///   - makeRow: сборка строки; подменяется в тестах кэша строк.
+    ///   - sleep: ожидание между обновлениями строк; подменяется в тестах.
     init(
         conversationList: ConversationListServiceProtocol,
         sessionService: SessionServiceProtocol,
         userCache: UserCacheServiceProtocol,
         localizationService: LocalizationServiceProtocol,
         router: ChatListRouter,
-        now: @escaping () -> Date = { Date() }
+        now: @escaping () -> Date = { Date() },
+        makeRow: @escaping RowBuilder = { ChatRowDisplayModel(conversation: $0, opponent: $1, timeFormatter: $2) },
+        sleep: @escaping Sleep = { try await Task.sleep(for: $0) }
     ) {
         self.conversationList = conversationList
         self.sessionService = sessionService
@@ -50,20 +76,56 @@ final class ChatListViewModel {
         self.localizationService = localizationService
         self.router = router
         self.now = now
+        self.makeRow = makeRow
+        self.sleep = sleep
         referenceDate = now()
+        // Первый кадр экрана показывает уже имеющийся список (кэш из БД), не дожидаясь наблюдателя.
+        conversations = makeRows()
     }
 
-    /// Переписки текущего пользователя, сначала поднявшиеся последними. Собеседники читаются из кэша
-    /// пользователей — Observation отслеживает это чтение, и строки перерисуются, когда собеседники загрузятся.
-    var conversations: [ChatRowDisplayModel] {
-        let timeFormatter = MessageTimeFormatter(locale: localizationService.language.locale, calendar: .current, now: referenceDate)
-        return conversationList.conversations.map { conversation in
-            ChatRowDisplayModel(
-                conversation: conversation,
-                opponent: conversation.opponentUserId.map(userCache.user(id:)),
-                timeFormatter: timeFormatter
-            )
+    /// Пересобирает строки при изменении того, из чего они собраны, не чаще раза в `rowsUpdateInterval`, пока
+    /// задачу не отменят. Первое изменение после паузы применяется сразу; изменения, пришедшие в течение интервала
+    /// после обновления, склеиваются и применяются одним обновлением в его конце. При запуске строки собираются
+    /// сразу — экран мог пропустить изменения, пока был скрыт.
+    func observeConversations() async {
+        let (changes, continuation) = AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
+        var iterator = changes.makeAsyncIterator()
+        while !Task.isCancelled {
+            let rows = withObservationTracking { makeRows() } onChange: { continuation.yield() }
+            if rows != conversations {
+                conversations = rows
+            }
+            do {
+                try await sleep(Self.rowsUpdateInterval)
+            } catch {
+                return
+            }
+            guard await iterator.next() != nil else { return }
         }
+    }
+
+    /// Собирает строки из текущего списка. Строка берётся из кэша, если не изменились ни переписка, ни собеседник,
+    /// ни язык, календарь и день формата. Читает список, собеседников, язык и `referenceDate` — по этим чтениям
+    /// `observeConversations()` узнаёт об изменениях.
+    private func makeRows() -> [ChatRowDisplayModel] {
+        let context = RowFormatContext(language: localizationService.language, calendar: .current, referenceDate: referenceDate)
+        if context != rowCacheContext {
+            rowCache = [:]
+            rowCacheContext = context
+        }
+        let timeFormatter = MessageTimeFormatter(locale: context.language.locale, calendar: context.calendar, now: referenceDate)
+        var cache: [Int: CachedRow] = [:]
+        cache.reserveCapacity(conversationList.conversations.count)
+        let rows = conversationList.conversations.map { conversation in
+            let opponent = conversation.opponentUserId.map(userCache.user(id:))
+            let row = rowCache[conversation.id]?.row(for: conversation, opponent: opponent)
+                ?? makeRow(conversation, opponent, timeFormatter)
+            cache[conversation.id] = CachedRow(conversation: conversation, opponent: opponent, row: row)
+            return row
+        }
+        // Кэш держит только строки текущего списка — ушедшие переписки (выход, pull-to-refresh) не копятся.
+        rowCache = cache
+        return rows
     }
 
     /// `true`, пока идёт стартовая синхронизация: в заголовке вместо названия — «Обновление…».
@@ -76,15 +138,21 @@ final class ChatListViewModel {
         conversationList.isLoadingNextPage
     }
 
-    /// `true`, пока список ещё ни разу не загружался с сервера, пуст и идёт синхронизация — по центру прелоадер.
+    /// `true`, пока строк нет, а список либо ещё ни разу не загружался с сервера и идёт синхронизация, либо уже
+    /// не пуст, но строки его ещё не догнали (обновляются не чаще раза в `rowsUpdateInterval`), — по центру
+    /// прелоадер. Пустота берётся из строк: иначе первая страница, пришедшая во время интервала, убрала бы
+    /// прелоадер раньше, чем появились строки, и экран остался бы пустым.
     var isLoadingFirstPage: Bool {
-        conversationList.conversations.isEmpty && !conversationList.isLoaded && conversationList.isSyncing
+        guard conversations.isEmpty else { return false }
+        return !conversationList.conversations.isEmpty || (!conversationList.isLoaded && conversationList.isSyncing)
     }
 
-    /// `true`, если чатов действительно нет: список загружен с сервера, пуст и синхронизация не идёт.
+    /// `true`, если чатов действительно нет: список загружен с сервера, пуст и синхронизация не идёт, а строки
+    /// уже догнали его — «Нет чатов» не показывается поверх строк, которые ещё не успели исчезнуть.
     /// До первой загрузки пустой список ещё ничего не значит.
     var isEmpty: Bool {
-        conversationList.conversations.isEmpty && conversationList.isLoaded && !conversationList.isSyncing
+        guard conversations.isEmpty, conversationList.conversations.isEmpty else { return false }
+        return conversationList.isLoaded && !conversationList.isSyncing
     }
 
     /// Идентификатор переписки, открытой поверх списка: её строка подсвечена, пока экран переписки показан.
@@ -167,5 +235,36 @@ final class ChatListViewModel {
     /// Обработчик пункта «Личный диалог» меню создания: открывает экран создания личного диалога.
     func didTapCreateSingleConversation() {
         router.showCreateSingleConversation()
+    }
+}
+
+/// Строка списка вместе с данными, из которых она собрана.
+private struct CachedRow {
+    let conversation: Conversation
+    let opponent: CachedUser?
+    let row: ChatRowDisplayModel
+
+    /// Строка, если она собрана из тех же переписки и собеседника.
+    /// - Parameters:
+    ///   - conversation: текущая версия переписки.
+    ///   - opponent: текущее состояние собеседника в кэше пользователей.
+    /// - Returns: `nil` — строку нужно собрать заново.
+    func row(for conversation: Conversation, opponent: CachedUser?) -> ChatRowDisplayModel? {
+        guard conversation == self.conversation, opponent == self.opponent else { return nil }
+        return row
+    }
+}
+
+/// То, от чего строка зависит помимо переписки и собеседника: язык строк и формата, календарь и день «сейчас».
+/// Внутри одного дня формат времени не меняется — «сегодня», «в этом году» и «раньше» зависят только от дня.
+private struct RowFormatContext: Equatable {
+    let language: AppLanguage
+    let calendar: Calendar
+    let day: Date
+
+    init(language: AppLanguage, calendar: Calendar, referenceDate: Date) {
+        self.language = language
+        self.calendar = calendar
+        day = calendar.startOfDay(for: referenceDate)
     }
 }

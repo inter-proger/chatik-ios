@@ -41,14 +41,12 @@ struct ChatListRootView: View {
                     case let .conversation(conversation):
                         ChatView(viewModel: ChatViewModel(
                             conversation: conversation,
-                            messageService: DIContainer.shared.messageService,
-                            messageStorage: DIContainer.shared.messageStorage,
+                            messagesList: DIContainer.shared.makeMessagesListService(conversationId: conversation.conversationId),
                             messageSendQueue: DIContainer.shared.messageSendQueue,
                             sessionService: DIContainer.shared.sessionService,
                             userCache: DIContainer.shared.userCache,
                             localizationService: DIContainer.shared.localizationService,
-                            messageTextValidator: DIContainer.shared.messageTextValidator,
-                            realtimeQueue: DIContainer.shared.realtimeEventQueue
+                            messageTextValidator: DIContainer.shared.messageTextValidator
                         ))
                     }
                 }

@@ -7,11 +7,11 @@ import Foundation
 
 /// Методы `/messages/*`. Требуют активной сессии (cookie `PHPSESSID`) и членства в переписке.
 enum MessageEndpoint: Endpoint {
-    /// GET /messages/getList — сообщения переписки целыми блоками от новых к старым, минимум 40.
-    /// Ответ: `MessagesPage`. Без `blockId` — начиная с самого нового блока.
-    case getList(conversationId: Int, blockId: Int?)
-    /// GET /messages/getBlock — сообщения одного блока. Ответ: `MessagesBlock`.
-    case getBlock(blockId: Int)
+    /// GET /messages/getList — сообщения переписки целыми блоками от новых к старым. Ответ: `MessagesPage`.
+    /// `.block(nil)` — начиная с самого нового блока; `.receivedAfter` — дельта для синхронизации кэша.
+    case getList(conversationId: Int, filter: MessageListFilter)
+    /// GET /messages/getBlockBatch — до 10 блоков целиком. Ответ: `MessageBlocksBatch`.
+    case getBlockBatch(blockIds: [Int])
     /// POST /messages/send — отправка текстового сообщения от лица текущего пользователя. Ответ: `MessageResponse`.
     /// Идемпотентен по `clientId`: повтор с тем же `clientId` возвращает уже созданное сообщение.
     case send(conversationId: Int, text: String, clientId: String)
@@ -21,7 +21,7 @@ enum MessageEndpoint: Endpoint {
     var path: String {
         switch self {
         case .getList: return "/messages/getList"
-        case .getBlock: return "/messages/getBlock"
+        case .getBlockBatch: return "/messages/getBlockBatch"
         case .send: return "/messages/send"
         case .edit: return "/messages/edit"
         }
@@ -29,19 +29,25 @@ enum MessageEndpoint: Endpoint {
 
     var method: HTTPMethod {
         switch self {
-        case .getList, .getBlock: return .get
+        case .getList, .getBlockBatch: return .get
         case .send, .edit: return .post
         }
     }
 
     var parameters: [String: String] {
         switch self {
-        case let .getList(conversationId, blockId):
+        case let .getList(conversationId, filter):
             var parameters = ["conversationId": String(conversationId)]
-            parameters["blockId"] = blockId.map(String.init)
+            switch filter {
+            case let .block(blockId):
+                parameters["blockId"] = blockId.map(String.init)
+            case let .receivedAfter(mark):
+                // Метка с запасом у начала эпохи отрицательна, а сервер принимает только неотрицательные (иначе 1004).
+                parameters["receivedAfter"] = String(max(mark.milliseconds, 0))
+            }
             return parameters
-        case let .getBlock(blockId):
-            return ["blockId": String(blockId)]
+        case let .getBlockBatch(blockIds):
+            return ["blockIds": blockIds.map(String.init).joined(separator: ",")]
         case let .send(conversationId, text, clientId):
             return ["conversationId": String(conversationId), "text": text, "clientId": clientId]
         case let .edit(messageId, newText):

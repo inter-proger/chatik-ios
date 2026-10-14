@@ -9,7 +9,7 @@ import XCTest
 @MainActor
 final class MessageSendQueueTests: XCTestCase {
     private var messageService: MessageServiceMock!
-    private var messageStorage: MessageStorageServiceMock!
+    private var messageCache: MessageCacheServiceMock!
     private var outgoingStorage: OutgoingMessageStorageServiceMock!
     private var sessionService: SessionService!
     private var eventQueue: RealtimeEventQueueMock!
@@ -18,7 +18,7 @@ final class MessageSendQueueTests: XCTestCase {
     override func setUp() async throws {
         try await super.setUp()
         messageService = MessageServiceMock()
-        messageStorage = MessageStorageServiceMock()
+        messageCache = MessageCacheServiceMock()
         outgoingStorage = OutgoingMessageStorageServiceMock()
         let userDefaultsService = UserDefaultsServiceMock(currentUser: User(userId: 1, login: "ivan", name: "Ivan", avatar: nil))
         sessionService = SessionService(userDefaultsService: userDefaultsService, localStorageCleaner: LocalStorageCleanerMock())
@@ -61,8 +61,8 @@ final class MessageSendQueueTests: XCTestCase {
     }
 
     /// Кейс: сервер принял сообщение.
-    /// Ожидание: переписка поднята в списке чатов, созданное сообщение опубликовано подписчикам и сохранено в БД,
-    /// из очереди сообщение убрано.
+    /// Ожидание: переписка поднята в списке чатов, созданное сообщение опубликовано подписчикам и записано в кэш
+    /// сообщений, из очереди сообщение убрано.
     func test_enqueue_success_publishesSavesAndRemoves() async {
         let sut = makeSUT()
         let sent = Message.make(id: 2, clientId: "c1")
@@ -75,7 +75,7 @@ final class MessageSendQueueTests: XCTestCase {
         await yieldUntil { sut.outgoingMessages.isEmpty }
 
         await yieldUntil { published == [sent] }
-        await yieldUntil { [unowned self] in messageStorage.savedMessages == [sent] }
+        await yieldUntil { [unowned self] in messageCache.sentMessages == [sent] }
         XCTAssertEqual(positionUpdater.sentMessages, [sent])
         subscription.cancel()
     }
@@ -97,7 +97,7 @@ final class MessageSendQueueTests: XCTestCase {
     func test_confirm_doesNotWaitForStorage() async {
         let sut = makeSUT()
         let saveGate = Gate()
-        messageStorage.onSave = { await saveGate.wait() }
+        messageCache.onApplySent = { await saveGate.wait() }
         messageService.stubbedSentMessages = [
             .success(.make(id: 1, clientId: "c1")),
             .success(.make(id: 2, clientId: "c2")),
@@ -109,10 +109,10 @@ final class MessageSendQueueTests: XCTestCase {
         await yieldUntil { saveGate.isWaiting }
 
         XCTAssertEqual(messageService.sentRequests.map(\.clientId), ["c1", "c2"])
-        XCTAssertTrue(messageStorage.savedMessages.isEmpty)
-        messageStorage.onSave = nil
+        XCTAssertTrue(messageCache.sentMessages.isEmpty)
+        messageCache.onApplySent = nil
         saveGate.open()
-        await yieldUntil { [unowned self] in messageStorage.savedMessages.map(\.messageId) == [1, 2] }
+        await yieldUntil { [unowned self] in messageCache.sentMessages.map(\.messageId) == [1, 2] }
     }
 
     /// Кейс: отправка не удалась.
@@ -276,7 +276,7 @@ final class MessageSendQueueTests: XCTestCase {
 
         await yieldUntil { sut.outgoingMessages.isEmpty }
         gate.open()
-        await yieldUntil { [unowned self] in messageStorage.savedMessages == [sent] }
+        await yieldUntil { [unowned self] in messageCache.sentMessages == [sent] }
         XCTAssertTrue(sut.outgoingMessages.isEmpty)
     }
 
@@ -362,7 +362,7 @@ final class MessageSendQueueTests: XCTestCase {
 
         XCTAssertEqual(messageService.sentRequests.map(\.clientId), ["c1"])
         XCTAssertEqual(outgoingStorage.messages["c1"]?.status, .sending)
-        XCTAssertTrue(messageStorage.savedMessages.isEmpty)
+        XCTAssertTrue(messageCache.sentMessages.isEmpty)
     }
 
     /// Кейс: сообщение поставлено в очередь во время выхода, затем после его завершения.
@@ -390,7 +390,7 @@ final class MessageSendQueueTests: XCTestCase {
         var counter = 0
         return MessageSendQueue(
             messageService: messageService,
-            messageStorage: messageStorage,
+            messageCache: messageCache,
             outgoingMessageStorage: outgoingStorage,
             sessionService: sessionService,
             eventQueue: eventQueue,

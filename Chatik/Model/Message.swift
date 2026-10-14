@@ -20,7 +20,7 @@ enum MessageType: String, Decodable, Hashable, Sendable {
 }
 
 /// Объект `Message` из API — одно сообщение переписки.
-struct Message: Equatable, Identifiable {
+struct Message: Equatable, Identifiable, Sendable {
     let messageId: Int
     /// Идентификатор, сгенерированный клиентом-отправителем при отправке; уникален в пределах отправителя.
     /// По нему отправленное с этого устройства сообщение сопоставляется с ответом сервера и событием WebSocket.
@@ -81,7 +81,7 @@ extension Message {
 /// Отправитель и `clientId` сообщения — ключ, общий у локального сообщения в очереди отправки и у серверного
 /// сообщения, созданного из него. `clientId` уникален только в пределах отправителя, поэтому сравнивается вместе
 /// с `senderId`.
-struct MessageClientKey: Hashable {
+struct MessageClientKey: Hashable, Sendable {
     let senderId: Int
     let clientId: String
 }

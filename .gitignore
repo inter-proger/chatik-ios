@@ -7,3 +7,6 @@ xcuserdata/
 *.xcuserstate
 DerivedData/
 .DS_Store
+
+# Obsidian: настройки и состояние хранилища (vault)
+.obsidian/

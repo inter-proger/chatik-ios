@@ -15,7 +15,7 @@ final class RealtimeServiceTests: XCTestCase {
     private var sessionService: SessionService!
     private var authService: AuthService!
     private var eventQueue: RealtimeEventQueueMock!
-    private var messageStorage: MessageStorageServiceMock!
+    private var connectionMonitor: RealtimeConnectionMonitor!
     private var userCache: UserCacheServiceMock!
     private var sleeper: SleepController!
     private var sut: RealtimeService!
@@ -29,7 +29,7 @@ final class RealtimeServiceTests: XCTestCase {
         await sessionService.restore()
         authService = AuthService(networkService: NetworkServiceMock())
         eventQueue = RealtimeEventQueueMock()
-        messageStorage = MessageStorageServiceMock()
+        connectionMonitor = RealtimeConnectionMonitor()
         userCache = UserCacheServiceMock()
         sleeper = SleepController()
         let sleeper = sleeper!
@@ -39,7 +39,7 @@ final class RealtimeServiceTests: XCTestCase {
             sessionService: sessionService,
             authService: authService,
             eventQueue: eventQueue,
-            messageStorage: messageStorage,
+            connectionMonitor: connectionMonitor,
             userCache: userCache,
             backoff: ReconnectBackoff(randomFactor: { 1 }),
             pingInterval: pingInterval,
@@ -110,9 +110,9 @@ final class RealtimeServiceTests: XCTestCase {
     // MARK: - События
 
     /// Кейс: после `connected` пришло `messages` / `received` с `userIds`.
-    /// Ожидание: сообщение сохранено в БД, событие с превью положено в очередь, отправитель запрошен в кэше
-    /// пользователей, серверу ушло подтверждение с `uid` события.
-    func test_messageReceived_savesEnqueuesLoadsUsersAndAcknowledges() async throws {
+    /// Ожидание: событие с превью положено в очередь, отправитель запрошен в кэше пользователей, серверу ушло
+    /// подтверждение с `uid` события. В БД сообщение пишет `MessageCacheService` при обработке очереди.
+    func test_messageReceived_enqueuesLoadsUsersAndAcknowledges() async throws {
         let connection = try await startAndConnect()
 
         connection.deliver(WebSocketServerMessage(uid: "e1", group: "messages", event: .messageReceived(.stub, .make(id: 15)), userIds: [1]))
@@ -120,15 +120,13 @@ final class RealtimeServiceTests: XCTestCase {
         await waitUntil { connection.sent.count == 2 }
         await waitUntil { [unowned self] in !userCache.loadRequests.isEmpty }
         XCTAssertEqual(eventQueue.enqueued, [.connected, .messageReceived(.stub, .make(id: 15))])
-        XCTAssertEqual(messageStorage.savedMessages, [.stub])
         XCTAssertEqual(userCache.loadRequests, [[1]])
         XCTAssertEqual(connection.sent.last, .acknowledge(receivedUid: "e1"))
     }
 
     /// Кейс: после `connected` пришли `messages` / `edited` и `conversations` / `singleCreated`.
-    /// Ожидание: сообщение сохранено в БД, оба события положены в очередь по порядку; переписку сервис в БД не пишет —
-    /// это делает только список переписок.
-    func test_editedAndConversationCreated_saveMessageAndEnqueue() async throws {
+    /// Ожидание: оба события положены в очередь по порядку.
+    func test_editedAndConversationCreated_areEnqueuedInOrder() async throws {
         let connection = try await startAndConnect()
 
         connection.deliver(WebSocketServerMessage(uid: "e1", group: "messages", event: .messageEdited(.editedStub, nil), userIds: []))
@@ -136,11 +134,10 @@ final class RealtimeServiceTests: XCTestCase {
 
         await waitUntil { connection.sent.count == 3 }
         XCTAssertEqual(eventQueue.enqueued, [.connected, .messageEdited(.editedStub, nil), .conversationCreated(.singleStub)])
-        XCTAssertEqual(messageStorage.savedMessages, [.editedStub])
     }
 
     /// Кейс: после `connected` пришло событие неизвестной группы.
-    /// Ожидание: оно подтверждено сразу, в очередь ничего не положено, в БД ничего не записано.
+    /// Ожидание: оно подтверждено сразу, в очередь ничего не положено.
     func test_unknownEvent_isAcknowledgedOnly() async throws {
         let connection = try await startAndConnect()
 
@@ -148,7 +145,6 @@ final class RealtimeServiceTests: XCTestCase {
 
         await waitUntil { connection.sent.count == 2 }
         XCTAssertEqual(connection.sent.last, .acknowledge(receivedUid: "e1"))
-        XCTAssertTrue(messageStorage.savedMessages.isEmpty)
         XCTAssertEqual(eventQueue.enqueued, [.connected])
     }
 
@@ -166,7 +162,7 @@ final class RealtimeServiceTests: XCTestCase {
         await waitUntil { connection.sent.count == 2 }
 
         XCTAssertEqual(connection.sent.last, .acknowledge(receivedUid: "e2"))
-        XCTAssertTrue(messageStorage.savedMessages.isEmpty)
+        XCTAssertEqual(eventQueue.enqueued, [.connected])
     }
 
     /// Кейс: пока соединение открыто, локальная сессия завершилась, и пришло событие.
@@ -178,8 +174,51 @@ final class RealtimeServiceTests: XCTestCase {
         connection.deliver(WebSocketServerMessage(uid: "e1", group: "messages", event: .messageReceived(.stub, .make(id: 15)), userIds: [1]))
 
         await waitUntil { connection.closeCodes == [WebSocketCloseCode.normal] }
-        XCTAssertTrue(messageStorage.savedMessages.isEmpty)
+        XCTAssertEqual(eventQueue.enqueued, [.connected])
         XCTAssertEqual(globalService.tokenCallCount, 0)
+    }
+
+    // MARK: - Монитор соединения
+
+    /// Кейс: соединение дошло до `auth` / `connected`.
+    /// Ожидание: в мониторе появилось текущее соединение — до того, как `connected` положен в очередь.
+    func test_connected_setsCurrentConnection() async throws {
+        globalService.startResults = [.success(.stub())]
+        sut.start()
+        await waitUntil { [unowned self] in factory.made.first?.sent.count == 1 }
+        XCTAssertNil(connectionMonitor.current)
+
+        factory.made[0].deliverConnected()
+
+        await waitUntil { [unowned self] in eventQueue.enqueued == [.connected] }
+        XCTAssertNotNil(connectionMonitor.current)
+    }
+
+    /// Кейс: сервер закрыл соединение, затем клиент переподключился.
+    /// Ожидание: после закрытия текущего соединения нет, у нового соединения — новый id.
+    func test_reconnect_clearsAndReplacesCurrentConnection() async throws {
+        let connection = try await startAndConnect()
+        let firstId = try XCTUnwrap(connectionMonitor.current)
+        globalService.tokenResults = [.success(.stub(token: "t2"))]
+        sleeper.allow(.seconds(1))
+
+        connection.closeByServer(code: WebSocketCloseCode.abnormal)
+
+        await waitUntil { [unowned self] in factory.made.count == 2 && factory.made[1].sent.count == 1 }
+        XCTAssertNil(connectionMonitor.current)
+        factory.made[1].deliverConnected()
+        await waitUntil { [unowned self] in connectionMonitor.current != nil }
+        XCTAssertNotEqual(connectionMonitor.current, firstId)
+    }
+
+    /// Кейс: сервис остановлен (`stop()`) при открытом соединении.
+    /// Ожидание: текущего соединения в мониторе нет.
+    func test_stop_clearsCurrentConnection() async throws {
+        _ = try await startAndConnect()
+
+        await sut.stop()
+
+        XCTAssertNil(connectionMonitor.current)
     }
 
     // MARK: - Закрытие и переподключение
@@ -422,7 +461,7 @@ final class RealtimeServiceTests: XCTestCase {
             sessionService: sessionService,
             authService: authService,
             eventQueue: eventQueue,
-            messageStorage: messageStorage,
+            connectionMonitor: connectionMonitor,
             userCache: userCache,
             backoff: ReconnectBackoff(randomFactor: { 1 }),
             pingInterval: pingInterval,

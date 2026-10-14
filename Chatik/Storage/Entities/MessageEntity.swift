@@ -24,6 +24,7 @@ final class MessageEntity: NSManagedObject, StorageEntity {
 
     static let idKey = "messageId"
     static let conversationIdKey = "conversationId"
+    static let blockIdKey = "blockId"
 
     var storageId: Int { Int(messageId) }
 
@@ -54,11 +55,28 @@ final class MessageEntity: NSManagedObject, StorageEntity {
     /// - Parameters:
     ///   - messages: сырые структуры сообщений.
     ///   - context: фоновый контекст записи.
-    static func upsert(_ messages: [Message], in context: NSManagedObjectContext) throws {
-        _ = try upsert(messages, id: \.messageId, in: context) { entity, message in
+    /// - Returns: записи всех переданных сообщений по `messageId` — с версией, которая осталась в БД.
+    @discardableResult
+    static func upsert(_ messages: [Message], in context: NSManagedObjectContext) throws -> [Int: MessageEntity] {
+        try upsert(messages, id: \.messageId, in: context) { entity, message in
             guard !entity.isNewer(than: message) else { return }
             entity.update(from: message)
         }
+    }
+
+    /// Обновляет в контексте только сообщения, которые уже есть в БД, тем же правилом версий; отсутствующие
+    /// не создаются. `save()` не вызывается.
+    /// - Parameters:
+    ///   - messages: сырые структуры сообщений.
+    ///   - context: фоновый контекст записи.
+    /// - Returns: найденные записи по `messageId`.
+    static func updateExisting(_ messages: [Message], in context: NSManagedObjectContext) throws -> [Int: MessageEntity] {
+        let entities = try fetchById(ids: messages.map(\.messageId), in: context)
+        for message in messages {
+            guard let entity = entities[message.messageId], !entity.isNewer(than: message) else { continue }
+            entity.update(from: message)
+        }
+        return entities
     }
 }
 

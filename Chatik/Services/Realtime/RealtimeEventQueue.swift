@@ -7,7 +7,7 @@ import Foundation
 import os
 
 @MainActor
-protocol RealtimeEventQueueProtocol: AuthServiceObserver {
+protocol RealtimeEventQueueProtocol: AuthServiceObserver, Sendable {
     /// Кладёт событие в конец очереди; доставка начнётся, если нет аренд.
     func enqueue(_ event: RealtimeEvent)
     /// Подписывает обработчик. Очередь ждёт каждый обработчик, прежде чем взять следующее событие.

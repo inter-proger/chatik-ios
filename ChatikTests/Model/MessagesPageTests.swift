@@ -43,4 +43,27 @@ final class MessagesPageTests: XCTestCase {
         XCTAssertNil(page.nextBlockId)
         XCTAssertFalse(page.hasNext)
     }
+
+    /// Кейс: ответ с `receivedAfter` — пустая дельта и список изменённых блоков.
+    /// Ожидание: `updatedBlockIds` разобран.
+    func test_decode_readsUpdatedBlockIds() throws {
+        let json = #"{"messages":[],"nextBlockId":null,"hasNext":false,"updatedBlockIds":[3,1]}"#
+
+        let page = try decoder.decode(MessagesPage.self, from: Data(json.utf8))
+
+        XCTAssertEqual(page.updatedBlockIds, [3, 1])
+    }
+
+    /// Кейс: пустая страница с `hasNext: true` — все сообщения её блоков удалены.
+    /// Ожидание: страница разобрана, продолжение подгрузки есть.
+    func test_decode_emptyPageWithNext() throws {
+        let json = #"{"messages":[],"nextBlockId":4,"hasNext":true}"#
+
+        let page = try decoder.decode(MessagesPage.self, from: Data(json.utf8))
+
+        XCTAssertTrue(page.messages.isEmpty)
+        XCTAssertTrue(page.hasNext)
+        XCTAssertEqual(page.nextBlockId, 4)
+        XCTAssertNil(page.updatedBlockIds)
+    }
 }

@@ -72,24 +72,33 @@ enum PreviewDependencies {
         let sessionService = makeSessionService(userDefaultsService: UserDefaultsServicePreviewMock(currentUser: user))
         Task { await sessionService.restore() }
         let messageService = MessageServicePreviewMock()
-        let messageStorage = MessageStorageService(container: storageContainer)
+        let messageCache = MessageCacheService(
+            storage: MessageStorageService(container: storageContainer),
+            connectionMonitor: RealtimeConnectionMonitor()
+        )
+        let messageSendQueue = MessageSendQueue(
+            messageService: messageService,
+            messageCache: messageCache,
+            outgoingMessageStorage: OutgoingMessageStorageService(container: storageContainer),
+            sessionService: sessionService,
+            eventQueue: realtimeEventQueue,
+            positionUpdater: ConversationPositionUpdatingPreviewMock()
+        )
         return ChatViewModel(
             conversation: conversation,
-            messageService: messageService,
-            messageStorage: messageStorage,
-            messageSendQueue: MessageSendQueue(
+            messagesList: MessagesListService(
+                conversationId: conversation.conversationId,
+                messageCache: messageCache,
+                storage: MessageStorageService(container: storageContainer),
                 messageService: messageService,
-                messageStorage: messageStorage,
-                outgoingMessageStorage: OutgoingMessageStorageService(container: storageContainer),
-                sessionService: sessionService,
                 eventQueue: realtimeEventQueue,
-                positionUpdater: ConversationPositionUpdatingPreviewMock()
+                messageSendQueue: messageSendQueue
             ),
+            messageSendQueue: messageSendQueue,
             sessionService: sessionService,
             userCache: userCache,
             localizationService: localizationService,
-            messageTextValidator: MessageTextValidator(),
-            realtimeQueue: realtimeEventQueue
+            messageTextValidator: MessageTextValidator()
         )
     }
 
@@ -279,16 +288,16 @@ final class ConversationServicePreviewMock: ConversationServiceProtocol {
 }
 
 /// Мок сервиса сообщений для превью: отдаёт одну страницу сообщений и «отправляет» сообщения с задержкой.
-final class MessageServicePreviewMock: MessageServiceProtocol {
+final class MessageServicePreviewMock: MessageServiceProtocol, Sendable {
     private let delay: Duration
 
     init(delay: Duration = .seconds(1)) {
         self.delay = delay
     }
 
-    func fetchMessages(conversationId: Int, blockId: Int?) async throws -> MessagesPage {
+    func fetchMessages(conversationId: Int, filter: MessageListFilter) async throws -> MessagesPage {
         try await Task.sleep(for: delay)
-        guard blockId == nil else { return MessagesPage(messages: [], nextBlockId: nil, hasNext: false) }
+        guard filter == .block(nil) else { return MessagesPage(messages: [], nextBlockId: nil, hasNext: false) }
         let texts = ["Привет всем!", "Привет! Во сколько созвон?", "Давайте в 15:00", "Подходит", "Договорились"]
         let messages = texts.enumerated().map { index, text in
             makeMessage(id: index + 1, conversationId: conversationId, senderId: index % 3 + 1, text: text, clientId: "preview-\(index + 1)")
@@ -296,9 +305,9 @@ final class MessageServicePreviewMock: MessageServiceProtocol {
         return MessagesPage(messages: messages.reversed(), nextBlockId: nil, hasNext: false)
     }
 
-    func fetchBlock(blockId: Int) async throws -> [Message] {
+    func fetchBlocks(ids: [Int]) async throws -> MessageBlocksBatch {
         try await Task.sleep(for: delay)
-        return []
+        return MessageBlocksBatch(blocks: [], notFoundIds: ids)
     }
 
     func send(conversationId: Int, text: String, clientId: String) async throws -> Message {

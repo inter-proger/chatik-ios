@@ -6,7 +6,7 @@
 import Foundation
 
 /// Состояние доставки сообщения.
-enum MessageDeliveryState: Equatable {
+enum MessageDeliveryState: Equatable, Sendable {
     /// Сообщение есть на сервере.
     case delivered
     /// Отправляется: сервер ещё не ответил.
@@ -16,7 +16,7 @@ enum MessageDeliveryState: Equatable {
 }
 
 /// Сообщение переписки в готовом для отображения виде.
-struct MessageDisplayModel: Identifiable, Equatable {
+struct MessageDisplayModel: Identifiable, Equatable, Sendable {
     /// Отправитель и `clientId`: у неотправленного сообщения и созданного из него серверного он один и тот же,
     /// поэтому при подтверждении отправки пузырь остаётся на месте, а не пересоздаётся.
     let id: MessageClientKey
@@ -39,7 +39,7 @@ struct MessageDisplayModel: Identifiable, Equatable {
 }
 
 /// Отправитель сообщения в готовом для отображения виде.
-struct MessageSenderDisplayModel: Equatable {
+struct MessageSenderDisplayModel: Equatable, Sendable {
     let name: String
     /// `true` — отправитель ещё не загружен: вместо `name` показывается заглушка.
     let isPlaceholder: Bool
@@ -47,8 +47,32 @@ struct MessageSenderDisplayModel: Equatable {
     let avatarURL: URL?
 }
 
+/// Тексты ленты из локализации. Собираются на main (`ChatStrings`) и передаются значениями, чтобы сообщения
+/// можно было собирать вне main.
+struct MessageDisplayStrings: Equatable, Sendable {
+    let unsupported: String
+    let edited: String
+    let sending: String
+    let failed: String
+    let userLoading: String
+    let userDeleted: String
+
+    /// Тексты на текущем языке приложения.
+    @MainActor
+    static var current: MessageDisplayStrings {
+        MessageDisplayStrings(
+            unsupported: ChatStrings.messageUnsupported,
+            edited: ChatStrings.messageEdited,
+            sending: ChatStrings.messageSending,
+            failed: ChatStrings.messageFailed,
+            userLoading: ChatStrings.userLoading,
+            userDeleted: ChatStrings.userDeleted
+        )
+    }
+}
+
 /// Как показать сообщение — общие для всех сообщений экрана параметры.
-struct MessageDisplayContext {
+struct MessageDisplayContext: Sendable {
     /// Текущий пользователь: его сообщения показываются исходящими. `nil` — сессии нет, все сообщения входящие.
     let currentUserId: Int?
     /// Язык форматирования времени.
@@ -57,6 +81,8 @@ struct MessageDisplayContext {
     let calendar: Calendar
     /// Текущее время.
     let now: Date
+    /// Тексты ленты.
+    let strings: MessageDisplayStrings
 }
 
 extension MessageDisplayModel {
@@ -65,17 +91,16 @@ extension MessageDisplayModel {
     ///   - message: сообщение из ответа сервера или БД.
     ///   - sender: отправитель из кэша пользователей; `nil` — сообщение продолжает серию, аватар и имя не нужны.
     ///   - context: общие параметры отображения.
-    @MainActor
     init(message: Message, sender: CachedUser?, context: MessageDisplayContext) {
         let isUnsupported = message.type == .unknown
         self.init(
             id: message.clientKey,
-            text: isUnsupported ? ChatStrings.messageUnsupported : message.text,
+            text: isUnsupported ? context.strings.unsupported : message.text,
             isUnsupported: isUnsupported,
             isOutgoing: message.senderId == context.currentUserId,
-            sender: sender.map(MessageSenderDisplayModel.init(cachedUser:)),
+            sender: sender.map { MessageSenderDisplayModel(cachedUser: $0, strings: context.strings) },
             time: Self.formattedTime(message.createdAt.date, context: context),
-            editedLabel: message.isEdited ? ChatStrings.messageEdited : nil,
+            editedLabel: message.isEdited ? context.strings.edited : nil,
             deliveryState: .delivered,
             deliveryStateLabel: nil
         )
@@ -87,7 +112,6 @@ extension MessageDisplayModel {
     ///   - outgoing: сообщение очереди отправки.
     ///   - sender: отправитель (текущий пользователь); `nil` — сообщение продолжает серию.
     ///   - context: общие параметры отображения.
-    @MainActor
     init(outgoing: OutgoingMessage, sender: CachedUser?, context: MessageDisplayContext) {
         let deliveryState: MessageDeliveryState = outgoing.status == .failed ? .failed : .sending
         self.init(
@@ -95,11 +119,11 @@ extension MessageDisplayModel {
             text: outgoing.text,
             isUnsupported: false,
             isOutgoing: true,
-            sender: sender.map(MessageSenderDisplayModel.init(cachedUser:)),
+            sender: sender.map { MessageSenderDisplayModel(cachedUser: $0, strings: context.strings) },
             time: Self.formattedTime(outgoing.createdAt, context: context),
             editedLabel: nil,
             deliveryState: deliveryState,
-            deliveryStateLabel: deliveryState == .failed ? ChatStrings.messageFailed : ChatStrings.messageSending
+            deliveryStateLabel: deliveryState == .failed ? context.strings.failed : context.strings.sending
         )
     }
 
@@ -115,16 +139,17 @@ extension MessageDisplayModel {
 extension MessageSenderDisplayModel {
     /// Собирает отправителя по состоянию в кэше: загруженный — имя и аватар, загружается — заглушка,
     /// удалён — текст об удалённом пользователе.
-    /// - Parameter cachedUser: отправитель из кэша пользователей.
-    @MainActor
-    init(cachedUser: CachedUser) {
+    /// - Parameters:
+    ///   - cachedUser: отправитель из кэша пользователей.
+    ///   - strings: тексты ленты.
+    init(cachedUser: CachedUser, strings: MessageDisplayStrings) {
         switch cachedUser {
         case let .loaded(user):
             self.init(name: user.name, isPlaceholder: false, avatarURL: user.avatar.map { $0.smallURL ?? $0.url })
         case .pending:
-            self.init(name: ChatStrings.userLoading, isPlaceholder: true, avatarURL: nil)
+            self.init(name: strings.userLoading, isPlaceholder: true, avatarURL: nil)
         case .notFound:
-            self.init(name: ChatStrings.userDeleted, isPlaceholder: false, avatarURL: nil)
+            self.init(name: strings.userDeleted, isPlaceholder: false, avatarURL: nil)
         }
     }
 }

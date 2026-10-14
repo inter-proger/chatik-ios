@@ -18,8 +18,8 @@ struct ChatView: View {
     var body: some View {
         MessagesListView(
             messages: viewModel.messages,
-            isLoadingNextPage: viewModel.isLoadingNextPage,
-            onAppear: viewModel.prefetchNextPageIfNeeded,
+            isLoadingOlder: viewModel.isLoadingOlder,
+            onAppear: viewModel.prefetchOlderIfNeeded,
             onTapFailed: viewModel.didTapMessage
         )
         .onTapGesture { isInputFocused = false }
@@ -30,17 +30,13 @@ struct ChatView: View {
             ChatInputPanel(viewModel: viewModel, isFocused: $isInputFocused)
         }
         // Лента перевёрнута (см. `MessagesListView`), поэтому индикатор обновления появляется внизу, у новых сообщений.
-        .refreshable { await viewModel.loadFirstPage() }
-        .task { await viewModel.loadFirstPage() }
-        .task { await viewModel.observeSentMessages() }
-        .task { await viewModel.observeRealtimeEvents() }
+        .refreshable { await viewModel.refresh() }
+        // Отмена задачи при уходе с экрана останавливает ленту: синхронизация отменяется и снимает аренду очереди.
+        .task { await viewModel.observeMessages() }
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .principal) {
-                Text(viewModel.title)
-                    .font(.headline)
-                    .lineLimit(1)
-                    .redacted(reason: viewModel.isTitlePlaceholder ? .placeholder : [])
+                titleView
             }
         }
         .alert(CommonStrings.errorTitle, isPresented: $viewModel.errorMessage.isPresent(), presenting: viewModel.errorMessage) { _ in
@@ -74,10 +70,30 @@ struct ChatView: View {
         }
     }
 
-    /// Прелоадер первой загрузки или сообщение о пустой переписке поверх списка.
+    /// Заголовок: имя собеседника или название группы, а под ним, пока идёт синхронизация, — индикатор
+    /// и «Обновление…». Лента из кэша при этом остаётся интерактивной.
+    private var titleView: some View {
+        VStack(spacing: 0) {
+            Text(viewModel.title)
+                .font(.headline)
+                .lineLimit(1)
+                .redacted(reason: viewModel.isTitlePlaceholder ? .placeholder : [])
+            if viewModel.isSyncing {
+                HStack(spacing: 4) {
+                    ProgressView()
+                        .controlSize(.mini)
+                    Text(ChatStrings.updating)
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    /// Прелоадер, пока кэша нет и идёт синхронизация, или сообщение о пустой переписке поверх списка.
     @ViewBuilder
     private var stateOverlay: some View {
-        if viewModel.isLoadingFirstPage && viewModel.messages.isEmpty {
+        if viewModel.isShowingLoader {
             ProgressView()
         } else if viewModel.isEmpty {
             ContentUnavailableView(ChatStrings.empty, systemImage: "bubble.left")

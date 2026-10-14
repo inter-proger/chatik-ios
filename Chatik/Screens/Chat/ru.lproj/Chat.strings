@@ -37,3 +37,6 @@
 "chat.failed_actions.title" = "Сообщение не отправлено";
 "chat.failed_actions.retry" = "Повторить отправку";
 "chat.failed_actions.delete" = "Удалить сообщение";
+
+/* Подпись под заголовком, пока переписка синхронизируется с сервером */
+"chat.updating" = "Обновление…";

@@ -91,13 +91,13 @@ final class CoreDataStackTests: XCTestCase {
 
         let container = CoreDataStack.makeContainer(storeURL: storeURL)
         let messageStorage = MessageStorageService(container: container)
-        let messages = try await messageStorage.fetchLatest(conversationId: 7, limit: 10)
-        try await messageStorage.save(message: .make(id: 2, conversationId: 7))
+        let messages = try await messageStorage.fetchLatestBlocks(conversationId: 7, minCount: 10)
+        _ = try await messageStorage.write(MessageStorageChanges(upserts: [.make(id: 2, conversationId: 7)]))
 
         let stored = try await ConversationStorageService(container: container).fetchList()
         let outgoing = try await OutgoingMessageStorageService(container: container).fetchAll()
         let users = try await UserStorageService(container: container).findStored(byIds: [2])
-        let saved = try await messageStorage.fetchLatest(conversationId: 7, limit: 10)
+        let saved = try await messageStorage.fetchLatestBlocks(conversationId: 7, minCount: 10)
         XCTAssertTrue(stored.conversations.isEmpty)
         XCTAssertEqual(stored.state, ConversationListState())
         XCTAssertTrue(messages.isEmpty)
@@ -133,12 +133,41 @@ final class CoreDataStackTests: XCTestCase {
 
         let container = CoreDataStack.makeContainer(storeURL: storeURL)
         let messageStorage = MessageStorageService(container: container)
-        try await messageStorage.save(message: .make(id: 1, conversationId: 7))
+        _ = try await messageStorage.write(MessageStorageChanges(upserts: [.make(id: 1, conversationId: 7)]))
 
         let stored = try await ConversationStorageService(container: container).fetchList()
-        let messages = try await messageStorage.fetchLatest(conversationId: 7, limit: 10)
+        let messages = try await messageStorage.fetchLatestBlocks(conversationId: 7, minCount: 10)
         XCTAssertTrue(stored.conversations.isEmpty)
         XCTAssertEqual(messages.map(\.id), [1])
+    }
+
+    /// Кейс: хранилище создано шестой версией модели (время в миллисекундах, без состояния кэша сообщений);
+    /// в нём сообщение.
+    /// Ожидание: лёгкая миграция без очистки — сообщение на месте, у переписки нет состояния кэша, и его можно записать.
+    func test_makeContainer_sixthModelVersion_keepsMessagesAndAddsCacheState() async throws {
+        try makeStore(modelVersion: "Chatik 6") { context in
+            let message = NSEntityDescription.insertNewObject(forEntityName: "MessageEntity", into: context)
+            message.setValue(1, forKey: "messageId")
+            message.setValue(7, forKey: "conversationId")
+            message.setValue(3, forKey: "blockId")
+            message.setValue("c1", forKey: "clientId")
+            message.setValue("text", forKey: "type")
+            message.setValue("Сохранённое", forKey: "text")
+            message.setValue(1_790_846_400_000, forKey: "createdAtMs")
+            message.setValue(1_790_846_400_000, forKey: "updatedAtMs")
+        }
+
+        let container = CoreDataStack.makeContainer(storeURL: storeURL)
+        let messageStorage = MessageStorageService(container: container)
+        let messages = try await messageStorage.fetchLatestBlocks(conversationId: 7, minCount: 10)
+        let stateBefore = try await messageStorage.fetchState(conversationId: 7)
+        let state = MessageCacheState(syncMark: ServerTime(milliseconds: 1), nextBlockId: nil, hasMorePages: false)
+        _ = try await messageStorage.write(MessageStorageChanges(stateChanges: [MessageCacheStateChange(conversationId: 7, kind: .replace(state))]))
+
+        let stateAfter = try await messageStorage.fetchState(conversationId: 7)
+        XCTAssertEqual(messages.map(\.text), ["Сохранённое"])
+        XCTAssertNil(stateBefore)
+        XCTAssertEqual(stateAfter, state)
     }
 
     // MARK: - Helpers

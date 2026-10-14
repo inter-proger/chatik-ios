@@ -37,3 +37,6 @@
 "chat.failed_actions.title" = "Message not sent";
 "chat.failed_actions.retry" = "Retry sending";
 "chat.failed_actions.delete" = "Delete message";
+
+/* Subtitle under the title while the conversation syncs with the server */
+"chat.updating" = "Updating…";

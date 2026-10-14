@@ -6,8 +6,8 @@
 import Foundation
 import os
 
-/// Событие реального времени для потребителей очереди событий. Сообщения в локальной БД к моменту доставки
-/// уже обновлены; переписки пишет только `ConversationListService`.
+/// Событие реального времени для потребителей очереди событий. Сообщения в локальную БД пишет
+/// `MessageCacheService` при обработке события, переписки — `ConversationListService`.
 enum RealtimeEvent: Equatable, Sendable {
     /// Соединение (пере)установлено. WebSocket не гарантирует доставку: пока соединения не было, события
     /// могли потеряться, поэтому потребители синхронизируются через REST.
@@ -25,8 +25,7 @@ protocol RealtimeServiceProtocol: AuthServiceObserver {
     /// Начинает работу с `/global/start`: подключается к WebSocket или, если пользователь не авторизован,
     /// закрывает соединение. Прежнее соединение закрывается. Во время выхода из аккаунта ничего не делает.
     func start()
-    /// Закрывает соединение и прекращает переподключения; возвращается, когда начатая обработка событий
-    /// (запись в БД) закончена.
+    /// Закрывает соединение и прекращает переподключения; возвращается, когда соединение закрыто.
     func stop() async
 }
 
@@ -38,11 +37,14 @@ protocol RealtimeServiceProtocol: AuthServiceObserver {
 ///
 /// Цикл соединения: токен (`/global/start` или `/global/getWebsocketToken`) → handshake → `auth` / `connect` →
 /// `auth` / `connected` → события. После `connected` потребители получают `RealtimeEvent.connected` и синхронизируются
-/// через REST. Сообщение из события сначала сохраняется в БД (из двух версий побеждает версия с большим `updatedAt`,
-/// см. `MessageStorageService`), затем событие кладётся в `RealtimeEventQueue` и подтверждается серверу — не дожидаясь
-/// обработки: приостановленная очередь иначе задержала бы чтение сокета. Событие, потерянное из памяти при убийстве
-/// приложения, восстановит стартовая синхронизация списка. `connected` тоже идёт через очередь — чтобы события
-/// старого соединения применились раньше синхронизации.
+/// через REST. Событие кладётся в `RealtimeEventQueue` и подтверждается серверу — не дожидаясь обработки:
+/// приостановленная очередь иначе задержала бы чтение сокета. Сообщения из событий пишет в БД `MessageCacheService`
+/// при обработке; событие, потерянное из памяти при убийстве приложения, восстановят стартовая синхронизация списка
+/// и синхронизация переписки при открытии. `connected` тоже идёт через очередь — чтобы события старого соединения
+/// применились раньше синхронизации.
+///
+/// Текущее соединение отмечается в `RealtimeConnectionMonitor` при `auth` / `connected` и снимается при закрытии —
+/// синхронно, мимо очереди событий.
 @MainActor
 final class RealtimeService: RealtimeServiceProtocol {
     /// Откуда брать токен для следующего подключения.
@@ -96,7 +98,7 @@ final class RealtimeService: RealtimeServiceProtocol {
     private let sessionService: SessionServiceProtocol
     private let authService: AuthServiceProtocol
     private let eventQueue: RealtimeEventQueueProtocol
-    private let messageStorage: MessageStorageServiceProtocol
+    private let connectionMonitor: RealtimeConnectionMonitoring
     private let userCache: UserCacheServiceProtocol
     private let backoff: ReconnectBackoff
     private let sleep: @Sendable (Duration) async throws -> Void
@@ -116,7 +118,7 @@ final class RealtimeService: RealtimeServiceProtocol {
     ///   - sessionService: текущий пользователь.
     ///   - authService: при `null` из `/global/start` сессия завершается через него — как истёкшая.
     ///   - eventQueue: очередь, в которую кладутся события для потребителей.
-    ///   - messageStorage: куда пишутся сообщения из событий.
+    ///   - connectionMonitor: куда отмечается текущее соединение.
     ///   - userCache: загружает пользователей из `userIds` событий.
     ///   - backoff: задержки переподключения.
     ///   - pingInterval: интервал ping.
@@ -128,7 +130,7 @@ final class RealtimeService: RealtimeServiceProtocol {
         sessionService: SessionServiceProtocol,
         authService: AuthServiceProtocol,
         eventQueue: RealtimeEventQueueProtocol,
-        messageStorage: MessageStorageServiceProtocol,
+        connectionMonitor: RealtimeConnectionMonitoring,
         userCache: UserCacheServiceProtocol,
         backoff: ReconnectBackoff = ReconnectBackoff(),
         pingInterval: Duration = .seconds(25),
@@ -140,7 +142,7 @@ final class RealtimeService: RealtimeServiceProtocol {
         self.sessionService = sessionService
         self.authService = authService
         self.eventQueue = eventQueue
-        self.messageStorage = messageStorage
+        self.connectionMonitor = connectionMonitor
         self.userCache = userCache
         self.backoff = backoff
         self.pingInterval = pingInterval
@@ -173,8 +175,7 @@ final class RealtimeService: RealtimeServiceProtocol {
 
     /// Выход из аккаунта начинается (`AuthServiceObserver`): соединение закрывается до запроса выхода — сервер закроет
     /// соединения сессии с кодом 4003, и по ещё текущему соединению это выглядело бы как истечение сессии.
-    /// Закрытие дожидается записей событий в БД — они не попадут туда после очистки. До конца выхода `start()`
-    /// не подключается; заново работа с сервером начнётся при следующем входе.
+    /// До конца выхода `start()` не подключается; заново работа с сервером начнётся при следующем входе.
     func authServiceWillLogout() async {
         isLoggingOut = true
         await stop()
@@ -329,6 +330,12 @@ final class RealtimeService: RealtimeServiceProtocol {
     ) async -> (ConnectionOutcome, Bool) {
         var isConnected = false
         var connectionErrorCode: Int?
+        var connectionId: RealtimeConnectionId?
+        defer {
+            if let connectionId {
+                connectionMonitor.disconnect(connectionId)
+            }
+        }
         while true {
             let message: WebSocketServerMessage
             do {
@@ -341,6 +348,7 @@ final class RealtimeService: RealtimeServiceProtocol {
             switch message.event {
             case .connected:
                 isConnected = true
+                connectionId = connectionMonitor.connect()
                 eventQueue.enqueue(.connected)
             case let .connectionError(errorCode):
                 connectionErrorCode = errorCode
@@ -401,8 +409,8 @@ final class RealtimeService: RealtimeServiceProtocol {
 
     // MARK: - События
 
-    /// Сохраняет сообщение события в БД, кладёт событие в очередь, запускает загрузку упомянутых пользователей
-    /// и подтверждает получение. Ни обработку очередью, ни пользователей не ждёт.
+    /// Кладёт событие в очередь, запускает загрузку упомянутых пользователей и подтверждает получение.
+    /// Ни обработку очередью, ни пользователей не ждёт.
     /// - Parameters:
     ///   - message: сообщение сервера после `connected`.
     ///   - connection: соединение, в которое уходит подтверждение.
@@ -411,7 +419,7 @@ final class RealtimeService: RealtimeServiceProtocol {
     ///   не применяются, а соединение нужно закрыть.
     private func handle(_ message: WebSocketServerMessage, from connection: WebSocketConnectionProtocol, userId: Int) async -> Bool {
         guard sessionService.currentUser?.userId == userId else { return false }
-        if let event = await apply(message.event) {
+        if let event = realtimeEvent(for: message.event) {
             eventQueue.enqueue(event)
         }
         if !message.userIds.isEmpty {
@@ -425,26 +433,9 @@ final class RealtimeService: RealtimeServiceProtocol {
         return true
     }
 
-    /// Сохраняет сообщение события в БД; переписки пишет только `ConversationListService`. Ошибка записи не мешает
-    /// доставить событие.
+    /// Событие для очереди.
     /// - Parameter event: событие сервера.
     /// - Returns: событие для очереди; `nil` — доставлять нечего.
-    private func apply(_ event: WebSocketServerEvent) async -> RealtimeEvent? {
-        do {
-            switch event {
-            case let .messageReceived(message, _), let .messageEdited(message, _):
-                try await messageStorage.save(message: message)
-            case .conversationCreated, .connected, .connectionError, .unknown:
-                break
-            }
-        } catch {
-            Logger.storage.error("Не удалось сохранить событие WebSocket в БД: \(String(describing: error), privacy: .public)")
-        }
-        return realtimeEvent(for: event)
-    }
-
-    /// Событие для очереди без записи в БД.
-    /// - Parameter event: событие сервера.
     private func realtimeEvent(for event: WebSocketServerEvent) -> RealtimeEvent? {
         switch event {
         case let .conversationCreated(conversation): return .conversationCreated(conversation)

@@ -151,7 +151,8 @@ final class MessageDisplayModelTests: XCTestCase {
             currentUserId: currentUserId,
             locale: Locale(identifier: "ru"),
             calendar: calendar,
-            now: now
+            now: now,
+            strings: .current
         )
     }
 }

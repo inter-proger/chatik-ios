@@ -23,168 +23,231 @@ final class MessageStorageServiceTests: XCTestCase {
         super.tearDown()
     }
 
-    // MARK: - Сохранение
+    // MARK: - Upsert
 
-    /// Кейс: сохранено отредактированное сообщение.
-    /// Ожидание: оно читается из БД без потерь — все поля, включая `isEdited` и обе даты.
-    func test_saveMessage_roundTrips() async throws {
-        try await sut.save(message: .editedStub)
+    /// Кейс: записано отредактированное сообщение.
+    /// Ожидание: оно читается из БД без потерь — все поля, включая `isEdited` и обе даты; запись вернула его версию.
+    func test_write_upsert_roundTrips() async throws {
+        let written = try await sut.write(MessageStorageChanges(upserts: [.editedStub]))
 
-        let found = try await sut.find(byId: Message.editedStub.id)
+        let messages = try await sut.fetchLatestBlocks(conversationId: 1, minCount: 10)
 
-        XCTAssertEqual(found, .editedStub)
-    }
-
-    /// Кейс: сообщение сохранено, затем сохранено повторно с тем же `messageId` после редактирования.
-    /// Ожидание: в БД одна запись с новым текстом.
-    func test_save_existingId_updatesRecord() async throws {
-        try await sut.save(message: .stub)
-
-        try await sut.save(message: .editedStub)
-
-        let messages = try await sut.fetchLatest(conversationId: Message.stub.conversationId, limit: 10)
+        XCTAssertEqual(written, [.editedStub])
         XCTAssertEqual(messages, [.editedStub])
     }
 
-    /// Кейс: в БД отредактированное сообщение (пришло событием WebSocket), затем сохраняется более старая версия
+    /// Кейс: в БД отредактированное сообщение (пришло событием WebSocket), затем записывается более старая версия
     /// (ответ REST, собранный до правки).
-    /// Ожидание: запись не откатилась — в БД осталась более новая версия.
-    func test_save_olderVersion_keepsNewerRecord() async throws {
-        try await sut.save(message: .editedStub)
+    /// Ожидание: запись не откатилась, и запись вернула версию, оставшуюся в БД.
+    func test_write_olderVersion_keepsNewerRecord() async throws {
+        _ = try await sut.write(MessageStorageChanges(upserts: [.editedStub]))
 
-        try await sut.save(message: .stub)
+        let written = try await sut.write(MessageStorageChanges(upserts: [.stub]))
 
-        let found = try await sut.find(byId: Message.stub.id)
-        XCTAssertEqual(found, .editedStub)
+        let messages = try await sut.fetchLatestBlocks(conversationId: 1, minCount: 10)
+        XCTAssertEqual(written, [.editedStub])
+        XCTAssertEqual(messages, [.editedStub])
     }
 
-    /// Кейс: батч из трёх сообщений, два из них с одинаковым `messageId`.
-    /// Ожидание: сохранены две записи, для повторного `messageId` — последняя версия.
-    func test_saveMessages_duplicateIds_collapsesToLast() async throws {
-        let messages = [
-            Message.make(id: 1, text: "Первый"),
-            Message.make(id: 2, text: "Второй"),
-            Message.make(id: 1, text: "Первый, исправленный"),
-        ]
+    /// Кейс: обновление только существующих — для сообщения, которое есть в БД, и для отсутствующего.
+    /// Ожидание: существующее обновлено, отсутствующее не создано; запись вернула только обновлённое.
+    func test_write_updatesOfExisting_doesNotCreateMissing() async throws {
+        _ = try await sut.write(MessageStorageChanges(upserts: [.stub]))
 
-        try await sut.save(messages: messages)
+        let written = try await sut.write(MessageStorageChanges(updatesOfExisting: [.editedStub, .make(id: 99)]))
 
-        let saved = try await sut.fetchLatest(conversationId: 1, limit: 10)
-        XCTAssertEqual(saved.map(\.text), ["Второй", "Первый, исправленный"])
+        let messages = try await sut.fetchLatestBlocks(conversationId: 1, minCount: 10)
+        XCTAssertEqual(written, [.editedStub])
+        XCTAssertEqual(messages, [.editedStub])
     }
 
     /// Кейс: в очереди отправки два сообщения с одним `clientId` — текущего пользователя и (теоретически) другого
-    /// отправителя; сохранено серверное сообщение текущего пользователя с этим `clientId`.
+    /// отправителя; подтверждено серверное сообщение текущего пользователя с этим `clientId`.
     /// Ожидание: удалена только неотправленная копия того же отправителя — `clientId` сравнивается вместе с `senderId`.
-    func test_save_removesConfirmedOutgoingOfSameSender() async throws {
+    func test_write_confirmed_removesOutgoingOfSameSender() async throws {
         let outgoingStorage = OutgoingMessageStorageService(container: container)
         try await outgoingStorage.save(message: .stub(clientId: "a", senderId: 1))
         try await outgoingStorage.save(message: .stub(clientId: "b", senderId: 1))
 
-        try await sut.save(messages: [.make(id: 1, senderId: 1, clientId: "a"), .make(id: 2, senderId: 2, clientId: "b")])
+        _ = try await sut.write(MessageStorageChanges(confirmed: [.make(id: 1, senderId: 1, clientId: "a"), .make(id: 2, senderId: 2, clientId: "b")]))
 
         let outgoing = try await outgoingStorage.fetchAll()
         XCTAssertEqual(outgoing.map(\.clientId), ["b"])
     }
 
-    // MARK: - Выборка
+    // MARK: - Замена
 
-    /// Кейс: в БД сообщения двух переписок, сохранённые не по порядку.
-    /// Ожидание: выборка возвращает сообщения только запрошенной переписки по убыванию `messageId`.
-    func test_fetchLatest_filtersByConversationAndSortsNewestFirst() async throws {
-        try await sut.save(messages: [
-            .make(id: 2, conversationId: 1),
-            .make(id: 5, conversationId: 2),
-            .make(id: 3, conversationId: 1),
-            .make(id: 1, conversationId: 1),
-        ])
+    /// Кейс: в кэше переписки сообщения 1–3 и сообщение другой переписки; кэш заменяется страницей из 3 и 4,
+    /// сообщение 2 защищено.
+    /// Ожидание: остались 4, 3 и защищённое 2; 1 удалено; другая переписка не тронута.
+    func test_write_replacedConversation_deletesAllButPageAndProtected() async throws {
+        _ = try await sut.write(MessageStorageChanges(upserts: [.make(id: 1), .make(id: 2), .make(id: 3), .make(id: 9, conversationId: 2)]))
 
-        let messages = try await sut.fetchLatest(conversationId: 1, limit: 10)
+        _ = try await sut.write(MessageStorageChanges(
+            upserts: [.make(id: 3), .make(id: 4)],
+            replacedConversationId: 1,
+            protectedMessageIds: [2]
+        ))
 
-        XCTAssertEqual(messages.map(\.id), [3, 2, 1])
+        let messages = try await sut.fetchLatestBlocks(conversationId: 1, minCount: 10)
+        let other = try await sut.fetchLatestBlocks(conversationId: 2, minCount: 10)
+        XCTAssertEqual(messages.map(\.id), [4, 3, 2])
+        XCTAssertEqual(other.map(\.id), [9])
     }
 
-    /// Кейс: в переписке сообщений больше лимита.
-    /// Ожидание: возвращаются только самые новые в пределах лимита.
-    func test_fetchLatest_respectsLimit() async throws {
-        try await sut.save(messages: (1...5).map { Message.make(id: $0) })
+    /// Кейс: блок 2 в кэше — сообщения 3, 4, 5; блок 1 — сообщение 1; блок 2 применяется целиком из ответа
+    /// с отредактированным 4 и без 3 и 5, а 5 защищено.
+    /// Ожидание: 3 удалено, 4 обновлено, защищённое 5 осталось; блок 1 не тронут.
+    func test_write_replacedBlock_deletesMissingMessagesOfBlock() async throws {
+        _ = try await sut.write(MessageStorageChanges(upserts: [
+            .make(id: 1, blockId: 1),
+            .make(id: 3, blockId: 2),
+            .make(id: 4, blockId: 2),
+            .make(id: 5, blockId: 2),
+        ]))
+        let edited = Message.make(id: 4, text: "Исправлено", blockId: 2, updatedAt: .stub(60_000))
+        let block = MessageBlock(blockId: 2, conversationId: 1, messages: [edited], updatedAt: .stub(60_000))
 
-        let messages = try await sut.fetchLatest(conversationId: 1, limit: 2)
+        _ = try await sut.write(MessageStorageChanges(replacedBlocks: [block], protectedMessageIds: [5]))
 
-        XCTAssertEqual(messages.map(\.id), [5, 4])
+        let messages = try await sut.fetchLatestBlocks(conversationId: 1, minCount: 10)
+        XCTAssertEqual(messages.map(\.id), [5, 4, 1])
+        XCTAssertEqual(messages.first { $0.id == 4 }?.text, "Исправлено")
     }
 
-    /// Кейс: в БД есть запись сообщения без обязательного поля `text`.
-    /// Ожидание: выборка её пропускает, остальные записи возвращаются.
-    func test_fetchLatest_skipsBrokenRecords() async throws {
-        try await sut.save(message: .make(id: 1))
+    /// Кейс: блок из ответа пуст — все его сообщения удалены на сервере.
+    /// Ожидание: сообщения блока удалены из кэша.
+    func test_write_emptyReplacedBlock_clearsBlock() async throws {
+        _ = try await sut.write(MessageStorageChanges(upserts: [.make(id: 1, blockId: 1), .make(id: 2, blockId: 2)]))
+
+        _ = try await sut.write(MessageStorageChanges(replacedBlocks: [MessageBlock(blockId: 1, conversationId: 1, messages: [], updatedAt: nil)]))
+
+        let messages = try await sut.fetchLatestBlocks(conversationId: 1, minCount: 10)
+        XCTAssertEqual(messages.map(\.id), [2])
+    }
+
+    // MARK: - Состояние кэша
+
+    /// Кейс: состояние записано целиком, затем отметка сдвинута вперёд, назад и задана пагинация.
+    /// Ожидание: отметка — максимум, пагинация — последняя заданная.
+    func test_write_stateChanges_applyInOrder() async throws {
+        let initial = MessageCacheState(syncMark: .stub(1000), nextBlockId: 5, hasMorePages: true)
+
+        _ = try await sut.write(MessageStorageChanges(stateChanges: [
+            MessageCacheStateChange(conversationId: 1, kind: .replace(initial)),
+            MessageCacheStateChange(conversationId: 1, kind: .advanceSyncMark(.stub(3000))),
+            MessageCacheStateChange(conversationId: 1, kind: .advanceSyncMark(.stub(2000))),
+            MessageCacheStateChange(conversationId: 1, kind: .setPagination(nextBlockId: nil, hasMorePages: false)),
+        ]))
+
+        let state = try await sut.fetchState(conversationId: 1)
+        XCTAssertEqual(state, MessageCacheState(syncMark: .stub(3000), nextBlockId: nil, hasMorePages: false))
+    }
+
+    /// Кейс: сдвиг отметки и пагинация для переписки без записи о состоянии.
+    /// Ожидание: состояние не создаётся — переписка без кэша остаётся без кэша.
+    func test_write_advanceWithoutState_doesNotCreateState() async throws {
+        _ = try await sut.write(MessageStorageChanges(stateChanges: [
+            MessageCacheStateChange(conversationId: 1, kind: .advanceSyncMark(.stub(3000))),
+            MessageCacheStateChange(conversationId: 1, kind: .setPagination(nextBlockId: 2, hasMorePages: true)),
+        ]))
+
+        let state = try await sut.fetchState(conversationId: 1)
+        XCTAssertNil(state)
+    }
+
+    // MARK: - Чтение окна
+
+    /// Кейс: в переписке блоки 3 (сообщения 5, 6), 2 (3, 4) и 1 (1, 2) и сообщение другой переписки; нужно
+    /// не меньше 3 сообщений.
+    /// Ожидание: прочитаны блоки 3 и 2 целиком — 4 сообщения по убыванию `messageId`.
+    func test_fetchLatestBlocks_readsWholeBlocks() async throws {
+        _ = try await sut.write(MessageStorageChanges(upserts: makeBlocks() + [.make(id: 99, conversationId: 2, blockId: 3)]))
+
+        let messages = try await sut.fetchLatestBlocks(conversationId: 1, minCount: 3)
+
+        XCTAssertEqual(messages.map(\.id), [6, 5, 4, 3])
+    }
+
+    /// Кейс: блоки старше блока 3, не меньше 1 сообщения.
+    /// Ожидание: прочитан блок 2 целиком.
+    func test_fetchBlocksOlderThan_readsNextWholeBlock() async throws {
+        _ = try await sut.write(MessageStorageChanges(upserts: makeBlocks()))
+
+        let messages = try await sut.fetchBlocks(conversationId: 1, olderThan: 3, minCount: 1)
+
+        XCTAssertEqual(messages.map(\.id), [4, 3])
+    }
+
+    /// Кейс: в кэше меньше сообщений, чем нужно.
+    /// Ожидание: прочитаны все.
+    func test_fetchLatestBlocks_fewerThanMinCount_readsAll() async throws {
+        _ = try await sut.write(MessageStorageChanges(upserts: makeBlocks()))
+
+        let messages = try await sut.fetchLatestBlocks(conversationId: 1, minCount: 50)
+
+        XCTAssertEqual(messages.map(\.id), [6, 5, 4, 3, 2, 1])
+    }
+
+    /// Кейс: перечитывание окна с блока 2.
+    /// Ожидание: блоки 3 и 2.
+    func test_fetchMessagesFromBlock_readsBlockAndNewer() async throws {
+        _ = try await sut.write(MessageStorageChanges(upserts: makeBlocks()))
+
+        let messages = try await sut.fetchMessages(conversationId: 1, fromBlockId: 2)
+
+        XCTAssertEqual(messages.map(\.id), [6, 5, 4, 3])
+    }
+
+    /// Кейс: какие из блоков 1, 2, 7 есть в кэше переписки.
+    /// Ожидание: 1 и 2.
+    func test_cachedBlockIds_returnsOnlyCached() async throws {
+        _ = try await sut.write(MessageStorageChanges(upserts: makeBlocks() + [.make(id: 99, conversationId: 2, blockId: 7)]))
+
+        let cached = try await sut.cachedBlockIds(conversationId: 1, among: [1, 2, 7])
+
+        XCTAssertEqual(cached, [1, 2])
+    }
+
+    /// Кейс: в БД есть запись сообщения без обязательного поля `text` и запись без `clientId`.
+    /// Ожидание: чтение их пропускает, остальные записи возвращаются.
+    func test_fetchLatestBlocks_skipsBrokenRecords() async throws {
+        _ = try await sut.write(MessageStorageChanges(upserts: [.make(id: 1)]))
         try await container.performWrite { context in
             let broken = MessageEntity(context: context)
             broken.messageId = 2
             broken.conversationId = 1
             broken.type = MessageType.text.rawValue
-            try context.save()
-        }
-
-        let messages = try await sut.fetchLatest(conversationId: 1, limit: 10)
-
-        XCTAssertEqual(messages.map(\.id), [1])
-    }
-
-    /// Кейс: в БД запись, сохранённая до появления `clientId` (после миграции поле пустое).
-    /// Ожидание: выборка её пропускает — она перезапишется при следующей загрузке переписки.
-    func test_fetchLatest_skipsRecordsWithoutClientId() async throws {
-        try await sut.save(message: .make(id: 1))
-        try await container.performWrite { context in
             let legacy = MessageEntity(context: context)
-            legacy.update(from: .make(id: 2))
+            legacy.update(from: .make(id: 3))
             legacy.clientId = nil
             try context.save()
         }
 
-        let messages = try await sut.fetchLatest(conversationId: 1, limit: 10)
+        let messages = try await sut.fetchLatestBlocks(conversationId: 1, minCount: 10)
 
         XCTAssertEqual(messages.map(\.id), [1])
     }
 
     /// Кейс: в БД сообщение с типом, которого клиент не знает.
     /// Ожидание: оно читается как `.unknown`, а не отбрасывается.
-    func test_fetchLatest_unknownType_readsAsUnknown() async throws {
-        try await sut.save(message: .make(id: 1))
+    func test_fetchLatestBlocks_unknownType_readsAsUnknown() async throws {
+        _ = try await sut.write(MessageStorageChanges(upserts: [.make(id: 1)]))
         try await container.performWrite { context in
             let entity = try XCTUnwrap(context.fetch(MessageEntity.makeFetchRequest(id: 1)).first)
             entity.type = "sticker"
             try context.save()
         }
 
-        let messages = try await sut.fetchLatest(conversationId: 1, limit: 10)
+        let messages = try await sut.fetchLatestBlocks(conversationId: 1, minCount: 10)
 
         XCTAssertEqual(messages.map(\.type), [.unknown])
     }
 
-    // MARK: - Поиск и удаление
+    // MARK: - Helpers
 
-    /// Кейс: поиск и удаление по `messageId`, которого нет в БД.
-    /// Ожидание: поиск возвращает `nil`, удаление не падает и не трогает другие записи.
-    func test_findAndDelete_missingId_doNotFail() async throws {
-        try await sut.save(message: .make(id: 1))
-
-        let found = try await sut.find(byId: 42)
-        try await sut.delete(byId: 42)
-
-        let messages = try await sut.fetchLatest(conversationId: 1, limit: 10)
-        XCTAssertNil(found)
-        XCTAssertEqual(messages.map(\.id), [1])
-    }
-
-    /// Кейс: удаление сохранённого сообщения.
-    /// Ожидание: оно больше не находится.
-    func test_delete_existingId_removesRecord() async throws {
-        try await sut.save(message: .make(id: 1))
-
-        try await sut.delete(byId: 1)
-
-        let found = try await sut.find(byId: 1)
-        XCTAssertNil(found)
+    /// Сообщения переписки 1: блок 1 — 1, 2; блок 2 — 3, 4; блок 3 — 5, 6.
+    private func makeBlocks() -> [Message] {
+        (1...6).map { Message.make(id: $0, blockId: ($0 + 1) / 2) }
     }
 }

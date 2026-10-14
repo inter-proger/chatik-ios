@@ -45,25 +45,29 @@ extension Message {
     ///   - text: текст.
     ///   - clientId: идентификатор клиента-отправителя; по умолчанию — `client-<id>`.
     ///   - createdAt: время отправки; по умолчанию — как у `stub`.
+    ///   - blockId: блок; по умолчанию — 1.
+    ///   - updatedAt: время изменения; по умолчанию равно `createdAt`, иначе сообщение отредактировано.
     static func make(
         id: Int,
         conversationId: Int = 1,
         senderId: Int = 1,
         text: String = "Привет!",
         clientId: String? = nil,
-        createdAt: ServerTime = stub.createdAt
+        createdAt: ServerTime = stub.createdAt,
+        blockId: Int = 1,
+        updatedAt: ServerTime? = nil
     ) -> Message {
         Message(
             messageId: id,
             clientId: clientId ?? "client-\(id)",
             conversationId: conversationId,
-            blockId: 1,
+            blockId: blockId,
             senderId: senderId,
             type: .text,
             text: text,
-            isEdited: false,
+            isEdited: updatedAt != nil,
             createdAt: createdAt,
-            updatedAt: createdAt
+            updatedAt: updatedAt ?? createdAt
         )
     }
 }

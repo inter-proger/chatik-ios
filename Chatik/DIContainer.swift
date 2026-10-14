@@ -21,7 +21,9 @@ final class DIContainer {
     let imageFileStore: ImageFileStoreProtocol
     let fileStorage: FileStorageServiceProtocol
     let userStorage: UserStorageServiceProtocol
-    let messageStorage: MessageStorageServiceProtocol
+    let messageStorage: MessageStorageReading
+    /// Единственный писатель сообщений в БД.
+    let messageCache: MessageCacheServiceProtocol
     let messageSendQueue: MessageSendQueueProtocol
     let userDefaultsService: UserDefaultsServiceProtocol
     let sessionService: SessionServiceProtocol
@@ -37,6 +39,10 @@ final class DIContainer {
     let conversationListService: ConversationListServiceProtocol
     /// Держит наблюдение за сетью, пока жив контейнер: при появлении сети WebSocket переподключается сразу.
     private let networkPathMonitor: NetworkPathMonitor
+    /// Подписка кэша сообщений на очередь событий — живёт, пока жив контейнер.
+    private let messageCacheSubscription: RealtimeSubscription
+    /// Передаёт кэшу сообщений выход из аккаунта; `AuthService` держит наблюдателей слабо.
+    private let messageCacheLogoutObserver: MessageCacheLogoutObserver
 
     private init() {
         // Хранилище открывается в фоне: открытие SQLite и возможная миграция не задерживают первый кадр.
@@ -83,6 +89,14 @@ final class DIContainer {
         self.messageTextValidator = MessageTextValidator()
         let realtimeEventQueue = RealtimeEventQueue()
         self.realtimeEventQueue = realtimeEventQueue
+        let connectionMonitor = RealtimeConnectionMonitor()
+        // Кэш подписывается первым: он получает каждое событие раньше остальных потребителей, и подписка появляется
+        // до запуска соединения — очередь не хранит события для будущих подписчиков.
+        let messageCache = MessageCacheService(storage: messageStorage, connectionMonitor: connectionMonitor)
+        self.messageCache = messageCache
+        self.messageCacheSubscription = MessageCacheService.subscribe(messageCache, to: realtimeEventQueue)
+        let messageCacheLogoutObserver = MessageCacheLogoutObserver(messageCache: messageCache)
+        self.messageCacheLogoutObserver = messageCacheLogoutObserver
         let conversationListService = ConversationListService(
             conversationService: conversationService,
             storage: ConversationStorageService(container: storageContainer),
@@ -97,30 +111,44 @@ final class DIContainer {
             sessionService: sessionService,
             authService: authService,
             eventQueue: realtimeEventQueue,
-            messageStorage: messageStorage,
+            connectionMonitor: connectionMonitor,
             userCache: userCache
         )
         self.globalService = globalService
         self.realtimeService = realtimeService
         let messageSendQueue = MessageSendQueue(
             messageService: messageService,
-            messageStorage: messageStorage,
+            messageCache: messageCache,
             outgoingMessageStorage: OutgoingMessageStorageService(container: storageContainer),
             sessionService: sessionService,
             eventQueue: realtimeEventQueue,
             positionUpdater: conversationListService
         )
         self.messageSendQueue = messageSendQueue
-        // Соединение, очередь событий, список и очередь отправки останавливаются в фазе `authServiceWillLogout`
+        // Соединение, очередь событий, список, очередь отправки и кэш сообщений останавливаются в фазе `authServiceWillLogout`
         // (до запроса выхода), сессия завершается в `authServiceDidLogout` (после него) — от порядка подписки
         // это не зависит.
         authService.addObserver(realtimeService)
         authService.addObserver(realtimeEventQueue)
         authService.addObserver(conversationListService)
         authService.addObserver(messageSendQueue)
+        authService.addObserver(messageCacheLogoutObserver)
         authService.addObserver(sessionService)
         self.networkPathMonitor = NetworkPathMonitor { [weak realtimeService] in
             realtimeService?.networkDidBecomeAvailable()
         }
+    }
+
+    /// Лента переписки для открытого экрана.
+    /// - Parameter conversationId: переписка.
+    func makeMessagesListService(conversationId: Int) -> MessagesListServiceProtocol {
+        MessagesListService(
+            conversationId: conversationId,
+            messageCache: messageCache,
+            storage: messageStorage,
+            messageService: messageService,
+            eventQueue: realtimeEventQueue,
+            messageSendQueue: messageSendQueue
+        )
     }
 }

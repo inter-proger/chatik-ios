@@ -5,11 +5,11 @@
 
 import Foundation
 
-protocol MessageServiceProtocol {
+protocol MessageServiceProtocol: Sendable {
     /// Возвращает страницу сообщений переписки, сначала самые новые.
-    func fetchMessages(conversationId: Int, blockId: Int?) async throws -> MessagesPage
-    /// Возвращает сообщения одного блока.
-    func fetchBlock(blockId: Int) async throws -> [Message]
+    func fetchMessages(conversationId: Int, filter: MessageListFilter) async throws -> MessagesPage
+    /// Возвращает блоки сообщений целиком.
+    func fetchBlocks(ids: [Int]) async throws -> MessageBlocksBatch
     /// Отправляет текстовое сообщение в переписку; повтор с тем же `clientId` не создаёт дубль.
     func send(conversationId: Int, text: String, clientId: String) async throws -> Message
     /// Заменяет текст своего сообщения.
@@ -26,19 +26,19 @@ final class MessageService: MessageServiceProtocol {
     /// Загружает сообщения переписки через `GET /messages/getList`.
     /// - Parameters:
     ///   - conversationId: переписка; чужая или несуществующая — ошибка 5002.
-    ///   - blockId: блок, с которого начать (включительно); за более старыми сообщениями передаётся `nextBlockId`
-    ///     предыдущей страницы. `nil` — с самого нового блока.
-    /// - Returns: страница из целых блоков; запрашивать дальше имеет смысл, пока `hasNext` равен `true`.
-    func fetchMessages(conversationId: Int, blockId: Int?) async throws -> MessagesPage {
-        try await networkService.request(MessageEndpoint.getList(conversationId: conversationId, blockId: blockId))
+    ///   - filter: `.block` — обычная пагинация (за более старыми сообщениями передаётся `nextBlockId` предыдущей
+    ///     страницы), `.receivedAfter` — дельта для синхронизации кэша.
+    /// - Returns: страница из целых блоков; запрашивать дальше имеет смысл, пока `hasNext` равен `true`, — даже если
+    ///   страница пуста.
+    func fetchMessages(conversationId: Int, filter: MessageListFilter) async throws -> MessagesPage {
+        try await networkService.request(MessageEndpoint.getList(conversationId: conversationId, filter: filter))
     }
 
-    /// Загружает один блок сообщений через `GET /messages/getBlock`.
-    /// - Parameter blockId: блок; блок чужой переписки или несуществующий — ошибка 6002.
-    /// - Returns: до 20 сообщений блока, сначала самые новые.
-    func fetchBlock(blockId: Int) async throws -> [Message] {
-        let block: MessagesBlock = try await networkService.request(MessageEndpoint.getBlock(blockId: blockId))
-        return block.messages
+    /// Загружает блоки целиком через `GET /messages/getBlockBatch`.
+    /// - Parameter ids: 1–10 идентификаторов блоков, можно из разных переписок.
+    /// - Returns: найденные блоки и id ненайденных (несуществующие и чужие неотличимы).
+    func fetchBlocks(ids: [Int]) async throws -> MessageBlocksBatch {
+        try await networkService.request(MessageEndpoint.getBlockBatch(blockIds: ids))
     }
 
     /// Отправляет сообщение через `POST /messages/send`.

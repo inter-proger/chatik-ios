@@ -6,7 +6,7 @@
 import Foundation
 
 /// Состояние сообщения, которое ещё не подтверждено сервером.
-enum OutgoingMessageStatus: String, Equatable {
+enum OutgoingMessageStatus: String, Equatable, Sendable {
     /// Запрос отправки выполняется или ещё не начат (например, приложение закрылось во время отправки).
     case sending
     /// Отправка не удалась; пользователь может повторить её или удалить сообщение.
@@ -16,7 +16,7 @@ enum OutgoingMessageStatus: String, Equatable {
 /// Сообщение текущего пользователя, отправленное с этого устройства, но ещё не подтверждённое сервером.
 /// Хранится локально, пока сервер не вернёт созданное сообщение с тем же `clientId`, — так оно переживает
 /// перезапуск приложения.
-struct OutgoingMessage: Equatable, Identifiable {
+struct OutgoingMessage: Equatable, Identifiable, Sendable {
     /// Идентификатор, сгенерированный клиентом; уходит в `/messages/send` и возвращается в созданном сообщении.
     let clientId: String
     let conversationId: Int

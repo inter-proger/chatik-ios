@@ -7,7 +7,7 @@ import Foundation
 import os
 
 @MainActor
-protocol MessageSendQueueProtocol: AuthServiceObserver {
+protocol MessageSendQueueProtocol: AuthServiceObserver, Sendable {
     /// Сообщения текущего пользователя во всех переписках, ещё не подтверждённые сервером, сначала самые старые.
     var outgoingMessages: [OutgoingMessage] { get }
 
@@ -31,8 +31,8 @@ protocol MessageSendQueueProtocol: AuthServiceObserver {
 /// Новое сообщение получает `clientId`, сразу появляется в `outgoingMessages` в статусе «отправляется» и сохраняется
 /// в БД. Запросы `/messages/send` уходят по одному в порядке отправки, чтобы сообщения создавались на сервере в том
 /// же порядке. Ответ сервера поднимает переписку в списке чатов (`ConversationPositionUpdating`), публикуется
-/// в `sentMessages()`, убирает сообщение из очереди и сохраняется в БД
-/// (неотправленная копия удаляется там же, см. `MessageStorageService`). Событие WebSocket или страница переписки
+/// в `sentMessages()`, убирает сообщение из очереди и записывается в кэш сообщений (`MessageCacheService.applySent`;
+/// неотправленная копия удаляется из БД в той же записи). Событие WebSocket или страница переписки
 /// с тем же `clientId` тоже подтверждают доставку. При ошибке сообщение и все ждущие отправки после него переходят
 /// в статус «не отправлено» — так порядок не нарушится; каждое можно отправить повторно с тем же `clientId` или
 /// удалить. Сообщение, `clientId` которого сервер отклонил как занятый (6004), удаляется сразу, а очередь идёт дальше.
@@ -49,7 +49,7 @@ final class MessageSendQueue: MessageSendQueueProtocol {
     private(set) var outgoingMessages: [OutgoingMessage] = []
 
     private let messageService: MessageServiceProtocol
-    private let messageStorage: MessageStorageServiceProtocol
+    private let messageCache: MessageCacheServiceProtocol
     private let outgoingMessageStorage: OutgoingMessageStorageServiceProtocol
     private let sessionService: SessionServiceProtocol
     private let now: () -> Date
@@ -73,7 +73,7 @@ final class MessageSendQueue: MessageSendQueueProtocol {
 
     /// - Parameters:
     ///   - messageService: отправка `/messages/send`.
-    ///   - messageStorage: куда сохраняются отправленные сообщения.
+    ///   - messageCache: кэш сообщений — куда записываются отправленные сообщения.
     ///   - outgoingMessageStorage: хранилище очереди в БД.
     ///   - sessionService: текущий пользователь — отправитель.
     ///   - eventQueue: очередь событий WebSocket — подтверждения собственных сообщений.
@@ -82,7 +82,7 @@ final class MessageSendQueue: MessageSendQueueProtocol {
     ///   - makeClientId: генератор `clientId` новых сообщений (UUID v4); подменяется в тестах.
     init(
         messageService: MessageServiceProtocol,
-        messageStorage: MessageStorageServiceProtocol,
+        messageCache: MessageCacheServiceProtocol,
         outgoingMessageStorage: OutgoingMessageStorageServiceProtocol,
         sessionService: SessionServiceProtocol,
         eventQueue: RealtimeEventQueueProtocol,
@@ -91,7 +91,7 @@ final class MessageSendQueue: MessageSendQueueProtocol {
         makeClientId: @escaping () -> String = { UUID().uuidString }
     ) {
         self.messageService = messageService
-        self.messageStorage = messageStorage
+        self.messageCache = messageCache
         self.outgoingMessageStorage = outgoingMessageStorage
         self.sessionService = sessionService
         self.now = now
@@ -157,7 +157,7 @@ final class MessageSendQueue: MessageSendQueueProtocol {
     }
 
     /// Убирает из очереди сообщения, которые сервер уже создал: совпадают отправитель и `clientId`. Из БД их
-    /// неотправленные копии удаляет `MessageStorageService` при сохранении серверных сообщений.
+    /// неотправленные копии удаляет `MessageCacheService` при записи серверных сообщений.
     /// - Parameter messages: сообщения с сервера.
     func removeConfirmed(by messages: [Message]) {
         let keys = Set(messages.map(\.clientKey))
@@ -239,8 +239,8 @@ final class MessageSendQueue: MessageSendQueueProtocol {
         positionUpdater.applySentMessage(message)
         subscribers.values.forEach { $0.yield(message) }
         removeConfirmed(by: [message])
-        write("сохранить отправленное сообщение") { [messageStorage] in
-            try await messageStorage.save(message: message)
+        write("сохранить отправленное сообщение") { [messageCache] in
+            await messageCache.applySent(message)
         }
     }
 

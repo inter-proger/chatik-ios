@@ -20,6 +20,7 @@ iOS-клиент мессенджера на SwiftUI (iOS 17+): авториза
 | Документ | О чём |
 | --- | --- |
 | [Подъём чатов в списке: архитектура клиента](docs/conversation-list-architecture.md) | `ConversationListService`, очередь WS-событий с приостановкой, стартовая синхронизация списка |
+| [Синхронизация ленты сообщений: архитектура клиента](docs/messages-sync-architecture.md) | `MessageCacheService` — единый писатель сообщений, `MessagesListService`, признак синхронизации, `receivedAfter` и `getBlockBatch` |
 
 ### Изменения серверного API
 
@@ -27,6 +28,7 @@ iOS-клиент мессенджера на SwiftUI (iOS 17+): авториза
 
 | Дата | Документ | О чём |
 | --- | --- | --- |
+| 14.10.2026 | [Синхронизация кэша сообщений: изменения API для клиентов](docs/api-changes/2026-10-14-message-cache-sync.md) | `receivedAfter` и `updatedBlockIds` в `getList`, `getBlockBatch` и `MessageBlock`, пустые блоки, алгоритм синхронизации кэша |
 | 13.10.2026 | [ServerAi API: изменения для клиентов](docs/api-changes/2026-10-13-conversation-position-and-ms-time.md) | время в миллисекундах, `lastMessage` и `positionUpdatedAt`, фильтры `getList`, `getBatch`, правила слияния переписки |
 
 Новые документы кладутся в `docs/` и добавляются в таблицы выше.

@@ -22,7 +22,7 @@ final class MessageServiceTests: XCTestCase {
         let expected = MessagesPage(messages: [.stub], nextBlockId: 1, hasNext: true)
         networkService.stubbedResult = .success(expected)
 
-        let page = try await sut.fetchMessages(conversationId: 1, blockId: nil)
+        let page = try await sut.fetchMessages(conversationId: 1, filter: .block(nil))
 
         XCTAssertEqual(page, expected)
         let endpoint = try XCTUnwrap(networkService.requestedEndpoints.first)
@@ -36,24 +36,48 @@ final class MessageServiceTests: XCTestCase {
     func test_fetchMessages_withBlockId_passesItToEndpoint() async throws {
         networkService.stubbedResult = .success(MessagesPage(messages: [], nextBlockId: nil, hasNext: false))
 
-        _ = try await sut.fetchMessages(conversationId: 1, blockId: 3)
+        _ = try await sut.fetchMessages(conversationId: 1, filter: .block(3))
 
         let endpoint = try XCTUnwrap(networkService.requestedEndpoints.first)
         XCTAssertEqual(endpoint.parameters, ["conversationId": "1", "blockId": "3"])
     }
 
-    /// Кейс: запрос одного блока сообщений.
-    /// Ожидание: GET /messages/getBlock с `blockId`, наружу отданы сообщения из поля `messages`.
-    func test_fetchBlock_requestsEndpointAndUnwrapsMessages() async throws {
-        networkService.stubbedResult = .success(MessagesBlock(messages: [.stub]))
+    /// Кейс: запрос дельты для синхронизации кэша с меткой `receivedAfter`.
+    /// Ожидание: метка уходит в миллисекундах вместо `blockId`.
+    func test_fetchMessages_receivedAfter_passesMarkWithoutBlockId() async throws {
+        networkService.stubbedResult = .success(MessagesPage(messages: [], nextBlockId: nil, hasNext: false, updatedBlockIds: []))
 
-        let messages = try await sut.fetchBlock(blockId: 2)
+        _ = try await sut.fetchMessages(conversationId: 1, filter: .receivedAfter(ServerTime(milliseconds: 1_790_850_000_456)))
 
-        XCTAssertEqual(messages, [.stub])
         let endpoint = try XCTUnwrap(networkService.requestedEndpoints.first)
-        XCTAssertEqual(endpoint.path, "/messages/getBlock")
+        XCTAssertEqual(endpoint.parameters, ["conversationId": "1", "receivedAfter": "1790850000456"])
+    }
+
+    /// Кейс: метка с запасом у начала эпохи отрицательна.
+    /// Ожидание: уходит 0 — сервер не принимает отрицательную метку (ошибка 1004).
+    func test_fetchMessages_negativeReceivedAfter_isClampedToZero() async throws {
+        networkService.stubbedResult = .success(MessagesPage(messages: [], nextBlockId: nil, hasNext: false))
+
+        _ = try await sut.fetchMessages(conversationId: 1, filter: .receivedAfter(ServerTime(milliseconds: -4000)))
+
+        let endpoint = try XCTUnwrap(networkService.requestedEndpoints.first)
+        XCTAssertEqual(endpoint.parameters["receivedAfter"], "0")
+    }
+
+    /// Кейс: запрос нескольких блоков целиком.
+    /// Ожидание: GET /messages/getBlockBatch с id через запятую; ответ возвращён без изменений.
+    func test_fetchBlocks_requestsBatchWithCommaSeparatedIds() async throws {
+        let block = MessageBlock(blockId: 2, conversationId: 1, messages: [.stub], updatedAt: nil)
+        let expected = MessageBlocksBatch(blocks: [block], notFoundIds: [9])
+        networkService.stubbedResult = .success(expected)
+
+        let batch = try await sut.fetchBlocks(ids: [2, 9])
+
+        XCTAssertEqual(batch, expected)
+        let endpoint = try XCTUnwrap(networkService.requestedEndpoints.first)
+        XCTAssertEqual(endpoint.path, "/messages/getBlockBatch")
         XCTAssertEqual(endpoint.method, .get)
-        XCTAssertEqual(endpoint.parameters, ["blockId": "2"])
+        XCTAssertEqual(endpoint.parameters, ["blockIds": "2,9"])
     }
 
     /// Кейс: отправка текстового сообщения в переписку.
@@ -90,7 +114,7 @@ final class MessageServiceTests: XCTestCase {
         networkService.stubbedResult = .failure(NetworkError.api(code: NetworkError.Code.conversationNotFound))
 
         do {
-            _ = try await sut.fetchMessages(conversationId: 99, blockId: nil)
+            _ = try await sut.fetchMessages(conversationId: 99, filter: .block(nil))
             XCTFail("Expected error")
         } catch {
             XCTAssertEqual(error as? NetworkError, .api(code: 5002))

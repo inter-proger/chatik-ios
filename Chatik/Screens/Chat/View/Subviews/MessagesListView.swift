@@ -14,7 +14,7 @@ import SwiftUI
 struct MessagesListView: View {
     /// Сообщения, сначала самые новые.
     let messages: [MessageDisplayModel]
-    let isLoadingNextPage: Bool
+    let isLoadingOlder: Bool
     let onAppear: (MessageDisplayModel) -> Void
     /// Тап по неотправленному сообщению.
     let onTapFailed: (MessageDisplayModel) -> Void
@@ -27,7 +27,7 @@ struct MessagesListView: View {
                         .flippedVertically()
                         .onAppear { onAppear(message) }
                 }
-                if isLoadingNextPage {
+                if isLoadingOlder {
                     ProgressView()
                         .padding()
                         .flippedVertically()
@@ -73,7 +73,7 @@ private extension View {
             MessageDisplayModel(id: MessageClientKey(senderId: 2, clientId: "2"), text: "Привет!", isUnsupported: false, isOutgoing: false, sender: maria, time: "12:03", editedLabel: nil, deliveryState: .delivered, deliveryStateLabel: nil),
             MessageDisplayModel(id: MessageClientKey(senderId: 1, clientId: "1"), text: "Привет! Во сколько встречаемся?", isUnsupported: false, isOutgoing: true, sender: ivan, time: "12:01", editedLabel: nil, deliveryState: .delivered, deliveryStateLabel: nil),
         ],
-        isLoadingNextPage: true,
+        isLoadingOlder: true,
         onAppear: { _ in },
         onTapFailed: { _ in }
     )

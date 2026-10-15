@@ -136,7 +136,7 @@ final class AuthServiceTests: XCTestCase {
     /// Ожидание: сервис его не удерживает, выход проходит без уведомлений.
     func test_addObserver_holdsObserverWeakly() async {
         var observer: AuthServiceObserverMock? = AuthServiceObserverMock(log: log)
-        weak var weakObserver = observer
+        weak let weakObserver = observer
         sut.addObserver(observer!)
         observer = nil
         networkService.stubbedResult = .success(EmptyResponse())

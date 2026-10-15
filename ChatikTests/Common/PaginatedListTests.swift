@@ -294,7 +294,7 @@ final class PaginatedListTests: XCTestCase {
 
         await yieldUntil { [unowned self] in sut.items.map(\.id) == [10, 11] }
         gate.open()
-        await refresh.value
+        _ = await refresh.value
 
         XCTAssertEqual(sut.items.map(\.id), [1])
     }
@@ -317,7 +317,7 @@ final class PaginatedListTests: XCTestCase {
         }
         await yieldUntil { isLoaderCalled && cacheGate.isWaiting }
         cacheGate.open()
-        await refresh.value
+        _ = await refresh.value
 
         XCTAssertEqual(sut.items.map(\.id), [1])
     }
@@ -347,7 +347,7 @@ final class PaginatedListTests: XCTestCase {
             await yieldUntil { cacheGate.isWaiting && isPageLoaded }
 
             cacheGate.open()
-            await refresh.value
+            _ = await refresh.value
 
             XCTAssertEqual(list.items.map(\.id), ids, "\(ids)")
         }

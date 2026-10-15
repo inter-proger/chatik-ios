@@ -29,8 +29,9 @@ struct MessageDisplayModel: Identifiable, Equatable, Sendable {
     /// Отправитель — только у первого сообщения серии подряд от одного отправителя: рядом с ним показываются
     /// аватар и имя. `nil` — сообщение продолжает серию, на месте аватара пустой отступ.
     let sender: MessageSenderDisplayModel?
-    /// Время отправки: только время для сегодняшних сообщений, иначе дата и время.
-    let time: String
+    /// Время отправки на сервере, только время без даты — дату показывает заголовок дня. `nil` — сообщения ещё
+    /// нет на сервере: на месте времени показывается состояние доставки.
+    let time: String?
     /// Пометка «изменено»; `nil` — сообщение не редактировалось.
     let editedLabel: String?
     let deliveryState: MessageDeliveryState
@@ -77,12 +78,14 @@ struct MessageDisplayContext: Sendable {
     let currentUserId: Int?
     /// Язык форматирования времени.
     let locale: Locale
-    /// Календарь (с часовым поясом), по которому определяется «сегодня».
+    /// Календарь (с часовым поясом), по которому сообщения делятся на дни.
     let calendar: Calendar
     /// Текущее время.
     let now: Date
     /// Тексты ленты.
     let strings: MessageDisplayStrings
+    /// Заголовки дней на языке `locale`.
+    let dateHeaderFormatter: any MessageDateHeaderFormatting
 }
 
 extension MessageDisplayModel {
@@ -106,8 +109,8 @@ extension MessageDisplayModel {
         )
     }
 
-    /// Собирает для отображения сообщение, ещё не подтверждённое сервером. Оно всегда исходящее; время —
-    /// момент нажатия «Отправить».
+    /// Собирает для отображения сообщение, ещё не подтверждённое сервером. Оно всегда исходящее и без времени:
+    /// момент нажатия «Отправить» — ещё не время сообщения на сервере, вместо него показывается состояние доставки.
     /// - Parameters:
     ///   - outgoing: сообщение очереди отправки.
     ///   - sender: отправитель (текущий пользователь); `nil` — сообщение продолжает серию.
@@ -120,19 +123,19 @@ extension MessageDisplayModel {
             isUnsupported: false,
             isOutgoing: true,
             sender: sender.map { MessageSenderDisplayModel(cachedUser: $0, strings: context.strings) },
-            time: Self.formattedTime(outgoing.createdAt, context: context),
+            time: nil,
             editedLabel: nil,
             deliveryState: deliveryState,
             deliveryStateLabel: deliveryState == .failed ? context.strings.failed : context.strings.sending
         )
     }
 
-    /// Форматирует время отправки в формате ленты (см. `MessageTimeFormatter`).
+    /// Форматирует время отправки для пузыря: только время, без даты (см. `MessageTimeFormatter`).
     /// - Parameters:
     ///   - date: время отправки.
-    ///   - context: язык, календарь и текущее время.
+    ///   - context: язык и календарь.
     static func formattedTime(_ date: Date, context: MessageDisplayContext) -> String {
-        MessageTimeFormatter(locale: context.locale, calendar: context.calendar, now: context.now).string(from: date)
+        MessageTimeFormatter.timeString(from: date, locale: context.locale, calendar: context.calendar)
     }
 }
 

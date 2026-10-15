@@ -320,7 +320,7 @@ final class ChatListViewModelTests: XCTestCase {
         recorder.ids = []
 
         await localizationService.setLanguage(.en)
-        await yieldUntil { [unowned self] in recorder.ids.count == 2 }
+        await yieldUntil { recorder.ids.count == 2 }
 
         XCTAssertEqual(recorder.ids, [1, 2])
     }
@@ -639,7 +639,7 @@ private final class RowsUpdateCounter {
     /// Подписывается на следующее изменение строк.
     private func track() {
         withObservationTracking { _ = viewModel.conversations } onChange: { [weak self] in
-            Task { @MainActor in
+            Task { @MainActor [weak self] in
                 self?.count += 1
                 self?.track()
             }

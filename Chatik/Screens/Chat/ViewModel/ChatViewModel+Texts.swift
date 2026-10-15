@@ -42,12 +42,12 @@ extension ChatViewModel {
 
     /// `true` — прелоадер по центру: показать нечего, а кэш ещё читается или идёт синхронизация.
     var isShowingLoader: Bool {
-        messages.isEmpty && (isSyncing || !isLoaded)
+        sections.isEmpty && (isSyncing || !isLoaded)
     }
 
     /// `true`, если показывать нечего: кэш прочитан, сообщений нет и синхронизация не идёт.
     var isEmpty: Bool {
-        messages.isEmpty && !isSyncing && isLoaded
+        sections.isEmpty && !isSyncing && isLoaded
     }
 
     /// Можно ли нажать «Отправить»: текст проходит проверку. Идущая отправка не мешает — сообщения встают в очередь.

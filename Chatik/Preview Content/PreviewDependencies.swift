@@ -98,7 +98,9 @@ enum PreviewDependencies {
             sessionService: sessionService,
             userCache: userCache,
             localizationService: localizationService,
-            messageTextValidator: MessageTextValidator()
+            messageTextValidator: MessageTextValidator(),
+            dateHeaderFormatterProvider: MessageDateHeaderFormatterProvider.default,
+            timeChangeService: SignificantTimeChangeService()
         )
     }
 

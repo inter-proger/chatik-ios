@@ -31,6 +31,10 @@ final class DIContainer {
     let signupValidator: SignupValidatorProtocol
     let loginValidator: LoginValidatorProtocol
     let messageTextValidator: MessageTextValidatorProtocol
+    /// Форматтеры заголовков дней в ленте сообщений по языку.
+    let messageDateHeaderFormatterProvider: MessageDateHeaderFormatterProviding
+    /// Полночь, смена часового пояса и перевод часов — по ним лента пересобирает заголовки дней.
+    let significantTimeChangeService: SignificantTimeChangeServiceProtocol
     let globalService: GlobalServiceProtocol
     let realtimeService: RealtimeServiceProtocol
     /// Очередь событий WebSocket между соединением и всеми потребителями.
@@ -87,6 +91,8 @@ final class DIContainer {
         self.signupValidator = SignupValidator()
         self.loginValidator = LoginValidator()
         self.messageTextValidator = MessageTextValidator()
+        self.messageDateHeaderFormatterProvider = MessageDateHeaderFormatterProvider.default
+        self.significantTimeChangeService = SignificantTimeChangeService()
         let realtimeEventQueue = RealtimeEventQueue()
         self.realtimeEventQueue = realtimeEventQueue
         let connectionMonitor = RealtimeConnectionMonitor()

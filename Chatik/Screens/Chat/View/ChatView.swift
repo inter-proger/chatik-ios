@@ -17,7 +17,7 @@ struct ChatView: View {
 
     var body: some View {
         MessagesListView(
-            messages: viewModel.messages,
+            sections: viewModel.sections,
             isLoadingOlder: viewModel.isLoadingOlder,
             onAppear: viewModel.prefetchOlderIfNeeded,
             onTapFailed: viewModel.didTapMessage

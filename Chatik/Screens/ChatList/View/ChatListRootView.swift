@@ -46,7 +46,9 @@ struct ChatListRootView: View {
                             sessionService: DIContainer.shared.sessionService,
                             userCache: DIContainer.shared.userCache,
                             localizationService: DIContainer.shared.localizationService,
-                            messageTextValidator: DIContainer.shared.messageTextValidator
+                            messageTextValidator: DIContainer.shared.messageTextValidator,
+                            dateHeaderFormatterProvider: DIContainer.shared.messageDateHeaderFormatterProvider,
+                            timeChangeService: DIContainer.shared.significantTimeChangeService
                         ))
                     }
                 }

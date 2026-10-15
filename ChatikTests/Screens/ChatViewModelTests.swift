@@ -12,8 +12,12 @@ final class ChatViewModelTests: XCTestCase {
     private var messageSendQueue: MessageSendQueueMock!
     private var sessionService: SessionService!
     private var userCache: UserCacheServiceMock!
+    private var localizationService: LocalizationService!
+    private var timeChanges: SignificantTimeChangeServiceMock!
     private var sleeper: ThrottleSleeper!
     private var observation: Task<Void, Never>?
+    /// Текущее время для тестов заголовков дней.
+    private var currentTime = ServerTime.stub.date
 
     override func setUp() async throws {
         try await super.setUp()
@@ -23,6 +27,8 @@ final class ChatViewModelTests: XCTestCase {
         sessionService = SessionService(userDefaultsService: userDefaultsService, localStorageCleaner: LocalStorageCleanerMock())
         await sessionService.restore()
         userCache = UserCacheServiceMock()
+        localizationService = LocalizationService(userDefaultsService: UserDefaultsServiceMock(), systemLanguage: .ru)
+        timeChanges = SignificantTimeChangeServiceMock()
         sleeper = ThrottleSleeper()
     }
 
@@ -375,6 +381,7 @@ final class ChatViewModelTests: XCTestCase {
 
         await waitUntil { sut.messages.map(\.deliveryState) == [.delivered] }
         XCTAssertEqual(sut.messages.map(\.id.clientId), ["c1"])
+        XCTAssertNotNil(sut.messages.first?.time)
     }
 
     /// Кейс: тап по доставленному и по неотправленному сообщению.
@@ -405,19 +412,142 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertEqual(messageSendQueue.deletedClientIds, ["b"])
     }
 
+    // MARK: - Секции по дням
+
+    /// Кейс: сообщения сегодняшнего, вчерашнего и позавчерашнего дня.
+    /// Ожидание: три секции от новых к старым, у каждой заголовок своего дня: «Сегодня, …», «Вчера, …», день недели.
+    func test_sections_splitByDay_newestFirstWithTitles() async {
+        let sut = makeSUT(now: { [unowned self] in currentTime })
+        let page = [
+            Message.make(id: 3, createdAt: day(0)),
+            Message.make(id: 2, createdAt: day(-1)),
+            Message.make(id: 1, createdAt: day(-2)),
+        ]
+        await startObserving(sut)
+
+        list.publish(.make(messages: page, isUrgent: true))
+
+        await waitUntil { sut.sections.count == 3 }
+        let formatter = RussianMessageDateHeaderFormatter(calendar: .stub())
+        XCTAssertEqual(sut.sections.map(\.title), page.map { formatter.string(from: $0.createdAt.date, now: currentTime) })
+        XCTAssertTrue(sut.sections[0].title.hasPrefix("Сегодня, "), sut.sections[0].title)
+        XCTAssertTrue(sut.sections[1].title.hasPrefix("Вчера, "), sut.sections[1].title)
+        XCTAssertEqual(sut.sections.map { $0.messages.map(\.id.clientId) }, [clientIds(3), clientIds(2), clientIds(1)])
+    }
+
+    /// Кейс: два сообщения собеседника подряд, но в разные дни.
+    /// Ожидание: серия прерывается на границе дня — у обоих сообщений есть отправитель.
+    func test_sections_senderSeriesBreaksAtDayBoundary() async {
+        let sut = makeSUT(now: { [unowned self] in currentTime })
+        userCache.users[2] = .loaded(User(userId: 2, login: "petr", name: "Petr", avatar: nil))
+        await startObserving(sut)
+
+        list.publish(.make(messages: [.make(id: 2, senderId: 2, createdAt: day(0)), .make(id: 1, senderId: 2, createdAt: day(-1))], isUrgent: true))
+
+        await waitUntil { sut.sections.count == 2 }
+        XCTAssertEqual(sut.messages.map(\.sender?.name), ["Petr", "Petr"])
+    }
+
+    /// Кейс: вчерашнее неотправленное сообщение внизу ленты, под сегодняшним и вчерашним с сервера.
+    /// Ожидание: оно остаётся внизу — во второй секции того же дня, с номером серии 1; секция с сервера — с номером 0.
+    func test_sections_yesterdayFailedUnderToday_isSecondSectionOfSameDay() async {
+        let sut = makeSUT(now: { [unowned self] in currentTime })
+        messageSendQueue.outgoingMessages = [.stub(clientId: "a", createdAt: day(-1).date, status: .failed)]
+        await startObserving(sut)
+
+        list.publish(.make(messages: [.make(id: 2, createdAt: day(0)), .make(id: 1, createdAt: day(-1))], isUrgent: true))
+
+        await waitUntil { sut.sections.count == 3 }
+        XCTAssertEqual(sut.sections.map(\.id.occurrence), [1, 0, 0])
+        XCTAssertEqual(sut.sections[0].id.day, sut.sections[2].id.day)
+        XCTAssertEqual(sut.sections[0].messages.map(\.id.clientId), ["a"])
+    }
+
+    /// Кейс: в ленте есть вчерашнее неотправленное под сегодняшними; подгрузились сообщения позавчерашнего дня.
+    /// Ожидание: `id` уже показанных секций не изменились, новая секция добавлена в конец.
+    func test_sections_loadOlder_keepsShownSectionIDs() async {
+        let sut = makeSUT(now: { [unowned self] in currentTime })
+        messageSendQueue.outgoingMessages = [.stub(clientId: "a", createdAt: day(-1).date, status: .failed)]
+        let page = [Message.make(id: 2, createdAt: day(0)), Message.make(id: 1, createdAt: day(-1))]
+        await startObserving(sut)
+        list.publish(.make(messages: page, isUrgent: true))
+        await waitUntil { sut.sections.count == 3 }
+        let shownIDs = sut.sections.map(\.id)
+
+        list.publish(.make(messages: page + [.make(id: 0, createdAt: day(-2))], isUrgent: true))
+
+        await waitUntil { sut.sections.count == 4 }
+        XCTAssertEqual(Array(sut.sections.map(\.id).prefix(3)), shownIDs)
+    }
+
+    /// Кейс: на экране сегодняшнее сообщение, идёт пауза между обновлениями; наступила полночь.
+    /// Ожидание: событие смены времени пересобирает ленту сразу — заголовок становится «Вчера, …».
+    func test_timeChange_rebuildsTitlesImmediately() async {
+        let sut = makeSUT(now: { [unowned self] in currentTime })
+        await startObserving(sut)
+        list.publish(.make(messages: [.make(id: 1, createdAt: day(0))], isUrgent: true))
+        await waitUntil { sut.sections.first?.title.hasPrefix("Сегодня, ") == true }
+        await yieldUntil { [unowned self] in sleeper.isWaiting && timeChanges.subscriberCount == 1 }
+
+        currentTime = currentTime.addingTimeInterval(86_400)
+        timeChanges.send()
+
+        await waitUntil { sut.sections.first?.title.hasPrefix("Вчера, ") == true }
+    }
+
+    /// Кейс: экран открыт, затем закрыт.
+    /// Ожидание: подписка на смену времени есть, пока экран открыт, и снимается при закрытии.
+    func test_timeChange_afterLeavingScreen_unsubscribes() async {
+        let sut = makeSUT()
+        await startObserving(sut)
+        await yieldUntil { [unowned self] in timeChanges.subscriberCount == 1 }
+
+        observation?.cancel()
+        sleeper.releaseAll()
+        await observation?.value
+
+        await waitUntil { [unowned self] in timeChanges.subscriberCount == 0 }
+    }
+
+    /// Кейс: на экране сегодняшнее сообщение; язык приложения сменился на английский.
+    /// Ожидание: заголовки дней переведены — «Today, …».
+    func test_languageChange_translatesTitles() async {
+        let sut = makeSUT(now: { [unowned self] in currentTime })
+        await startObserving(sut)
+        list.publish(.make(messages: [.make(id: 1, createdAt: day(0))], isUrgent: true))
+        await waitUntil { sut.sections.first?.title.hasPrefix("Сегодня, ") == true }
+
+        await localizationService.setLanguage(.en)
+        sleeper.releaseAll()
+
+        await waitUntil { sut.sections.first?.title.hasPrefix("Today, ") == true }
+    }
+
     // MARK: - Helpers
 
+    /// Время сообщения, сдвинутое от `ServerTime.stub` на целое число суток.
+    /// - Parameter offset: сдвиг в сутках; отрицательный — в прошлое.
+    private func day(_ offset: Int) -> ServerTime {
+        .stub(Int64(offset) * 86_400_000)
+    }
+
     /// Создаёт ViewModel над моками этого теста.
-    /// - Parameter conversation: открытая переписка; по умолчанию — личная с собеседником 2.
-    private func makeSUT(conversation: Conversation = .singleStub) -> ChatViewModel {
+    /// - Parameters:
+    ///   - conversation: открытая переписка; по умолчанию — личная с собеседником 2.
+    ///   - now: текущее время; по умолчанию — часы устройства.
+    private func makeSUT(conversation: Conversation = .singleStub, now: @escaping () -> Date = { Date() }) -> ChatViewModel {
         ChatViewModel(
             conversation: conversation,
             messagesList: list,
             messageSendQueue: messageSendQueue,
             sessionService: sessionService,
             userCache: userCache,
-            localizationService: LocalizationService(userDefaultsService: UserDefaultsServiceMock(), systemLanguage: .ru),
+            localizationService: localizationService,
             messageTextValidator: MessageTextValidator(),
+            dateHeaderFormatterProvider: MessageDateHeaderFormatterProvider.default,
+            timeChangeService: timeChanges,
+            now: now,
+            calendar: { .stub() },
             sleep: { [sleeper] in try await sleeper!.sleep($0) }
         )
     }
@@ -433,6 +563,13 @@ final class ChatViewModelTests: XCTestCase {
     /// - Parameter ids: `messageId` сообщений в порядке ленты.
     private func clientIds(_ ids: Int...) -> [String] {
         ids.map { "client-\($0)" }
+    }
+}
+
+private extension ChatViewModel {
+    /// Сообщения всех секций в плоском порядке ленты, сначала самые новые.
+    var messages: [MessageDisplayModel] {
+        sections.flatMap(\.messages)
     }
 }
 

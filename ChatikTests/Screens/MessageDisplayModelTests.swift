@@ -18,36 +18,26 @@ final class MessageDisplayModelTests: XCTestCase {
 
     // MARK: - Время
 
-    /// Кейс: сообщение отправлено сегодня.
-    /// Ожидание: показано только время.
-    func test_formattedTime_today_showsTimeOnly() {
-        let date = now.addingTimeInterval(-2 * 3600)
+    /// Кейс: сообщения сегодняшнего, позавчерашнего и прошлогоднего дня, отправленные в 10:00.
+    /// Ожидание: в пузыре у всех только время — дату показывает заголовок дня.
+    func test_formattedTime_anyDay_showsTimeOnly() {
+        let dates = [
+            now.addingTimeInterval(-2 * 3600),
+            now.addingTimeInterval(-2 * 86_400 - 2 * 3600),
+            now.addingTimeInterval(-365 * 86_400 - 2 * 3600),
+        ]
 
-        let time = MessageDisplayModel.formattedTime(date, context: makeContext())
-
-        XCTAssertEqual(time, "10:00")
+        for date in dates {
+            XCTAssertEqual(MessageDisplayModel.formattedTime(date, context: makeContext()), "10:00", "\(date)")
+        }
     }
 
-    /// Кейс: сообщение отправлено в другой день этого года.
-    /// Ожидание: показаны день, месяц и время, без года.
-    func test_formattedTime_earlierThisYear_showsDayAndTime() {
-        let date = now.addingTimeInterval(-3 * 86_400)
+    /// Кейс: сообщение с сервера.
+    /// Ожидание: время отправки на сервере есть.
+    func test_init_serverMessage_hasTime() {
+        let sut = MessageDisplayModel(message: .make(id: 1, createdAt: ServerTime(milliseconds: Int64(now.timeIntervalSince1970) * 1000)), sender: nil, context: makeContext())
 
-        let time = MessageDisplayModel.formattedTime(date, context: makeContext())
-
-        XCTAssertTrue(time.contains("27"), time)
-        XCTAssertTrue(time.contains("12:00"), time)
-        XCTAssertFalse(time.contains("2026"), time)
-    }
-
-    /// Кейс: сообщение отправлено в прошлом году.
-    /// Ожидание: показан и год.
-    func test_formattedTime_previousYear_showsYear() {
-        let date = now.addingTimeInterval(-365 * 86_400)
-
-        let time = MessageDisplayModel.formattedTime(date, context: makeContext())
-
-        XCTAssertTrue(time.contains("2025"), time)
+        XCTAssertEqual(sut.time, "12:00")
     }
 
     // MARK: - Содержимое
@@ -86,7 +76,7 @@ final class MessageDisplayModelTests: XCTestCase {
     }
 
     /// Кейс: неотправленное сообщение в статусах «отправляется» и «не отправлено».
-    /// Ожидание: исходящее, состояние и его описание соответствуют статусу, время — момент отправки.
+    /// Ожидание: исходящее, состояние и его описание соответствуют статусу; времени нет — на его месте состояние.
     func test_init_outgoing_mapsStatus() {
         let cases: [(status: OutgoingMessageStatus, state: MessageDeliveryState, label: String)] = [
             (.sending, .sending, ChatStrings.messageSending),
@@ -99,7 +89,7 @@ final class MessageDisplayModelTests: XCTestCase {
             XCTAssertTrue(sut.isOutgoing)
             XCTAssertEqual(sut.deliveryState, testCase.state)
             XCTAssertEqual(sut.deliveryStateLabel, testCase.label)
-            XCTAssertEqual(sut.time, "12:00")
+            XCTAssertNil(sut.time)
             XCTAssertEqual(sut.id, outgoing.clientKey)
         }
     }
@@ -152,7 +142,8 @@ final class MessageDisplayModelTests: XCTestCase {
             locale: Locale(identifier: "ru"),
             calendar: calendar,
             now: now,
-            strings: .current
+            strings: .current,
+            dateHeaderFormatter: RussianMessageDateHeaderFormatter(calendar: calendar)
         )
     }
 }

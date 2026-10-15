@@ -9,10 +9,12 @@ import os
 /// Состояние экрана переписки: лента сообщений, ввод и отправка сообщения.
 ///
 /// Ленту держит `MessagesListService` — он показывает кэш из БД, синхронизирует его с сервером, подгружает старые
-/// сообщения и накладывает отправленные. ViewModel получает от него снимки и собирает из них сообщения для
-/// отображения (`messages`) не чаще раза в `messagesUpdateInterval`: частые события не перерисовывают ленту на каждое
-/// изменение. Своё отправленное сообщение и нажатие «Отправить» показываются сразу. Сборка (форматирование времени,
-/// серии отправителей) идёт вне main — на main только сбор входных данных и присвоение результата.
+/// сообщения и накладывает отправленные. ViewModel получает от него снимки и собирает из них ленту для
+/// отображения — секции по дням (`sections`) — не чаще раза в `messagesUpdateInterval`: частые события
+/// не перерисовывают ленту на каждое изменение. Своё отправленное сообщение и нажатие «Отправить» показываются сразу.
+/// Сборка (форматирование времени и заголовков дней, серии отправителей) идёт вне main — на main только сбор
+/// входных данных и присвоение результата. Смена языка и значимое изменение времени (полночь, часовой пояс)
+/// пересобирают ленту: «Сегодня» становится «Вчера» без переоткрытия экрана.
 ///
 /// `observeMessages()` может выполняться в нескольких копиях одновременно: SwiftUI запускает новый `.task`
 /// при повторном появлении экрана, когда старый ещё завершается. Лента запускается с первым наблюдателем
@@ -32,9 +34,9 @@ final class ChatViewModel {
     var errorMessage: String?
     /// `clientId` неотправленного сообщения, для которого показан выбор «повторить / удалить». `nil` — выбор скрыт.
     var failedMessageActionsClientId: String?
-    /// Сообщения для отображения, сначала самые новые. Обновляются `observeMessages()` не чаще раза
+    /// Лента по дням, сначала самые новые. Обновляется `observeMessages()` не чаще раза
     /// в `messagesUpdateInterval`.
-    private(set) var messages: [MessageDisplayModel] = []
+    private(set) var sections: [MessageDaySectionDisplayModel] = []
     /// Идёт синхронизация с сервером: в заголовке — индикатор «Обновление…».
     private(set) var isSyncing = false
     /// Грузятся более старые сообщения.
@@ -56,12 +58,19 @@ final class ChatViewModel {
     let messageTextValidator: MessageTextValidatorProtocol
     let messageSendQueue: MessageSendQueueProtocol
     let now: () -> Date
+    /// Календарь, по которому лента делится на дни. Функция, а не значение: после смены часового пояса
+    /// `Calendar.current` уже другой.
+    private let calendar: () -> Calendar
     private let messagesList: MessagesListServiceProtocol
+    private let dateHeaderFormatterProvider: MessageDateHeaderFormatterProviding
+    private let timeChangeService: SignificantTimeChangeServiceProtocol
     private let sleep: Sleep
 
     /// Сообщения с сервера из последнего снимка ленты. Не наблюдается: об изменении `observeMessages()` узнаёт
     /// из снимка.
     @ObservationIgnored private var serverMessages: [Message] = []
+    /// Позиции сообщений ленты в плоском порядке, от самого нового, — для подгрузки старых.
+    @ObservationIgnored private var messagePositions: [MessageClientKey: Int] = [:]
     /// `isLoaded` из последнего снимка; на экран попадает вместе с собранными из него сообщениями.
     @ObservationIgnored private var isServerWindowLoaded = false
     /// Отправители, загрузка которых уже запрошена.
@@ -72,6 +81,8 @@ final class ChatViewModel {
     @ObservationIgnored private var lifecycle: Task<Void, Never>?
     /// Подписка на снимки ленты, пока лента запущена.
     @ObservationIgnored private var snapshotsTask: Task<Void, Never>?
+    /// Подписка на значимые изменения времени, пока лента запущена.
+    @ObservationIgnored private var timeChangesTask: Task<Void, Never>?
 
     /// Ожидание между обновлениями ленты; подменяется в тестах.
     typealias Sleep = @MainActor (Duration) async throws -> Void
@@ -82,9 +93,12 @@ final class ChatViewModel {
     ///   - messageSendQueue: очередь отправки сообщений.
     ///   - sessionService: сессия — по ней сообщения делятся на исходящие и входящие.
     ///   - userCache: кэш пользователей — имена собеседника и отправителей.
-    ///   - localizationService: язык форматирования времени.
+    ///   - localizationService: язык форматирования времени и заголовков дней.
     ///   - messageTextValidator: проверка текста перед отправкой.
+    ///   - dateHeaderFormatterProvider: форматтеры заголовков дней по языку.
+    ///   - timeChangeService: полночь, смена часового пояса и перевод часов — пересобирают заголовки.
     ///   - now: текущее время; подменяется в тестах форматирования.
+    ///   - calendar: календарь устройства; подменяется в тестах, чтобы деление на дни не зависело от устройства.
     ///   - sleep: ожидание между обновлениями ленты; подменяется в тестах.
     init(
         conversation: Conversation,
@@ -94,7 +108,10 @@ final class ChatViewModel {
         userCache: UserCacheServiceProtocol,
         localizationService: LocalizationServiceProtocol,
         messageTextValidator: MessageTextValidatorProtocol,
+        dateHeaderFormatterProvider: MessageDateHeaderFormatterProviding,
+        timeChangeService: SignificantTimeChangeServiceProtocol,
         now: @escaping () -> Date = { Date() },
+        calendar: @escaping () -> Calendar = { .current },
         sleep: @escaping Sleep = { try await Task.sleep(for: $0) }
     ) {
         self.conversation = conversation
@@ -104,7 +121,10 @@ final class ChatViewModel {
         self.userCache = userCache
         self.localizationService = localizationService
         self.messageTextValidator = messageTextValidator
+        self.dateHeaderFormatterProvider = dateHeaderFormatterProvider
+        self.timeChangeService = timeChangeService
         self.now = now
+        self.calendar = calendar
         self.sleep = sleep
     }
 
@@ -138,7 +158,7 @@ final class ChatViewModel {
         await task.value
     }
 
-    /// Подписывается на снимки ленты и запускает её.
+    /// Подписывается на снимки ленты и на изменения времени и запускает ленту.
     private func startList() async {
         let snapshots = await messagesList.snapshots()
         snapshotsTask = Task { [weak self] in
@@ -146,13 +166,22 @@ final class ChatViewModel {
                 self?.apply(snapshot)
             }
         }
+        let timeChanges = timeChangeService.changes()
+        // Новый день или часовой пояс: `now()` берётся заново, секции и заголовки пересобираются без паузы.
+        timeChangesTask = Task { [weak self] in
+            for await _ in timeChanges {
+                self?.requestImmediateUpdate()
+            }
+        }
         await messagesList.start()
     }
 
-    /// Отписывается от снимков и останавливает ленту.
+    /// Отписывается от снимков и изменений времени и останавливает ленту.
     private func stopList() async {
         snapshotsTask?.cancel()
         snapshotsTask = nil
+        timeChangesTask?.cancel()
+        timeChangesTask = nil
         await messagesList.stop()
     }
 
@@ -167,9 +196,10 @@ final class ChatViewModel {
             let input = trackBuildInput(for: loop)
             let isWindowLoaded = isServerWindowLoaded
             loadSenders(ids: input.senders.keys)
-            let built = await Self.buildMessages(input)
-            if built != messages {
-                messages = built
+            let feed = await Self.buildFeed(input)
+            messagePositions = feed.positions
+            if feed.sections != sections {
+                sections = feed.sections
             }
             isLoaded = isWindowLoaded
             await loop.waitBeforeNextUpdate(sleep: sleep)
@@ -222,37 +252,41 @@ final class ChatViewModel {
     /// - Parameter message: сообщение, которое появилось на экране.
     func prefetchOlderIfNeeded(currentMessage message: MessageDisplayModel) {
         guard hasOlder, !isLoadingOlder,
-              let index = messages.firstIndex(where: { $0.id == message.id }),
-              index >= messages.count - Self.prefetchThreshold else { return }
+              let index = messagePositions[message.id],
+              index >= messagePositions.count - Self.prefetchThreshold else { return }
         Task { await messagesList.loadOlder() }
     }
 
     // MARK: - Сборка сообщений
 
-    /// Входные данные сборки: читаются на main, и по этим чтениям Observation сообщает об изменениях.
+    /// Входные данные сборки: читаются на main, и по этим чтениям Observation сообщает об изменениях. Чтение
+    /// `language` тоже наблюдается — смена языка пересобирает ленту с форматтером заголовков нового языка.
     private func makeBuildInput() -> MessagesBuildInput {
         let outgoing = outgoingMessages
         let senderIds = Set(serverMessages.map(\.senderId) + outgoing.map(\.senderId))
+        let locale = localizationService.language.locale
+        let calendar = calendar()
         return MessagesBuildInput(
             serverMessages: serverMessages,
             outgoing: outgoing,
             senders: Dictionary(uniqueKeysWithValues: senderIds.map { ($0, cachedSender(id: $0)) }),
             context: MessageDisplayContext(
                 currentUserId: sessionService.currentUser?.userId,
-                locale: localizationService.language.locale,
-                calendar: .current,
+                locale: locale,
+                calendar: calendar,
                 now: now(),
-                strings: .current
+                strings: .current,
+                dateHeaderFormatter: dateHeaderFormatterProvider.formatter(locale: locale, calendar: calendar)
             )
         )
     }
 
-    /// Собирает сообщения для отображения вне main.
+    /// Собирает ленту для отображения вне main.
     /// - Parameter input: входные данные.
-    /// - Returns: сообщения, сначала самые новые.
+    /// - Returns: секции по дням, сначала самые новые, и позиции сообщений.
     @concurrent
-    nonisolated static func buildMessages(_ input: MessagesBuildInput) async -> [MessageDisplayModel] {
-        input.makeMessages()
+    nonisolated static func buildFeed(_ input: MessagesBuildInput) async -> MessagesFeed {
+        input.makeFeed()
     }
 
     /// Запускает загрузку отправителей, которых ещё не запрашивали, — для их имён и аватаров. Текущий пользователь
@@ -307,19 +341,64 @@ struct MessagesBuildInput: Sendable {
     let senders: [Int: CachedUser]
     let context: MessageDisplayContext
 
-    /// Сообщения для отображения, сначала самые новые: неотправленные — в самом низу ленты (в начале массива), под
+    /// Лента для отображения, сначала самые новые: неотправленные — в самом низу ленты (в начале массива), под
     /// всеми сообщениями с сервера. Неотправленное сообщение, серверная версия которого уже в ленте, не показывается:
     /// очередь и лента узнают о подтверждении независимо, и иначе одно сообщение попало бы в ленту дважды с одним
-    /// `id`. Аватар и имя отправителя есть только у первого сообщения серии подряд от одного отправителя.
-    func makeMessages() -> [MessageDisplayModel] {
+    /// `id`.
+    ///
+    /// Сообщения режутся на подряд идущие серии одного дня — без глобальной группировки: вчерашнее неотправленное
+    /// сообщение остаётся внизу, под сегодняшними, во второй секции того же дня. Аватар и имя отправителя есть
+    /// только у первого сообщения серии подряд от одного отправителя внутри секции.
+    func makeFeed() -> MessagesFeed {
         let sentKeys = Set(serverMessages.map(\.clientKey))
         let pending = outgoing.filter { !sentKeys.contains($0.clientKey) }
         let items = pending.reversed().map(ChatFeedItem.outgoing) + serverMessages.map(ChatFeedItem.sent)
-        return items.indices.map { index in
+        let runs = dayRuns(of: items)
+        let ids = sectionIDs(of: runs)
+        let sections = zip(runs, ids).map { run, id in makeSection(id: id, items: items[run.range]) }
+        let positions = items.enumerated().map { ($0.element.clientKey, $0.offset) }
+        return MessagesFeed(sections: sections, positions: Dictionary(positions, uniquingKeysWith: { first, _ in first }))
+    }
+
+    /// Разбивает элементы на подряд идущие серии одного дня.
+    /// - Parameter items: элементы ленты, сначала самые новые.
+    private func dayRuns(of items: [ChatFeedItem]) -> [DayRun] {
+        var runs: [DayRun] = []
+        for (index, item) in items.enumerated() {
+            let day = context.calendar.startOfDay(for: item.createdAt)
+            guard let last = runs.last, last.day == day else {
+                runs.append(DayRun(day: day, range: index..<index + 1))
+                continue
+            }
+            runs[runs.count - 1] = DayRun(day: day, range: last.range.lowerBound..<index + 1)
+        }
+        return runs
+    }
+
+    /// Идентификаторы секций. Номер серии дня считается от самых старых: подгрузка старых сообщений дописывает
+    /// их в конец и не меняет `id` уже показанных секций.
+    /// - Parameter runs: серии дней, сначала самые новые.
+    private func sectionIDs(of runs: [DayRun]) -> [MessageDaySectionID] {
+        var occurrences: [Date: Int] = [:]
+        let oldestFirst = runs.reversed().map { run in
+            let occurrence = occurrences[run.day, default: 0]
+            occurrences[run.day] = occurrence + 1
+            return MessageDaySectionID(day: run.day, occurrence: occurrence)
+        }
+        return oldestFirst.reversed()
+    }
+
+    /// Собирает секцию: заголовок дня и сообщения. Серия отправителя прерывается на границе секции — её самое
+    /// старое сообщение всегда показывается с аватаром и именем.
+    /// - Parameters:
+    ///   - id: идентификатор секции.
+    ///   - items: элементы секции, сначала самые новые.
+    private func makeSection(id: MessageDaySectionID, items: ArraySlice<ChatFeedItem>) -> MessageDaySectionDisplayModel {
+        let messages = items.indices.map { index in
             let item = items[index]
             // Порядок — от новых к старым, поэтому первое сообщение серии — то, за которым идёт сообщение
-            // другого отправителя или конец загруженной ленты.
-            let isFirstInSeries = index + 1 == items.count || items[index + 1].senderId != item.senderId
+            // другого отправителя или конец секции.
+            let isFirstInSeries = index + 1 == items.endIndex || items[index + 1].senderId != item.senderId
             let sender = isFirstInSeries ? senders[item.senderId] : nil
             switch item {
             case let .sent(message):
@@ -328,7 +407,25 @@ struct MessagesBuildInput: Sendable {
                 return MessageDisplayModel(outgoing: outgoing, sender: sender, context: context)
             }
         }
+        let title = context.dateHeaderFormatter.string(from: items[items.startIndex].createdAt, now: context.now)
+        return MessageDaySectionDisplayModel(id: id, title: title, messages: messages)
     }
+}
+
+/// Собранная лента: секции и позиции сообщений.
+struct MessagesFeed: Sendable {
+    /// Секции по дням, сначала самые новые.
+    let sections: [MessageDaySectionDisplayModel]
+    /// Позиция каждого сообщения в плоском порядке ленты, от самого нового.
+    let positions: [MessageClientKey: Int]
+}
+
+/// Подряд идущие элементы ленты одного дня.
+private struct DayRun {
+    /// Начало дня в календаре устройства.
+    let day: Date
+    /// Индексы элементов в ленте.
+    let range: Range<Int>
 }
 
 /// Элемент ленты: сообщение с сервера или неотправленное сообщение текущего пользователя.
@@ -340,6 +437,23 @@ private enum ChatFeedItem {
         switch self {
         case let .sent(message): return message.senderId
         case let .outgoing(message): return message.senderId
+        }
+    }
+
+    /// Ключ сообщения — тот же, что `id` в `MessageDisplayModel`.
+    var clientKey: MessageClientKey {
+        switch self {
+        case let .sent(message): return message.clientKey
+        case let .outgoing(message): return message.clientKey
+        }
+    }
+
+    /// Время, по которому сообщение попадает в день: у серверного — время сервера, у неотправленного — момент
+    /// нажатия «Отправить».
+    var createdAt: Date {
+        switch self {
+        case let .sent(message): return message.createdAt.date
+        case let .outgoing(message): return message.createdAt
         }
     }
 }

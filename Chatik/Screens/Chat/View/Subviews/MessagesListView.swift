@@ -5,27 +5,39 @@
 
 import SwiftUI
 
-/// Лента сообщений: самые новые внизу, более старые подгружаются при прокрутке вверх.
+/// Лента сообщений по дням: самые новые внизу, более старые подгружаются при прокрутке вверх. Над сообщениями
+/// каждого дня — заголовок с датой, а во время прокрутки поверх ленты — плавающая дата верхних сообщений
+/// (`FloatingDateHeaderView`).
 ///
 /// Прокрутка перевёрнута: `ScrollView` и каждая строка отражены по вертикали. Так лента начинается с самых новых
 /// сообщений без ручной прокрутки, а подгруженные старые дописываются в конец данных (визуально — сверху)
-/// и не сдвигают то, что сейчас на экране. Pull-to-refresh (`.refreshable` у родителя) тоже переворачивается:
-/// индикатор появляется внизу ленты, а обновление запускается, если потянуть ленту вверх от самых новых сообщений.
+/// и не сдвигают то, что сейчас на экране. Поэтому заголовок дня идёт в данных после сообщений своей секции —
+/// визуально он над ними. Pull-to-refresh (`.refreshable` у родителя) тоже переворачивается: индикатор появляется
+/// внизу ленты, а обновление запускается, если потянуть ленту вверх от самых новых сообщений.
+///
+/// Секции и строки — плоские `ForEach` внутри одного `LazyVStack`: обёртка дня в `VStack` выключила бы ленивую
+/// загрузку внутри дня, а за день бывают сотни сообщений.
 struct MessagesListView: View {
-    /// Сообщения, сначала самые новые.
-    let messages: [MessageDisplayModel]
+    /// Секции по дням, сначала самые новые.
+    let sections: [MessageDaySectionDisplayModel]
     let isLoadingOlder: Bool
     let onAppear: (MessageDisplayModel) -> Void
     /// Тап по неотправленному сообщению.
     let onTapFailed: (MessageDisplayModel) -> Void
 
+    @State private var tracker = FloatingDateTracker()
+
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 2) {
-                ForEach(messages) { message in
-                    MessageBubbleView(message: message, onTapFailed: { onTapFailed(message) })
-                        .flippedVertically()
-                        .onAppear { onAppear(message) }
+                ForEach(sections) { section in
+                    ForEach(section.messages) { message in
+                        MessageBubbleView(message: message, onTapFailed: { onTapFailed(message) })
+                            .flippedVertically()
+                            .onAppear { onAppear(message) }
+                            .trackFrame(FloatingDateRow(kind: .message(message.id), section: section.id), in: tracker)
+                    }
+                    DateHeaderRow(section: section, tracker: tracker)
                 }
                 if isLoadingOlder {
                     ProgressView()
@@ -37,8 +49,38 @@ struct MessagesListView: View {
             .padding(.vertical, 8)
         }
         .flippedVertically()
+        .scrollPhaseTracking(tracker)
+        // Пространство — снаружи отражения: кадры строк в нём уже визуальные.
+        .coordinateSpace(.named(FloatingDateTracker.coordinateSpace))
+        // Клавиатура и поворот меняют высоту ленты и сдвигают строки без жеста.
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { _ in tracker.layoutDidChange() }
+        .overlay(alignment: .top) { FloatingDateHeaderView(tracker: tracker) }
+        // Только заголовки, а не сами секции: сравнение всей ленты с сообщениями на каждом `body` шло бы на main.
+        .onChange(of: sectionTitles, initial: true) { _, titles in tracker.setTitles(titles) }
+        .onChange(of: isLoadingOlder) { tracker.layoutDidChange() }
         .scrollEdgeEffectsHiddenIfAvailable()
         .scrollDismissesKeyboard(.interactively)
+    }
+
+    /// Заголовки секций для трекера плавающей даты.
+    private var sectionTitles: [MessageDaySectionID: String] {
+        Dictionary(sections.map { ($0.id, $0.title) }, uniquingKeysWith: { first, _ in first })
+    }
+}
+
+/// Заголовок дня в ленте. Отдельный View: прозрачность под плашкой перерисовывает только этот заголовок, а не всю
+/// ленту. Пока плашка видна и закрывает его, заголовок прозрачный — иначе на переходе были бы видны две капсулы.
+private struct DateHeaderRow: View {
+    let section: MessageDaySectionDisplayModel
+    let tracker: FloatingDateTracker
+
+    var body: some View {
+        MessageDateHeaderView(title: section.title)
+            .opacity(tracker.coveredHeader == section.id ? 0 : 1)
+            .flippedVertically()
+            .trackFrame(FloatingDateRow(kind: .header, section: section.id), in: tracker)
+            // Снаружи `trackFrame`: трекер знает кадр капсулы, и плашка встаёт ровно на место заголовка.
+            .padding(.vertical, 8)
     }
 }
 
@@ -55,6 +97,20 @@ private extension View {
         }
     }
 
+    /// Сообщает трекеру плавающей даты фазу прокрутки (iOS 18+). На iOS 17 фазы нет — трекер определяет прокрутку
+    /// по кадрам строк.
+    /// - Parameter tracker: трекер плавающей даты.
+    @ViewBuilder
+    func scrollPhaseTracking(_ tracker: FloatingDateTracker) -> some View {
+        if #available(iOS 18, *) {
+            onScrollPhaseChange { _, phase in
+                tracker.scrollPhaseDidChange(isActive: phase != .idle)
+            }
+        } else {
+            self
+        }
+    }
+
     /// Отражает View по вертикали — для перевёрнутой ленты сообщений.
     func flippedVertically() -> some View {
         scaleEffect(x: 1, y: -1)
@@ -64,14 +120,20 @@ private extension View {
 #Preview {
     let ivan = MessageSenderDisplayModel(name: "Иван Петров", isPlaceholder: false, avatarURL: nil)
     let maria = MessageSenderDisplayModel(name: "Мария", isPlaceholder: false, avatarURL: nil)
+    let today = Calendar.current.startOfDay(for: .now)
+    let yesterday = Calendar.current.date(byAdding: .day, value: -1, to: today)!
     MessagesListView(
-        messages: [
-            MessageDisplayModel(id: MessageClientKey(senderId: 1, clientId: "6"), text: "Ты где?", isUnsupported: false, isOutgoing: true, sender: nil, time: "12:07", editedLabel: nil, deliveryState: .failed, deliveryStateLabel: "Не отправлено"),
-            MessageDisplayModel(id: MessageClientKey(senderId: 1, clientId: "5"), text: "Я уже на месте", isUnsupported: false, isOutgoing: true, sender: ivan, time: "12:06", editedLabel: nil, deliveryState: .sending, deliveryStateLabel: "Отправляется"),
-            MessageDisplayModel(id: MessageClientKey(senderId: 1, clientId: "4"), text: "Отлично, до встречи!", isUnsupported: false, isOutgoing: true, sender: ivan, time: "12:05", editedLabel: nil, deliveryState: .delivered, deliveryStateLabel: nil),
-            MessageDisplayModel(id: MessageClientKey(senderId: 2, clientId: "3"), text: "Давай в 7 у входа", isUnsupported: false, isOutgoing: false, sender: nil, time: "12:04", editedLabel: "изменено", deliveryState: .delivered, deliveryStateLabel: nil),
-            MessageDisplayModel(id: MessageClientKey(senderId: 2, clientId: "2"), text: "Привет!", isUnsupported: false, isOutgoing: false, sender: maria, time: "12:03", editedLabel: nil, deliveryState: .delivered, deliveryStateLabel: nil),
-            MessageDisplayModel(id: MessageClientKey(senderId: 1, clientId: "1"), text: "Привет! Во сколько встречаемся?", isUnsupported: false, isOutgoing: true, sender: ivan, time: "12:01", editedLabel: nil, deliveryState: .delivered, deliveryStateLabel: nil),
+        sections: [
+            MessageDaySectionDisplayModel(id: MessageDaySectionID(day: today, occurrence: 0), title: "Сегодня, 15 октября", messages: [
+                MessageDisplayModel(id: MessageClientKey(senderId: 1, clientId: "6"), text: "Ты где?", isUnsupported: false, isOutgoing: true, sender: nil, time: nil, editedLabel: nil, deliveryState: .failed, deliveryStateLabel: "Не отправлено"),
+                MessageDisplayModel(id: MessageClientKey(senderId: 1, clientId: "5"), text: "Я уже на месте", isUnsupported: false, isOutgoing: true, sender: ivan, time: nil, editedLabel: nil, deliveryState: .sending, deliveryStateLabel: "Отправляется"),
+                MessageDisplayModel(id: MessageClientKey(senderId: 1, clientId: "4"), text: "Отлично, до встречи!", isUnsupported: false, isOutgoing: true, sender: ivan, time: "12:05", editedLabel: nil, deliveryState: .delivered, deliveryStateLabel: nil),
+                MessageDisplayModel(id: MessageClientKey(senderId: 2, clientId: "3"), text: "Давай в 7 у входа", isUnsupported: false, isOutgoing: false, sender: maria, time: "12:04", editedLabel: "изменено", deliveryState: .delivered, deliveryStateLabel: nil),
+            ]),
+            MessageDaySectionDisplayModel(id: MessageDaySectionID(day: yesterday, occurrence: 0), title: "Вчера, 14 октября", messages: [
+                MessageDisplayModel(id: MessageClientKey(senderId: 2, clientId: "2"), text: "Привет!", isUnsupported: false, isOutgoing: false, sender: maria, time: "21:03", editedLabel: nil, deliveryState: .delivered, deliveryStateLabel: nil),
+                MessageDisplayModel(id: MessageClientKey(senderId: 1, clientId: "1"), text: "Привет! Во сколько встречаемся?", isUnsupported: false, isOutgoing: true, sender: ivan, time: "21:01", editedLabel: nil, deliveryState: .delivered, deliveryStateLabel: nil),
+            ]),
         ],
         isLoadingOlder: true,
         onAppear: { _ in },

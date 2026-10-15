@@ -5,35 +5,50 @@
 
 import SwiftUI
 
-/// Сообщение в ленте: исходящие — справа на фоне `OutgoingBubble` (акцентный синий, в тёмной теме приглушённый)
-/// с аватаром справа, входящие — слева с аватаром слева. Аватар и имя отправителя есть только у первого сообщения
-/// серии; у остальных на месте аватара пустой отступ, чтобы пузыри серии стояли ровно. Ширина пузыря подстраивается
-/// под содержимое.
+/// Сообщение в ленте: входящие — слева с аватаром слева, свои — справа на фоне `OutgoingBubble` (акцентный синий,
+/// в тёмной теме приглушённый) без аватара и имени. У входящих аватар и имя отправителя есть только у первого
+/// сообщения серии; у остальных на месте аватара пустой отступ, чтобы пузыри серии стояли ровно. Ширина пузыря
+/// подстраивается под содержимое. Входящий пузырь — от аватара до 32 pt от правого края экрана; свой — в той же
+/// полосе, сдвинутой на `outgoingShift` вправо: не ближе 68 pt к левому краю экрана и 16 pt к правому.
 ///
 /// В подвале пузыря — только время (дату показывает заголовок дня). У отправляющегося сообщения на месте времени
 /// часы, у неотправленного — светло-розовое «Не отправлено» и красный значок слева от пузыря; тап по неотправленному
-/// сообщению вызывает `onTapFailed`. Высота подвала одна при любом состоянии — пузырь не прыгает при смене статуса. Тапы по остальным сообщениям не перехватываются —
-/// их обрабатывает лента (убирает клавиатуру).
+/// сообщению вызывает `onTapFailed`. Высота подвала одна при любом состоянии — пузырь не прыгает при смене статуса.
+/// Тапы по остальным сообщениям не перехватываются — их обрабатывает лента (убирает клавиатуру).
 struct MessageBubbleView: View {
     let message: MessageDisplayModel
     var onTapFailed: () -> Void = {}
 
     private static let avatarSize: CGFloat = 32
+    /// Промежуток между аватаром и входящим пузырём.
+    private static let avatarSpacing: CGFloat = 8
+    /// Отступ пузыря от края ленты со стороны аватара входящих: аватар и промежуток. Ближе к этому краю не подходят
+    /// и свои пузыри.
+    private static let avatarSideInset: CGFloat = avatarSize + avatarSpacing
+    /// Наименьший отступ пузыря от края ленты с другой стороны. Вместе с полем ленты по бокам (12) пузырь
+    /// не подходит к краю экрана ближе чем на 32 pt.
+    private static let freeSideInset: CGFloat = 20
+    /// Сдвиг своих пузырей вправо относительно полосы входящих — с обеих сторон.
+    private static let outgoingShift: CGFloat = 16
+    /// Промежуток между значком неотправленного сообщения и пузырём.
+    private static let failedMarkSpacing: CGFloat = 6
 
     var body: some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .top, spacing: 0) {
             if message.isOutgoing {
-                Spacer(minLength: 48)
-                // Значок ошибки — у нижнего края пузыря.
-                HStack(alignment: .bottom, spacing: 6) {
-                    failedMark
-                    bubble
-                }
-                avatar
+                Spacer(minLength: Self.avatarSideInset + Self.outgoingShift)
+                bubble
+                    // Значок — снаружи пузыря, у его нижнего края: ширина пузыря не меняется при смене статуса.
+                    .overlay(alignment: .bottomLeading) {
+                        failedMark
+                            .alignmentGuide(.leading) { $0[.trailing] + Self.failedMarkSpacing }
+                    }
+                    .padding(.trailing, Self.freeSideInset - Self.outgoingShift)
             } else {
                 avatar
                 bubble
-                Spacer(minLength: 48)
+                    .padding(.leading, Self.avatarSpacing)
+                Spacer(minLength: Self.freeSideInset)
             }
         }
         // Отступ отделяет серии друг от друга; внутри серии пузыри идут плотно.
@@ -62,7 +77,7 @@ struct MessageBubbleView: View {
         }
     }
 
-    /// Аватар отправителя у первого сообщения серии, иначе пустое место того же размера.
+    /// Аватар отправителя входящего сообщения у первого сообщения серии, иначе пустое место того же размера.
     @ViewBuilder
     private var avatar: some View {
         if let sender = message.sender {
@@ -74,13 +89,14 @@ struct MessageBubbleView: View {
         }
     }
 
-    /// Пузырь сообщения: имя отправителя, текст, время и пометка о редактировании.
+    /// Пузырь сообщения: имя отправителя (только у входящих), текст, время и пометка о редактировании.
     private var bubble: some View {
         MessageBubbleLayout(spacing: 4) {
-            if let sender = message.sender {
+            // У своих сообщений `sender` нужен только для отступа между сериями: своё имя не показывается.
+            if !message.isOutgoing, let sender = message.sender {
                 Text(sender.name)
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(message.isOutgoing ? Color.white : Color.accentColor)
+                    .foregroundStyle(Color.accentColor)
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .redacted(reason: sender.isPlaceholder ? .placeholder : [])

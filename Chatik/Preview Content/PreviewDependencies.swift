@@ -17,14 +17,18 @@ enum PreviewDependencies {
         storage: MessageDraftStorageService(container: storageContainer),
         backgroundTasks: BackgroundTaskRunner()
     )
-    static let sessionService = makeSessionService(userDefaultsService: userDefaultsService)
+    static let realtimeEventQueue = RealtimeEventQueue()
+    /// Очередь отправки превью — в БД превью; загружается при восстановлении сессии превью.
+    static let messageSendQueue = makeMessageSendQueue()
+    static let sessionService = makeSessionService(
+        userDefaultsService: userDefaultsService,
+        dataLoaders: [messageDraftService, messageSendQueue]
+    )
     static let localizationService = LocalizationService(userDefaultsService: userDefaultsService, systemLanguage: .ru)
     static let userCache = UserCacheService(
         usersService: UsersServicePreviewMock(),
         userStorage: UserStorageService(container: storageContainer)
     )
-    static let realtimeService = RealtimeServicePreviewMock()
-    static let realtimeEventQueue = RealtimeEventQueue()
 
     /// ViewModel экрана авторизации над моками.
     /// - Parameters:
@@ -38,7 +42,7 @@ enum PreviewDependencies {
             mode: mode,
             authService: AuthServicePreviewMock(authResult: authResult),
             sessionService: sessionService,
-            realtimeService: realtimeService,
+            sessionWork: SessionWorkPreviewMock(messageDelivery: messageSendQueue),
             localizationService: localizationService,
             signupValidator: SignupValidator(),
             loginValidator: LoginValidator(),
@@ -61,6 +65,7 @@ enum PreviewDependencies {
             sessionService: sessionService,
             userCache: userCache,
             draftService: messageDraftService,
+            unsentMessages: messageSendQueue,
             localizationService: localizationService,
             router: ChatListRouter()
         )
@@ -75,21 +80,20 @@ enum PreviewDependencies {
         )
     ) -> ChatViewModel {
         let user = User(userId: 1, login: "ivan", name: "Иван Петров", avatar: nil)
-        let sessionService = makeSessionService(userDefaultsService: UserDefaultsServicePreviewMock(currentUser: user))
-        Task { await sessionService.restore() }
         let messageService = MessageServicePreviewMock()
         let messageCache = MessageCacheService(
             storage: MessageStorageService(container: storageContainer),
             connectionMonitor: RealtimeConnectionMonitor()
         )
-        let messageSendQueue = MessageSendQueue(
-            messageService: messageService,
-            messageCache: messageCache,
-            outgoingMessageStorage: OutgoingMessageStorageService(container: storageContainer),
-            sessionService: sessionService,
-            eventQueue: realtimeEventQueue,
-            positionUpdater: ConversationPositionUpdatingPreviewMock()
+        let messageSendQueue = makeMessageSendQueue(messageService: messageService, messageCache: messageCache)
+        let sessionService = makeSessionService(
+            userDefaultsService: UserDefaultsServicePreviewMock(currentUser: user),
+            dataLoaders: [messageDraftService, messageSendQueue]
         )
+        Task {
+            await sessionService.restore()
+            messageSendQueue.resumeDeliveries()
+        }
         return ChatViewModel(
             conversation: conversation,
             messagesList: MessagesListService(
@@ -111,14 +115,39 @@ enum PreviewDependencies {
         )
     }
 
-    /// Сессия над заданным хранилищем настроек; при выходе очищается БД превью, а не приложения, черновики
-    /// загружаются из БД превью.
-    /// - Parameter userDefaultsService: хранилище настроек превью.
-    static func makeSessionService(userDefaultsService: UserDefaultsServiceProtocol) -> SessionService {
+    /// Сессия над заданным хранилищем настроек; при выходе очищается БД превью, а не приложения, данные
+    /// пользователя загружаются из БД превью.
+    /// - Parameters:
+    ///   - userDefaultsService: хранилище настроек превью.
+    ///   - dataLoaders: загрузка данных пользователя при открытии сессии; по умолчанию — черновики превью.
+    static func makeSessionService(
+        userDefaultsService: UserDefaultsServiceProtocol,
+        dataLoaders: [SessionDataLoading]? = nil
+    ) -> SessionService {
         SessionService(
             userDefaultsService: userDefaultsService,
             localStorageCleaner: LocalStorageCleaner(container: storageContainer),
-            draftLoader: messageDraftService
+            dataLoaders: dataLoaders ?? [messageDraftService]
+        )
+    }
+
+    /// Очередь отправки над моком сети и БД превью.
+    /// - Parameters:
+    ///   - messageService: отправка сообщений; по умолчанию — мок превью.
+    ///   - messageCache: кэш сообщений; по умолчанию — над БД превью.
+    static func makeMessageSendQueue(
+        messageService: MessageServiceProtocol = MessageServicePreviewMock(),
+        messageCache: MessageCacheServiceProtocol? = nil
+    ) -> MessageSendQueue {
+        MessageSendQueue(
+            messageService: messageService,
+            messageCache: messageCache ?? MessageCacheService(
+                storage: MessageStorageService(container: storageContainer),
+                connectionMonitor: RealtimeConnectionMonitor()
+            ),
+            outgoingMessageStorage: OutgoingMessageStorageService(container: storageContainer),
+            eventQueue: realtimeEventQueue,
+            positionUpdater: ConversationPositionUpdatingPreviewMock()
         )
     }
 
@@ -416,12 +445,20 @@ final class AuthServicePreviewMock: AuthServiceProtocol {
     }
 }
 
-/// Соединение с WebSocket для превью: никуда не подключается, событий не присылает.
+/// Начало работы с сервером для превью: запускает только отправку очереди превью — соединения в превью нет,
+/// а список переписок экран входа не показывает.
 @MainActor
-final class RealtimeServicePreviewMock: RealtimeServiceProtocol {
-    func start() {}
+final class SessionWorkPreviewMock: SessionWorkStarting {
+    private let messageDelivery: MessageDeliveryResuming
 
-    func stop() async {}
+    /// - Parameter messageDelivery: очередь отправки превью.
+    init(messageDelivery: MessageDeliveryResuming) {
+        self.messageDelivery = messageDelivery
+    }
+
+    func startSessionWork() {
+        messageDelivery.resumeDeliveries()
+    }
 }
 
 /// Список чатов для превью экрана переписки: подъём переписки по ответу на отправку там не виден.

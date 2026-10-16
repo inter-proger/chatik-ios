@@ -6,17 +6,18 @@
 import CoreData
 
 protocol LocalStorageCleanerProtocol {
-    /// Удаляет записи всех сущностей локальной БД, кроме черновиков сообщений.
+    /// Удаляет записи всех сущностей локальной БД, кроме черновиков и очереди отправки.
     func clearAll() async throws
 }
 
 /// Очистка локальной БД при завершении и открытии сессии. БД — кэш серверных данных конкретного пользователя,
-/// и следующий пользователь на устройстве не должен увидеть чужие переписки, плюс черновики сообщений: их нет
-/// на сервере, поэтому они переживают выход, а чужие черновики скрывает ключ `userId` в записи.
+/// и следующий пользователь на устройстве не должен увидеть чужие переписки. Исключение — черновики и очередь
+/// отправки: их нет на сервере, поэтому они переживают выход, а чужие записи скрывает ключ пользователя в записи
+/// (`userId` у черновика, `senderId` у сообщения очереди).
 final class LocalStorageCleaner: LocalStorageCleanerProtocol {
     /// Сущности, которые очистка не трогает. Явный список, а не признак в модели: так в одном месте видно,
     /// что переживает выход.
-    static let preservedEntityNames: Set<String> = [MessageDraftEntity.entityName]
+    static let preservedEntityNames: Set<String> = [MessageDraftEntity.entityName, OutgoingMessageEntity.entityName]
 
     private let container: PersistentContainerProvider
 

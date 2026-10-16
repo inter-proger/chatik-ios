@@ -280,7 +280,7 @@ final class SessionServiceTests: XCTestCase {
         let sut = SessionService(
             userDefaultsService: UserDefaultsServiceMock(currentUser: user),
             localStorageCleaner: LocalStorageCleanerMock(),
-            draftLoader: drafts
+            dataLoaders: [drafts]
         )
         var isRestoredDuringLoad: Bool?
         drafts.onLoad = { isRestoredDuringLoad = sut.isRestored }
@@ -296,7 +296,7 @@ final class SessionServiceTests: XCTestCase {
     /// Ожидание: черновики не загружаются.
     func test_restore_withoutUser_doesNotLoadDrafts() async {
         let drafts = MessageDraftServiceMock()
-        let sut = SessionService(userDefaultsService: UserDefaultsServiceMock(), localStorageCleaner: LocalStorageCleanerMock(), draftLoader: drafts)
+        let sut = SessionService(userDefaultsService: UserDefaultsServiceMock(), localStorageCleaner: LocalStorageCleanerMock(), dataLoaders: [drafts])
 
         await sut.restore()
 
@@ -309,7 +309,7 @@ final class SessionServiceTests: XCTestCase {
     func test_start_loadsDraftsAfterClearBeforeOpeningSession() async {
         let cleaner = LocalStorageCleanerMock()
         let drafts = MessageDraftServiceMock()
-        let sut = SessionService(userDefaultsService: UserDefaultsServiceMock(), localStorageCleaner: cleaner, draftLoader: drafts)
+        let sut = SessionService(userDefaultsService: UserDefaultsServiceMock(), localStorageCleaner: cleaner, dataLoaders: [drafts])
         await sut.restore()
         var clearCountDuringLoad: Int?
         var isLoggedInDuringLoad: Bool?
@@ -326,6 +326,30 @@ final class SessionServiceTests: XCTestCase {
         XCTAssertTrue(sut.isLoggedIn)
     }
 
+    /// Кейс: у сессии два загрузчика — черновики и очередь отправки; вызваны `restore()`, затем выход и вход.
+    /// Ожидание: оба загрузчика получили пользователя и при восстановлении, и при входе — до того, как сессия
+    /// стала видна (`isRestored`, `currentUser`).
+    func test_restoreAndStart_loadAllLoadersBeforeOpeningSession() async {
+        let drafts = MessageDraftServiceMock()
+        let queue = MessageSendQueueMock()
+        let other = User(userId: 2, login: "petr", name: "Petr", avatar: nil)
+        let sut = SessionService(
+            userDefaultsService: UserDefaultsServiceMock(currentUser: user),
+            localStorageCleaner: LocalStorageCleanerMock(),
+            dataLoaders: [drafts, queue]
+        )
+        var sessionDuringDraftLoad: [String] = []
+        drafts.onLoad = { sessionDuringDraftLoad.append("restored=\(sut.isRestored), user=\(String(describing: sut.currentUser?.userId))") }
+
+        await sut.restore()
+        await sut.end()
+        await sut.start(user: other)
+
+        XCTAssertEqual(drafts.loadedUserIds, [user.userId, other.userId])
+        XCTAssertEqual(queue.loadedUserIds, [user.userId, other.userId])
+        XCTAssertEqual(sessionDuringDraftLoad, ["restored=false, user=nil", "restored=true, user=nil"])
+    }
+
     /// Кейс: настоящие черновики и очистка над одной БД; пользователь сохранил черновик, вышел, вошёл другой
     /// пользователь, затем снова первый.
     /// Ожидание: черновик переживает очистку при выходе и входе; второй пользователь его не видит, первый — видит.
@@ -336,7 +360,7 @@ final class SessionServiceTests: XCTestCase {
         let sut = SessionService(
             userDefaultsService: UserDefaultsServiceMock(),
             localStorageCleaner: LocalStorageCleaner(container: container),
-            draftLoader: drafts
+            dataLoaders: [drafts]
         )
         let other = User(userId: 2, login: "petr", name: "Petr", avatar: nil)
         await sut.restore()

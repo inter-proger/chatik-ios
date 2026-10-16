@@ -13,6 +13,8 @@ final class MessageCacheServiceMock: MessageCacheServiceProtocol {
     private(set) var sentMessages: [Message] = []
     /// Вызывается внутри `applySent` до записи — пока запись гарантированно выполняется.
     var onApplySent: (@MainActor () async -> Void)?
+    /// Что возвращает `applySent`: не `.written` — сообщение в `sentMessages` не попадает.
+    var stubbedApplySentResult = SentMessageWriteResult.written
 
     @MainActor
     func isSynced(conversationId: Int) async -> Bool {
@@ -46,8 +48,11 @@ final class MessageCacheServiceMock: MessageCacheServiceProtocol {
     }
 
     @MainActor
-    func applySent(_ message: Message) async {
+    @discardableResult
+    func applySent(_ message: Message) async -> SentMessageWriteResult {
         await onApplySent?()
+        guard stubbedApplySentResult == .written else { return stubbedApplySentResult }
         sentMessages.append(message)
+        return .written
     }
 }

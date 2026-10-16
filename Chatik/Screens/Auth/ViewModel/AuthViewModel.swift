@@ -28,8 +28,8 @@ final class AuthViewModel {
 
     let authService: AuthServiceProtocol
     let sessionService: SessionServiceProtocol
-    /// Соединение с WebSocket — открывается после входа; нужно `AuthViewModel+Authentication`, поэтому не `private`.
-    let realtimeService: RealtimeServiceProtocol
+    /// Начало работы с сервером после входа; нужно `AuthViewModel+Authentication`, поэтому не `private`.
+    let sessionWork: SessionWorkStarting
     let signupValidator: SignupValidatorProtocol
     let loginValidator: LoginValidatorProtocol
     private let localizationService: LocalizationServiceProtocol
@@ -39,7 +39,7 @@ final class AuthViewModel {
         mode: AuthMode = .signup,
         authService: AuthServiceProtocol,
         sessionService: SessionServiceProtocol,
-        realtimeService: RealtimeServiceProtocol,
+        sessionWork: SessionWorkStarting,
         localizationService: LocalizationServiceProtocol,
         signupValidator: SignupValidatorProtocol,
         loginValidator: LoginValidatorProtocol,
@@ -48,7 +48,7 @@ final class AuthViewModel {
         self.mode = mode
         self.authService = authService
         self.sessionService = sessionService
-        self.realtimeService = realtimeService
+        self.sessionWork = sessionWork
         self.localizationService = localizationService
         self.signupValidator = signupValidator
         self.loginValidator = loginValidator

@@ -41,6 +41,8 @@ final class DIContainer {
     let realtimeEventQueue: RealtimeEventQueueProtocol
     /// Список переписок — единственный, кто пишет переписки в БД.
     let conversationListService: ConversationListServiceProtocol
+    /// Начало работы с сервером после открытия сессии — общее для старта приложения и входа.
+    let sessionWorkLauncher: SessionWorkStarting
     /// Черновики сообщений — единственный, кто пишет их в БД.
     let messageDraftService: MessageDraftServiceProtocol
     /// Держит наблюдение за сетью, пока жив контейнер: при появлении сети WebSocket переподключается сразу.
@@ -56,7 +58,7 @@ final class DIContainer {
         // Хранилище открывается в фоне: открытие SQLite и возможная миграция не задерживают первый кадр.
         let storageContainer = BackgroundLoadedContainer { CoreDataStack.makeContainer() }
         let userDefaultsService = UserDefaultsService()
-        // Черновики создаются раньше сессии: она загружает их при восстановлении и открытии.
+        // Черновики и очередь отправки создаются раньше сессии: она загружает их при восстановлении и открытии.
         let messageDraftService = MessageDraftService(
             storage: MessageDraftStorageService(container: storageContainer),
             backgroundTasks: BackgroundTaskRunner()
@@ -64,11 +66,6 @@ final class DIContainer {
         let messageDraftLogoutObserver = MessageDraftLogoutObserver(draftService: messageDraftService)
         self.messageDraftService = messageDraftService
         self.messageDraftLogoutObserver = messageDraftLogoutObserver
-        let sessionService = SessionService(
-            userDefaultsService: userDefaultsService,
-            localStorageCleaner: LocalStorageCleaner(container: storageContainer),
-            draftLoader: messageDraftService
-        )
         let actionDispatcher = APIActionDispatcher()
         let sessionExpirationRelay = SessionExpirationRelay()
         // Код 2003 от любого запроса завершает сессию через `AuthService` — наблюдатели остановят работу с сессией,
@@ -78,7 +75,6 @@ final class DIContainer {
             onActions: { await actionDispatcher.dispatch($0) }
         )
         self.userDefaultsService = userDefaultsService
-        self.sessionService = sessionService
         self.localizationService = LocalizationService(userDefaultsService: userDefaultsService)
         self.networkService = networkService
         let authService = AuthService(networkService: networkService)
@@ -123,6 +119,20 @@ final class DIContainer {
             userCache: userCache
         )
         self.conversationListService = conversationListService
+        let messageSendQueue = MessageSendQueue(
+            messageService: messageService,
+            messageCache: messageCache,
+            outgoingMessageStorage: OutgoingMessageStorageService(container: storageContainer),
+            eventQueue: realtimeEventQueue,
+            positionUpdater: conversationListService
+        )
+        self.messageSendQueue = messageSendQueue
+        let sessionService = SessionService(
+            userDefaultsService: userDefaultsService,
+            localStorageCleaner: LocalStorageCleaner(container: storageContainer),
+            dataLoaders: [messageDraftService, messageSendQueue]
+        )
+        self.sessionService = sessionService
         let globalService = GlobalService(networkService: networkService)
         let realtimeService = RealtimeService(
             globalService: globalService,
@@ -135,15 +145,11 @@ final class DIContainer {
         )
         self.globalService = globalService
         self.realtimeService = realtimeService
-        let messageSendQueue = MessageSendQueue(
-            messageService: messageService,
-            messageCache: messageCache,
-            outgoingMessageStorage: OutgoingMessageStorageService(container: storageContainer),
-            sessionService: sessionService,
-            eventQueue: realtimeEventQueue,
-            positionUpdater: conversationListService
+        self.sessionWorkLauncher = SessionWorkLauncher(
+            conversationList: conversationListService,
+            messageDelivery: messageSendQueue,
+            realtimeService: realtimeService
         )
-        self.messageSendQueue = messageSendQueue
         // Соединение, очередь событий, список, очередь отправки, кэш сообщений и черновики останавливаются в фазе `authServiceWillLogout`
         // (до запроса выхода), сессия завершается в `authServiceDidLogout` (после него) — от порядка подписки
         // это не зависит.

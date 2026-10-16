@@ -7,7 +7,7 @@ import Foundation
 import os
 
 @MainActor
-protocol MessageDraftServiceProtocol: AnyObject, MessageDraftLoading {
+protocol MessageDraftServiceProtocol: AnyObject, SessionDataLoading {
     /// Текст черновика переписки; `nil` — черновика нет. Читается из памяти, отслеживается Observation.
     func draft(for conversationId: Int) -> String?
     /// `true`, если у переписки есть черновик.
@@ -19,14 +19,6 @@ protocol MessageDraftServiceProtocol: AnyObject, MessageDraftLoading {
     func save(text: String, conversationId: Int, userId: Int)
     /// Удаляет черновик пользователя `userId` из памяти и из БД — после отправки сообщения.
     func remove(conversationId: Int, userId: Int)
-}
-
-/// Загрузка черновиков при открытии сессии — всё, что о сервисе черновиков знает `SessionService`.
-@MainActor
-protocol MessageDraftLoading: AnyObject {
-    /// Загружает черновики пользователя из БД в память; повторный вызов для того же пользователя после успешной
-    /// загрузки ничего не делает.
-    func load(userId: Int) async
 }
 
 /// Реакция сервиса черновиков на выход — всё, что о нём знает `MessageDraftLogoutObserver`.

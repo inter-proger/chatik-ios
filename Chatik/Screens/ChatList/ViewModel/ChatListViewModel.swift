@@ -12,7 +12,7 @@ import Foundation
 /// и передаёт ему действия пользователя.
 ///
 /// Строки (`conversations`) пересобирает `observeConversations()`: он следит через Observation за списком,
-/// собеседниками в кэше пользователей, черновиками, языком и днём «сейчас» и применяет изменения не чаще раза
+/// собеседниками в кэше пользователей, неотправленными сообщениями, черновиками, языком и днём «сейчас» и применяет изменения не чаще раза
 /// в `rowsUpdateInterval`, — частые события (поток сообщений, слияние страниц) не перерисовывают список
 /// на каждое изменение.
 @MainActor
@@ -31,6 +31,7 @@ final class ChatListViewModel {
     private let sessionService: SessionServiceProtocol
     private let userCache: UserCacheServiceProtocol
     private let draftService: MessageDraftServiceProtocol
+    private let unsentMessages: UnsentMessagePreviewProviding
     private let localizationService: LocalizationServiceProtocol
     private let router: ChatListRouter
     private let now: () -> Date
@@ -49,14 +50,16 @@ final class ChatListViewModel {
 
     /// Ожидание между обновлениями строк; подменяется в тестах.
     typealias Sleep = @MainActor (Duration) async throws -> Void
-    /// Собирает строку списка из переписки, собеседника, черновика и формата времени.
-    typealias RowBuilder = @MainActor (Conversation, CachedUser?, String?, MessageTimeFormatter) -> ChatRowDisplayModel
+    /// Собирает строку списка из переписки, собеседника, локального состояния (неотправленное или черновик)
+    /// и формата времени.
+    typealias RowBuilder = @MainActor (Conversation, CachedUser?, ChatRowLocalPreview?, MessageTimeFormatter) -> ChatRowDisplayModel
 
     /// - Parameters:
     ///   - conversationList: список переписок.
     ///   - sessionService: текущий пользователь — аватар кнопки профиля.
     ///   - userCache: кэш пользователей — собеседники личных переписок.
     ///   - draftService: черновики — показываются в строке вместо последнего сообщения.
+    ///   - unsentMessages: неотправленные сообщения — показываются в строке вместо черновика и последнего сообщения.
     ///   - localizationService: язык форматирования времени.
     ///   - router: переходы с экрана.
     ///   - now: текущее время; подменяется в тестах форматирования.
@@ -67,16 +70,18 @@ final class ChatListViewModel {
         sessionService: SessionServiceProtocol,
         userCache: UserCacheServiceProtocol,
         draftService: MessageDraftServiceProtocol,
+        unsentMessages: UnsentMessagePreviewProviding,
         localizationService: LocalizationServiceProtocol,
         router: ChatListRouter,
         now: @escaping () -> Date = { Date() },
-        makeRow: @escaping RowBuilder = { ChatRowDisplayModel(conversation: $0, opponent: $1, draft: $2, timeFormatter: $3) },
+        makeRow: @escaping RowBuilder = { ChatRowDisplayModel(conversation: $0, opponent: $1, localPreview: $2, timeFormatter: $3) },
         sleep: @escaping Sleep = { try await Task.sleep(for: $0) }
     ) {
         self.conversationList = conversationList
         self.sessionService = sessionService
         self.userCache = userCache
         self.draftService = draftService
+        self.unsentMessages = unsentMessages
         self.localizationService = localizationService
         self.router = router
         self.now = now
@@ -109,8 +114,8 @@ final class ChatListViewModel {
     }
 
     /// Собирает строки из текущего списка. Строка берётся из кэша, если не изменились ни переписка, ни собеседник,
-    /// ни черновик, ни язык, календарь и день формата. Читает список, собеседников, черновики, язык и `referenceDate` —
-    /// по этим чтениям `observeConversations()` узнаёт об изменениях.
+    /// ни локальное состояние, ни язык, календарь и день формата. Читает список, собеседников, неотправленные
+    /// сообщения, черновики, язык и `referenceDate` — по этим чтениям `observeConversations()` узнаёт об изменениях.
     private func makeRows() -> [ChatRowDisplayModel] {
         let context = RowFormatContext(language: localizationService.language, calendar: .current, referenceDate: referenceDate)
         if context != rowCacheContext {
@@ -122,15 +127,23 @@ final class ChatListViewModel {
         cache.reserveCapacity(conversationList.conversations.count)
         let rows = conversationList.conversations.map { conversation in
             let opponent = conversation.opponentUserId.map(userCache.user(id:))
-            let draft = draftService.draft(for: conversation.id)
-            let row = rowCache[conversation.id]?.row(for: conversation, opponent: opponent, draft: draft)
-                ?? makeRow(conversation, opponent, draft, timeFormatter)
-            cache[conversation.id] = CachedRow(conversation: conversation, opponent: opponent, draft: draft, row: row)
+            let localPreview = localPreview(for: conversation.id)
+            let row = rowCache[conversation.id]?.row(for: conversation, opponent: opponent, localPreview: localPreview)
+                ?? makeRow(conversation, opponent, localPreview, timeFormatter)
+            cache[conversation.id] = CachedRow(conversation: conversation, opponent: opponent, localPreview: localPreview, row: row)
             return row
         }
         // Кэш держит только строки текущего списка — ушедшие переписки (выход, pull-to-refresh) не копятся.
         rowCache = cache
         return rows
+    }
+
+    /// Локальное состояние переписки для превью: неотправленное сообщение важнее черновика.
+    /// - Parameter conversationId: переписка.
+    /// - Returns: `nil` — нет ни неотправленного сообщения, ни черновика.
+    private func localPreview(for conversationId: Int) -> ChatRowLocalPreview? {
+        unsentMessages.lastFailedText(for: conversationId).map(ChatRowLocalPreview.failed)
+            ?? draftService.draft(for: conversationId).map(ChatRowLocalPreview.draft)
     }
 
     /// `true`, пока идёт стартовая синхронизация: в заголовке вместо названия — «Обновление…».
@@ -247,17 +260,17 @@ final class ChatListViewModel {
 private struct CachedRow {
     let conversation: Conversation
     let opponent: CachedUser?
-    let draft: String?
+    let localPreview: ChatRowLocalPreview?
     let row: ChatRowDisplayModel
 
-    /// Строка, если она собрана из тех же переписки, собеседника и черновика.
+    /// Строка, если она собрана из тех же переписки, собеседника и локального состояния.
     /// - Parameters:
     ///   - conversation: текущая версия переписки.
     ///   - opponent: текущее состояние собеседника в кэше пользователей.
-    ///   - draft: текущий черновик переписки.
+    ///   - localPreview: текущее неотправленное сообщение или черновик переписки.
     /// - Returns: `nil` — строку нужно собрать заново.
-    func row(for conversation: Conversation, opponent: CachedUser?, draft: String?) -> ChatRowDisplayModel? {
-        guard conversation == self.conversation, opponent == self.opponent, draft == self.draft else { return nil }
+    func row(for conversation: Conversation, opponent: CachedUser?, localPreview: ChatRowLocalPreview?) -> ChatRowDisplayModel? {
+        guard conversation == self.conversation, opponent == self.opponent, localPreview == self.localPreview else { return nil }
         return row
     }
 }

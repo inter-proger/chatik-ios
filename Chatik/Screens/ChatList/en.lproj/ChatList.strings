@@ -31,3 +31,6 @@
 
 /* Prefix of a row preview with a draft: "Draft: <text>". The space after the prefix is added in code */
 "chat_list.row.draft_prefix" = "Draft:";
+
+/* Prefix of a row preview with an unsent message: "Not sent: <text>". The space after the prefix is added in code */
+"chat_list.row.failed_prefix" = "Not sent:";

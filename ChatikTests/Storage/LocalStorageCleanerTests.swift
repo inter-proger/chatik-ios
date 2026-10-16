@@ -43,15 +43,19 @@ final class LocalStorageCleanerTests: XCTestCase {
         XCTAssertNil(remainingCacheState)
     }
 
-    /// Кейс: в БД сохранены переписка и черновики двух пользователей.
-    /// Ожидание: после `clearAll()` переписка удалена, а черновики обоих пользователей на месте.
-    func test_clearAll_keepsMessageDrafts() async throws {
+    /// Кейс: в БД сохранены переписка, черновики и неотправленные сообщения двух пользователей.
+    /// Ожидание: после `clearAll()` переписка удалена, а черновики и неотправленные сообщения обоих пользователей
+    /// на месте.
+    func test_clearAll_keepsMessageDraftsAndOutgoingMessages() async throws {
         let container = CoreDataStack.makeContainer(inMemory: true)
         let conversations = ConversationStorageService(container: container)
         let drafts = MessageDraftStorageService(container: container)
+        let outgoing = OutgoingMessageStorageService(container: container)
         try await conversations.save(conversations: [.groupStub], state: ConversationListState(isLoaded: true))
         try await drafts.apply([7: .save("Черновик первого")], userId: 1)
         try await drafts.apply([7: .save("Черновик второго")], userId: 2)
+        try await outgoing.save(message: .stub(clientId: "a", senderId: 1, status: .failed))
+        try await outgoing.save(message: .stub(clientId: "a", senderId: 2, status: .failed))
         let sut = LocalStorageCleaner(container: container)
 
         try await sut.clearAll()
@@ -59,8 +63,12 @@ final class LocalStorageCleanerTests: XCTestCase {
         let remainingList = try await conversations.fetchList()
         let firstDrafts = try await drafts.fetchAll(userId: 1)
         let secondDrafts = try await drafts.fetchAll(userId: 2)
+        let firstOutgoing = try await outgoing.fetchAll(senderId: 1)
+        let secondOutgoing = try await outgoing.fetchAll(senderId: 2)
         XCTAssertTrue(remainingList.conversations.isEmpty)
         XCTAssertEqual(firstDrafts, [7: "Черновик первого"])
         XCTAssertEqual(secondDrafts, [7: "Черновик второго"])
+        XCTAssertEqual(firstOutgoing.map(\.clientId), ["a"])
+        XCTAssertEqual(secondOutgoing.map(\.clientId), ["a"])
     }
 }

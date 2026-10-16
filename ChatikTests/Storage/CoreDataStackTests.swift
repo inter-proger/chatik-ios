@@ -95,7 +95,7 @@ final class CoreDataStackTests: XCTestCase {
         _ = try await messageStorage.write(MessageStorageChanges(upserts: [.make(id: 2, conversationId: 7)]))
 
         let stored = try await ConversationStorageService(container: container).fetchList()
-        let outgoing = try await OutgoingMessageStorageService(container: container).fetchAll()
+        let outgoing = try await OutgoingMessageStorageService(container: container).fetchAll(senderId: 1)
         let users = try await UserStorageService(container: container).findStored(byIds: [2])
         let saved = try await messageStorage.fetchLatestBlocks(conversationId: 7, minCount: 10)
         XCTAssertTrue(stored.conversations.isEmpty)
@@ -197,11 +197,37 @@ final class CoreDataStackTests: XCTestCase {
         try await drafts.apply([7: .save("Черновик")], userId: 1)
 
         let messages = try await MessageStorageService(container: container).fetchLatestBlocks(conversationId: 7, minCount: 10)
-        let outgoing = try await OutgoingMessageStorageService(container: container).fetchAll()
+        let outgoing = try await OutgoingMessageStorageService(container: container).fetchAll(senderId: 1)
         let storedDrafts = try await drafts.fetchAll(userId: 1)
         XCTAssertEqual(messages.map(\.text), ["Сохранённое"])
         XCTAssertEqual(outgoing.map(\.clientId), ["pending"])
         XCTAssertEqual(storedDrafts, [7: "Черновик"])
+    }
+
+    /// Кейс: хранилище создано восьмой версией модели — очередь отправки уникальна по одному `clientId`; в нём
+    /// неотправленное сообщение пользователя 1.
+    /// Ожидание: лёгкая миграция без потери данных — сообщение на месте, и действует новое ограничение
+    /// уникальности `(senderId, clientId)`: сообщение пользователя 2 с тем же `clientId` сохраняется отдельной
+    /// записью, а не заменяет первое.
+    func test_makeContainer_eighthModelVersion_keepsOutgoingAndAppliesSenderConstraint() async throws {
+        try makeStore(modelVersion: "Chatik 8") { context in
+            let outgoing = NSEntityDescription.insertNewObject(forEntityName: "OutgoingMessageEntity", into: context)
+            outgoing.setValue("pending", forKey: "clientId")
+            outgoing.setValue(7, forKey: "conversationId")
+            outgoing.setValue(1, forKey: "senderId")
+            outgoing.setValue("Не отправлено", forKey: "text")
+            outgoing.setValue("failed", forKey: "status")
+            outgoing.setValue(Date(timeIntervalSince1970: 1_790_846_400), forKey: "createdAt")
+        }
+
+        let container = CoreDataStack.makeContainer(storeURL: storeURL)
+        let storage = OutgoingMessageStorageService(container: container)
+        try await storage.save(message: .stub(clientId: "pending", senderId: 2, text: "Другого пользователя"))
+
+        let first = try await storage.fetchAll(senderId: 1)
+        let second = try await storage.fetchAll(senderId: 2)
+        XCTAssertEqual(first.map(\.text), ["Не отправлено"])
+        XCTAssertEqual(second.map(\.text), ["Другого пользователя"])
     }
 
     // MARK: - Helpers

@@ -13,6 +13,7 @@ final class ChatListViewModelTests: XCTestCase {
     private var conversationList: ConversationListServiceMock!
     private var userCache: UserCacheServiceMock!
     private var draftService: MessageDraftServiceMock!
+    private var unsentMessages: UnsentMessagePreviewProvidingMock!
     private var router: ChatListRouter!
     private var sleeper: RowsUpdateSleeper!
     private var sut: ChatListViewModel!
@@ -27,6 +28,7 @@ final class ChatListViewModelTests: XCTestCase {
         conversationList = ConversationListServiceMock()
         userCache = UserCacheServiceMock()
         draftService = MessageDraftServiceMock()
+        unsentMessages = UnsentMessagePreviewProvidingMock()
         router = ChatListRouter()
         sleeper = RowsUpdateSleeper()
         sut = makeSUT(now: { ServerTime.stub.date })
@@ -401,7 +403,7 @@ final class ChatListViewModelTests: XCTestCase {
 
         await observeRows()
 
-        guard case let .draft(text) = sut.conversations.first?.preview else { return XCTFail("Превью не черновик") }
+        guard case let .labeled(text) = sut.conversations.first?.preview else { return XCTFail("Превью не черновик") }
         XCTAssertEqual(String(text.characters), "\(ChatListStrings.rowDraftPrefix) Черновик")
         XCTAssertEqual(sut.conversations.last?.preview, .message(ChatListStrings.rowNoMessages))
     }
@@ -418,11 +420,50 @@ final class ChatListViewModelTests: XCTestCase {
 
         draftService.drafts[2] = "Черновик"
         await yieldUntil { [unowned self] in
-            guard case .draft = sut.conversations.last?.preview else { return false }
+            guard case .labeled = sut.conversations.last?.preview else { return false }
             return true
         }
 
         XCTAssertEqual(recorder.ids, [2])
+    }
+
+    // MARK: - Неотправленные сообщения
+
+    /// Кейс: у переписки есть и неотправленное сообщение, и черновик; у другой — только черновик.
+    /// Ожидание: первая строка собрана с неотправленным и показывает «Не отправлено:», вторая — с черновиком.
+    func test_conversations_failed_takesPriorityOverDraft() async {
+        let recorder = RowBuildRecorder()
+        await replaceSUT(makeSUT(now: { ServerTime.stub.date }, makeRow: recorder.build))
+        unsentMessages.lastFailedTexts = [1: "Не ушло"]
+        draftService.drafts = [1: "Черновик", 2: "Другой черновик"]
+        conversationList.conversations = [.make(id: 1), .make(id: 2)]
+
+        await observeRows()
+
+        XCTAssertEqual(recorder.localPreviews.suffix(2), [.failed("Не ушло"), .draft("Другой черновик")])
+        guard case let .labeled(text) = sut.conversations.first?.preview else { return XCTFail("Превью не неотправленное") }
+        XCTAssertEqual(String(text.characters), "\(ChatListStrings.rowFailedPrefix) Не ушло")
+    }
+
+    /// Кейс: строки показаны; в одной переписке сообщение стало неотправленным, затем его удалили.
+    /// Ожидание: каждый раз эта строка собрана заново, а не взята из кэша; остальные строки из кэша; после удаления
+    /// строка снова показывает последнее сообщение.
+    func test_conversations_failedChanged_rebuildsRow() async {
+        let recorder = RowBuildRecorder()
+        await replaceSUT(makeSUT(now: { ServerTime.stub.date }, makeRow: recorder.build))
+        conversationList.conversations = [.make(id: 1), .make(id: 2)]
+        await observeRows()
+        recorder.ids = []
+
+        unsentMessages.lastFailedTexts[2] = "Не ушло"
+        await yieldUntil { [unowned self] in
+            guard case .labeled = sut.conversations.last?.preview else { return false }
+            return true
+        }
+        unsentMessages.lastFailedTexts[2] = nil
+        await yieldUntil { [unowned self] in sut.conversations.last?.preview == .message(ChatListStrings.rowNoMessages) }
+
+        XCTAssertEqual(recorder.ids, [2, 2])
     }
 
     // MARK: - Создание и выбор
@@ -562,10 +603,11 @@ final class ChatListViewModelTests: XCTestCase {
             sessionService: sessionService,
             userCache: userCache,
             draftService: draftService,
+            unsentMessages: unsentMessages,
             localizationService: localizationService ?? LocalizationService(userDefaultsService: UserDefaultsServiceMock(), systemLanguage: .ru),
             router: router,
             now: now,
-            makeRow: makeRow ?? { ChatRowDisplayModel(conversation: $0, opponent: $1, draft: $2, timeFormatter: $3) },
+            makeRow: makeRow ?? { ChatRowDisplayModel(conversation: $0, opponent: $1, localPreview: $2, timeFormatter: $3) },
             sleep: { [sleeper] in try await sleeper!.sleep($0) }
         )
     }
@@ -618,16 +660,24 @@ private final class ObservationFlag: @unchecked Sendable {
 private final class RowBuildRecorder {
     /// `conversationId` собранных строк по порядку.
     var ids: [Int] = []
+    /// Локальные состояния, с которыми собраны строки, по порядку.
+    var localPreviews: [ChatRowLocalPreview?] = []
 
-    /// Собирает строку настоящей сборкой и запоминает её id.
+    /// Собирает строку настоящей сборкой и запоминает её id и локальное состояние.
     /// - Parameters:
     ///   - conversation: переписка.
     ///   - opponent: собеседник из кэша.
-    ///   - draft: черновик переписки.
+    ///   - localPreview: неотправленное сообщение или черновик переписки.
     ///   - timeFormatter: формат времени.
-    func build(_ conversation: Conversation, _ opponent: CachedUser?, _ draft: String?, _ timeFormatter: MessageTimeFormatter) -> ChatRowDisplayModel {
+    func build(
+        _ conversation: Conversation,
+        _ opponent: CachedUser?,
+        _ localPreview: ChatRowLocalPreview?,
+        _ timeFormatter: MessageTimeFormatter
+    ) -> ChatRowDisplayModel {
         ids.append(conversation.id)
-        return ChatRowDisplayModel(conversation: conversation, opponent: opponent, draft: draft, timeFormatter: timeFormatter)
+        localPreviews.append(localPreview)
+        return ChatRowDisplayModel(conversation: conversation, opponent: opponent, localPreview: localPreview, timeFormatter: timeFormatter)
     }
 }
 

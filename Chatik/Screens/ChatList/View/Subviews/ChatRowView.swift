@@ -33,11 +33,12 @@ struct ChatRowView: View {
         .contentShape(Rectangle())
     }
 
-    /// Превью: у черновика части без цвета наследуют `.secondary`, обрезка работает по всей строке.
+    /// Превью: у черновика и неотправленного сообщения части без цвета наследуют `.secondary`, обрезка работает
+    /// по всей строке.
     private var previewText: Text {
         switch conversation.preview {
         case let .message(text): Text(text)
-        case let .draft(text): Text(text)
+        case let .labeled(text): Text(text)
         }
     }
 }
@@ -45,7 +46,8 @@ struct ChatRowView: View {
 #Preview {
     List {
         ChatRowView(conversation: ChatRowDisplayModel(id: 1, title: "Иван Петров", avatarURL: nil, preview: .message("Привет!"), time: "12:30"))
-        ChatRowView(conversation: ChatRowDisplayModel(id: 4, title: "Мария Иванова", avatarURL: nil, preview: .draft(ChatRowDisplayModel.draftPreview("Завтра в 15:00 подойдёт?")), time: "12:10"))
+        ChatRowView(conversation: ChatRowDisplayModel(id: 4, title: "Мария Иванова", avatarURL: nil, preview: .labeled(ChatRowDisplayModel.localPreview(.draft("Завтра в 15:00 подойдёт?"))), time: "12:10"))
+        ChatRowView(conversation: ChatRowDisplayModel(id: 5, title: "Пётр Сидоров", avatarURL: nil, preview: .labeled(ChatRowDisplayModel.localPreview(.failed("Скинь, пожалуйста, адрес"))), time: "11:45"))
         ChatRowView(conversation: ChatRowDisplayModel(id: 2, title: "Команда", avatarURL: nil, preview: .message("Новый чат"), time: "11 окт."))
         ChatRowView(conversation: ChatRowDisplayModel(id: 3, title: "Загрузка…", isTitlePlaceholder: true, avatarURL: nil))
     }

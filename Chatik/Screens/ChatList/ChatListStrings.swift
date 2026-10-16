@@ -20,6 +20,7 @@ enum ChatListStrings {
     static var rowMessage: String { localized("chat_list.row.message") }
     static var rowNoMessages: String { localized("chat_list.row.no_messages") }
     static var rowDraftPrefix: String { localized("chat_list.row.draft_prefix") }
+    static var rowFailedPrefix: String { localized("chat_list.row.failed_prefix") }
     static var create: String { localized("chat_list.create") }
     static var createSingle: String { localized("chat_list.create.single") }
 

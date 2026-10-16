@@ -20,6 +20,11 @@ final class AppRouterTests: XCTestCase {
         conversationList = ConversationListServiceMock()
     }
 
+    /// Начало работы с сервером над моками списка, очереди и соединения — настоящий порядок запуска.
+    private func makeSessionWork() -> SessionWorkLauncher {
+        SessionWorkLauncher(conversationList: conversationList, messageDelivery: messageSendQueue, realtimeService: realtimeService)
+    }
+
     /// Создаёт роутер над сессией с заданным сохранённым пользователем и без задержки splash.
     private func makeSUT(
         storedUser: User? = nil,
@@ -31,8 +36,7 @@ final class AppRouterTests: XCTestCase {
             sessionService: SessionService(userDefaultsService: defaults, localStorageCleaner: LocalStorageCleanerMock()),
             localizationService: LocalizationService(userDefaultsService: defaults, systemLanguage: .ru),
             realtimeService: realtimeService,
-            conversationList: conversationList,
-            messageSendQueue: messageSendQueue,
+            sessionWork: makeSessionWork(),
             minimumSplashDuration: minimumSplashDuration
         )
     }
@@ -59,30 +63,29 @@ final class AppRouterTests: XCTestCase {
     }
 
     /// Кейс: приложение запустилось с сохранённой сессией.
-    /// Ожидание: после восстановления сессии очередь отправки восстановлена из БД — один раз.
-    func test_restoreSession_startsMessageSendQueue() async {
+    /// Ожидание: после восстановления сессии отправка очереди запущена — один раз.
+    func test_restoreSession_resumesMessageSendQueue() async {
         let sut = makeSUT(storedUser: user)
 
         await sut.restoreSession()
 
-        XCTAssertEqual(messageSendQueue.startCallCount, 1)
+        XCTAssertEqual(messageSendQueue.resumeCallCount, 1)
     }
 
     /// Кейс: приложение запустилось с сохранённой сессией.
-    /// Ожидание: список переписок и очередь отправки запущены раньше соединения — очередь событий не хранит события
-    /// для будущих подписчиков, и `connected` не должен пройти мимо них.
-    func test_restoreSession_startsConversationListBeforeRealtime() async {
+    /// Ожидание: порядок запуска — список переписок, отправка очереди, соединение: ответ на отправку поднимает
+    /// переписку в списке, а очередь событий не хранит события для будущих подписчиков, и `connected` не должен
+    /// пройти мимо них.
+    func test_restoreSession_startsListThenSendQueueThenRealtime() async {
         let sut = makeSUT(storedUser: user)
-        var startedBeforeRealtime: [String] = []
-        realtimeService.onStart = { [unowned self] in
-            if conversationList.startCallCount == 1 { startedBeforeRealtime.append("list") }
-            if messageSendQueue.startCallCount == 1 { startedBeforeRealtime.append("sendQueue") }
-        }
+        var calls: [String] = []
+        conversationList.onStart = { calls.append("list") }
+        messageSendQueue.onResume = { calls.append("sendQueue") }
+        realtimeService.onStart = { calls.append("realtime") }
 
         await sut.restoreSession()
 
-        XCTAssertEqual(startedBeforeRealtime, ["list", "sendQueue"])
-        XCTAssertEqual(conversationList.startCallCount, 1)
+        XCTAssertEqual(calls, ["list", "sendQueue", "realtime"])
     }
 
     /// Кейс: задано минимальное время показа splash, сессия восстанавливается мгновенно.
@@ -106,8 +109,7 @@ final class AppRouterTests: XCTestCase {
             sessionService: session,
             localizationService: LocalizationService(userDefaultsService: defaults, systemLanguage: .ru),
             realtimeService: realtimeService,
-            conversationList: conversationList,
-            messageSendQueue: messageSendQueue,
+            sessionWork: makeSessionWork(),
             minimumSplashDuration: .zero
         )
         await sut.restoreSession()

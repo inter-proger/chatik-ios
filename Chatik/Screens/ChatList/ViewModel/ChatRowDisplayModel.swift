@@ -9,8 +9,17 @@ import SwiftUI
 enum ChatRowPreview: Equatable {
     /// Текст последнего сообщения; «Новый чат» — сообщений нет; пустая строка — строка-заглушка без данных.
     case message(String)
-    /// Черновик, готовый к показу: цветной префикс «Черновик:», пробел и текст в одну строку.
-    case draft(AttributedString)
+    /// Локальное состояние переписки, готовое к показу: цветной префикс («Черновик:», «Не отправлено:»), пробел
+    /// и текст в одну строку.
+    case labeled(AttributedString)
+}
+
+/// Локальное состояние переписки, вытесняющее последнее сообщение в превью строки.
+enum ChatRowLocalPreview: Equatable {
+    /// Последнее неотправленное сообщение.
+    case failed(String)
+    /// Черновик.
+    case draft(String)
 }
 
 /// Переписка в списке чатов в готовом для отображения виде.
@@ -22,7 +31,7 @@ struct ChatRowDisplayModel: Identifiable, Equatable {
     let isTitlePlaceholder: Bool
     /// Аватар для списка — уменьшенная копия, если она есть. `nil` — аватар не установлен.
     let avatarURL: URL?
-    /// Превью: черновик, если он есть, иначе последнее сообщение.
+    /// Превью: неотправленное сообщение или черновик, если они есть, иначе последнее сообщение.
     let preview: ChatRowPreview
     /// Время, когда переписка последний раз поднялась, в формате ленты сообщений.
     let time: String
@@ -42,15 +51,16 @@ extension ChatRowDisplayModel {
     /// из кэша пользователей. Пока собеседник не загружен, заголовок — заглушка; если его нет на сервере —
     /// текст об удалённом пользователе. Если нет ни названия, ни собеседника (например, тип переписки клиенту
     /// ещё не известен), строка получает запасной заголовок — она не должна выглядеть пустой.
-    /// Превью — черновик, если он есть, иначе текст последнего сообщения (для неизвестного типа и сообщения
-    /// без текста — «Сообщение», для переписки без сообщений — «Новый чат»), время — когда переписка последний раз поднялась (черновик его не меняет).
+    /// Превью — локальное состояние (неотправленное сообщение или черновик), если оно есть, иначе текст последнего
+    /// сообщения (для неизвестного типа и сообщения без текста — «Сообщение», для переписки без сообщений —
+    /// «Новый чат»), время — когда переписка последний раз поднялась (локальное состояние его не меняет).
     /// - Parameters:
     ///   - conversation: переписка из ответа сервера или БД.
     ///   - opponent: собеседник из кэша по `opponentUserId`; `nil` — у переписки нет собеседника.
-    ///   - draft: черновик переписки; `nil` — черновика нет.
+    ///   - localPreview: неотправленное сообщение или черновик переписки; `nil` — нет ни того, ни другого.
     ///   - timeFormatter: формат времени ленты сообщений.
     @MainActor
-    init(conversation: Conversation, opponent: CachedUser?, draft: String?, timeFormatter: MessageTimeFormatter) {
+    init(conversation: Conversation, opponent: CachedUser?, localPreview: ChatRowLocalPreview?, timeFormatter: MessageTimeFormatter) {
         let opponentUser: User?
         if case let .loaded(user) = opponent {
             opponentUser = user
@@ -63,7 +73,7 @@ extension ChatRowDisplayModel {
             title: conversation.name ?? Self.opponentTitle(for: opponent) ?? ChatListStrings.rowUntitled,
             isTitlePlaceholder: conversation.name == nil && opponent == .pending,
             avatarURL: avatar.map { $0.smallURL ?? $0.url },
-            preview: draft.map { .draft(Self.draftPreview($0)) } ?? .message(Self.preview(for: conversation.lastMessage)),
+            preview: localPreview.map { .labeled(Self.localPreview($0)) } ?? .message(Self.preview(for: conversation.lastMessage)),
             time: timeFormatter.string(from: conversation.positionUpdatedAt.date)
         )
     }
@@ -78,25 +88,40 @@ extension ChatRowDisplayModel {
         return text
     }
 
-    /// Сколько первых символов черновика попадает в превью: строка показывает одну строку текста, а длинный
-    /// вставленный текст не должен обрабатываться целиком при каждой пересборке списка.
-    static let draftPreviewLength = 200
+    /// Сколько первых символов черновика или неотправленного сообщения попадает в превью: строка показывает одну
+    /// строку текста, а длинный вставленный текст не должен обрабатываться целиком при каждой пересборке списка.
+    static let localPreviewLength = 200
 
-    /// Превью черновика: цветной префикс «Черновик:», пробел и текст в одну строку — переводы строк и повторяющиеся
+    /// Превью локального состояния переписки: «Не отправлено:» или «Черновик:» своим цветом и текст.
+    /// - Parameter localPreview: неотправленное сообщение или черновик.
+    @MainActor
+    static func localPreview(_ localPreview: ChatRowLocalPreview) -> AttributedString {
+        switch localPreview {
+        case let .failed(text):
+            labeledPreview(prefix: ChatListStrings.rowFailedPrefix, color: .chatListFailedLabel, text: text)
+        case let .draft(text):
+            labeledPreview(prefix: ChatListStrings.rowDraftPrefix, color: .draftLabel, text: text)
+        }
+    }
+
+    /// Превью с цветным префиксом: префикс, пробел и текст в одну строку — переводы строк и повторяющиеся
     /// пробельные символы заменены одним пробелом, края обрезаны по `MessageTextValidator.trimmedCharacters` —
     /// как и при решении, пуст ли черновик. Иначе в строке был бы виден только первый абзац.
-    /// - Parameter draft: непустой черновик.
+    /// - Parameters:
+    ///   - prefix: префикс — «Черновик:», «Не отправлено:».
+    ///   - color: цвет префикса; текст остаётся без цвета.
+    ///   - text: непустой текст.
     @MainActor
-    static func draftPreview(_ draft: String) -> AttributedString {
+    private static func labeledPreview(prefix: String, color: Color, text: String) -> AttributedString {
         let trimmed = MessageTextValidator.trimmedCharacters
-        let text = draft.drop { $0.unicodeScalars.allSatisfy(trimmed.contains) }
-            .prefix(draftPreviewLength)
+        let line = text.drop { $0.unicodeScalars.allSatisfy(trimmed.contains) }
+            .prefix(localPreviewLength)
             .split(whereSeparator: \.isWhitespace)
             .joined(separator: " ")
             .trimmingCharacters(in: trimmed)
-        var prefix = AttributedString(ChatListStrings.rowDraftPrefix)
-        prefix.foregroundColor = Color.draftLabel
-        return prefix + AttributedString(" " + text)
+        var label = AttributedString(prefix)
+        label.foregroundColor = color
+        return label + AttributedString(" " + line)
     }
 
     /// Заголовок по собеседнику.

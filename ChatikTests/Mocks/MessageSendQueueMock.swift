@@ -11,7 +11,12 @@ import Foundation
 @MainActor
 final class MessageSendQueueMock: MessageSendQueueProtocol {
     var outgoingMessages: [OutgoingMessage] = []
-    private(set) var startCallCount = 0
+    /// Тексты последних неотправленных сообщений по `conversationId` — их отдаёт `lastFailedText(for:)`.
+    var lastFailedTexts: [Int: String] = [:]
+    private(set) var resumeCallCount = 0
+    private(set) var loadedUserIds: [Int] = []
+    /// Вызывается при `resumeDeliveries()` — например, чтобы записать порядок вызовов.
+    var onResume: (() -> Void)?
     private(set) var enqueued: [(text: String, conversationId: Int)] = []
     private(set) var retriedClientIds: [String] = []
     private(set) var deletedClientIds: [String] = []
@@ -23,8 +28,17 @@ final class MessageSendQueueMock: MessageSendQueueProtocol {
         continuations.count
     }
 
-    func start() {
-        startCallCount += 1
+    func load(userId: Int) async {
+        loadedUserIds.append(userId)
+    }
+
+    func lastFailedText(for conversationId: Int) -> String? {
+        lastFailedTexts[conversationId]
+    }
+
+    func resumeDeliveries() {
+        resumeCallCount += 1
+        onResume?()
     }
 
     func enqueue(text: String, conversationId: Int) {

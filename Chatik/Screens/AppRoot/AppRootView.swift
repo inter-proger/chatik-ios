@@ -16,8 +16,7 @@ struct AppRootView: View {
             sessionService: DIContainer.shared.sessionService,
             localizationService: DIContainer.shared.localizationService,
             realtimeService: DIContainer.shared.realtimeService,
-            conversationList: DIContainer.shared.conversationListService,
-            messageSendQueue: DIContainer.shared.messageSendQueue
+            sessionWork: DIContainer.shared.sessionWorkLauncher
         ))
     }
 

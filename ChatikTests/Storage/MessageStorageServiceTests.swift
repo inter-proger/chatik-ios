@@ -61,18 +61,34 @@ final class MessageStorageServiceTests: XCTestCase {
         XCTAssertEqual(messages, [.editedStub])
     }
 
-    /// Кейс: в очереди отправки два сообщения с одним `clientId` — текущего пользователя и (теоретически) другого
-    /// отправителя; подтверждено серверное сообщение текущего пользователя с этим `clientId`.
-    /// Ожидание: удалена только неотправленная копия того же отправителя — `clientId` сравнивается вместе с `senderId`.
+    /// Кейс: в очереди отправки сообщения двух пользователей, у обоих есть `clientId` «a», у первого ещё «b»;
+    /// подтверждены сообщение первого с «a» и сообщение второго с «b».
+    /// Ожидание: удалена только копия «a» первого — `clientId` сравнивается вместе с `senderId`.
     func test_write_confirmed_removesOutgoingOfSameSender() async throws {
         let outgoingStorage = OutgoingMessageStorageService(container: container)
         try await outgoingStorage.save(message: .stub(clientId: "a", senderId: 1))
+        try await outgoingStorage.save(message: .stub(clientId: "a", senderId: 2))
         try await outgoingStorage.save(message: .stub(clientId: "b", senderId: 1))
 
         _ = try await sut.write(MessageStorageChanges(confirmed: [.make(id: 1, senderId: 1, clientId: "a"), .make(id: 2, senderId: 2, clientId: "b")]))
 
-        let outgoing = try await outgoingStorage.fetchAll()
-        XCTAssertEqual(outgoing.map(\.clientId), ["b"])
+        let first = try await outgoingStorage.fetchAll(senderId: 1)
+        let second = try await outgoingStorage.fetchAll(senderId: 2)
+        XCTAssertEqual(first.map(\.clientId), ["b"])
+        XCTAssertEqual(second.map(\.clientId), ["a"])
+    }
+
+    /// Кейс: в очереди отправки одна копия; подтверждается пачка из 2000 сообщений, среди них — серверная версия копии.
+    /// Ожидание: запись проходит (размер предиката не зависит от числа сообщений), копия удалена.
+    func test_write_manyConfirmed_removesOutgoing() async throws {
+        let outgoingStorage = OutgoingMessageStorageService(container: container)
+        try await outgoingStorage.save(message: .stub(clientId: "c1999", senderId: 1))
+        let confirmed = (0..<2000).map { Message.make(id: $0 + 1, senderId: 1, clientId: "c\($0)") }
+
+        _ = try await sut.write(MessageStorageChanges(confirmed: confirmed))
+
+        let outgoing = try await outgoingStorage.fetchAll(senderId: 1)
+        XCTAssertTrue(outgoing.isEmpty)
     }
 
     // MARK: - Замена

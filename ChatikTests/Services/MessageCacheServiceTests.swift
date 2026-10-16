@@ -56,7 +56,7 @@ final class MessageCacheServiceTests: XCTestCase {
 
         let stored = try await storage.fetchLatestBlocks(conversationId: 1, minCount: 10)
         let state = try await storage.fetchState(conversationId: 1)
-        let outgoing = try await outgoingStorage.fetchAll()
+        let outgoing = try await outgoingStorage.fetchAll(senderId: 1)
         XCTAssertTrue(stored.isEmpty)
         XCTAssertEqual(state?.syncMark, .stub)
         XCTAssertTrue(outgoing.isEmpty)
@@ -225,6 +225,43 @@ final class MessageCacheServiceTests: XCTestCase {
         XCTAssertEqual(published.map(\.id), [3])
         XCTAssertEqual(stored.map(\.id), [3])
         XCTAssertNil(state)
+    }
+
+    /// Кейс: ответ на отправку, неотправленная копия которого лежит в очереди отправки.
+    /// Ожидание: `applySent` вернул `.written`, сообщение записано, копия удалена в той же записи.
+    func test_applySent_written_returnsWrittenAndDeletesCopy() async throws {
+        let outgoingStorage = OutgoingMessageStorageService(container: container)
+        try await outgoingStorage.save(message: .stub(clientId: "c1", senderId: 1))
+
+        let result = await sut.applySent(.make(id: 3, senderId: 1, clientId: "c1"))
+
+        let stored = try await storage.fetchLatestBlocks(conversationId: 1, minCount: 10)
+        let outgoing = try await outgoingStorage.fetchAll(senderId: 1)
+        XCTAssertEqual(result, .written)
+        XCTAssertEqual(stored.map(\.id), [3])
+        XCTAssertTrue(outgoing.isEmpty)
+    }
+
+    /// Кейс: ответ на отправку пришёл, когда кэш уже в выходе.
+    /// Ожидание: `applySent` вернул `.discarded` — запись отброшена, неотправленную копию удалит очередь.
+    func test_applySent_duringLogout_returnsDiscarded() async throws {
+        await sut.prepareForLogout()
+
+        let result = await sut.applySent(.make(id: 3))
+
+        let stored = try await storage.fetchLatestBlocks(conversationId: 1, minCount: 10)
+        XCTAssertEqual(result, .discarded)
+        XCTAssertTrue(stored.isEmpty)
+    }
+
+    /// Кейс: ответ на отправку, запись в БД не удалась.
+    /// Ожидание: `applySent` вернул `.failed` — копия остаётся для повторной отправки, очередь её не удаляет.
+    func test_applySent_writeError_returnsFailed() async {
+        let sut = MessageCacheService(storage: FailingMessageStorage(reading: storage), connectionMonitor: monitor)
+
+        let result = await sut.applySent(.make(id: 3))
+
+        XCTAssertEqual(result, .failed)
     }
 
     /// Кейс: ответ на отправку в несинхронизированную переписку с кэшем.
@@ -429,5 +466,39 @@ private final class GatedMessageStorage: MessageStorageReading, MessageStorageWr
 
     func cachedBlockIds(conversationId: Int, among blockIds: [Int]) async throws -> Set<Int> {
         try await storage.cachedBlockIds(conversationId: conversationId, among: blockIds)
+    }
+}
+
+/// Хранилище сообщений, запись в которое всегда завершается ошибкой; чтение — из настоящего хранилища.
+private final class FailingMessageStorage: MessageStorageReading, MessageStorageWriting {
+    private let reading: MessageStorageReading
+
+    /// - Parameter reading: хранилище, из которого читаются данные.
+    init(reading: MessageStorageReading) {
+        self.reading = reading
+    }
+
+    func fetchState(conversationId: Int) async throws -> MessageCacheState? {
+        try await reading.fetchState(conversationId: conversationId)
+    }
+
+    func fetchLatestBlocks(conversationId: Int, minCount: Int) async throws -> [Message] {
+        try await reading.fetchLatestBlocks(conversationId: conversationId, minCount: minCount)
+    }
+
+    func fetchBlocks(conversationId: Int, olderThan beforeBlockId: Int, minCount: Int) async throws -> [Message] {
+        try await reading.fetchBlocks(conversationId: conversationId, olderThan: beforeBlockId, minCount: minCount)
+    }
+
+    func fetchMessages(conversationId: Int, fromBlockId: Int) async throws -> [Message] {
+        try await reading.fetchMessages(conversationId: conversationId, fromBlockId: fromBlockId)
+    }
+
+    func cachedBlockIds(conversationId: Int, among blockIds: [Int]) async throws -> Set<Int> {
+        try await reading.cachedBlockIds(conversationId: conversationId, among: blockIds)
+    }
+
+    func write(_ changes: MessageStorageChanges) async throws -> [Message] {
+        throw CocoaError(.validationMultipleErrors)
     }
 }

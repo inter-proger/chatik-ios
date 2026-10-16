@@ -13,6 +13,8 @@ final class AuthViewModelTests: XCTestCase {
     private var sessionService: SessionService!
     private var localizationService: LocalizationService!
     private var realtimeService: RealtimeServiceMock!
+    private var messageSendQueue: MessageSendQueueMock!
+    private var conversationList: ConversationListServiceMock!
 
     override func setUp() {
         super.setUp()
@@ -21,6 +23,8 @@ final class AuthViewModelTests: XCTestCase {
         sessionService = SessionService(userDefaultsService: userDefaultsService, localStorageCleaner: LocalStorageCleanerMock())
         localizationService = LocalizationService(userDefaultsService: userDefaultsService, systemLanguage: .ru)
         realtimeService = RealtimeServiceMock()
+        messageSendQueue = MessageSendQueueMock()
+        conversationList = ConversationListServiceMock()
     }
 
     private func makeSUT(mode: AuthMode = .signup, authService: AuthServiceProtocol? = nil) -> AuthViewModel {
@@ -28,7 +32,11 @@ final class AuthViewModelTests: XCTestCase {
             mode: mode,
             authService: authService ?? AuthService(networkService: networkService),
             sessionService: sessionService,
-            realtimeService: realtimeService,
+            sessionWork: SessionWorkLauncher(
+                conversationList: conversationList,
+                messageDelivery: messageSendQueue,
+                realtimeService: realtimeService
+            ),
             localizationService: localizationService,
             signupValidator: SignupValidator(),
             loginValidator: LoginValidator(),
@@ -245,7 +253,7 @@ final class AuthViewModelTests: XCTestCase {
     }
 
     /// Кейс: вход не удался.
-    /// Ожидание: WebSocket не запускается.
+    /// Ожидание: ни WebSocket, ни отправка очереди не запускаются.
     func test_submit_failure_doesNotStartRealtime() async {
         networkService.stubbedResult = .failure(NetworkError.api(code: NetworkError.Code.wrongCredentials))
         let sut = makeSUT(mode: .login)
@@ -255,6 +263,24 @@ final class AuthViewModelTests: XCTestCase {
         await sut.performAuthentication()
 
         XCTAssertEqual(realtimeService.startCallCount, 0)
+        XCTAssertEqual(messageSendQueue.resumeCallCount, 0)
+    }
+
+    /// Кейс: вход успешен.
+    /// Ожидание: отправка очереди запущена после открытия сессии и до соединения с WebSocket — сообщения,
+    /// прерванные прошлой сессией, уходят под новым пользователем.
+    func test_submit_success_resumesSendQueueAfterSessionBeforeRealtime() async {
+        networkService.stubbedResult = .success(User(userId: 7, login: "ivan", name: "Иван", avatar: nil))
+        let sut = makeSUT(mode: .login)
+        sut.login = "ivan"
+        sut.password = "secret"
+        var calls: [String] = []
+        messageSendQueue.onResume = { [unowned self] in calls.append("sendQueue, loggedIn=\(sessionService.isLoggedIn)") }
+        realtimeService.onStart = { calls.append("realtime") }
+
+        await sut.performAuthentication()
+
+        XCTAssertEqual(calls, ["sendQueue, loggedIn=true", "realtime"])
     }
 
     /// Кейс: логин и имя введены с краевыми пробелами, пароль — с пробелом в начале.

@@ -23,8 +23,22 @@ protocol MessageCacheServiceProtocol: Sendable {
     /// Дописывает более старую страницу, если продолжение подгрузки в кэше всё ещё `requestedBlockId`.
     /// - Returns: `false` — кэш за время запроса изменился (сброс), и страница не записана.
     func appendOlderPage(_ page: MessagesPage, requestedBlockId: Int, conversationId: Int) async throws -> Bool
-    /// Сообщение из ответа `/messages/send`.
-    func applySent(_ message: Message) async
+    /// Сообщение из ответа `/messages/send`; его неотправленная копия удаляется в той же записи.
+    /// - Returns: записано ли сообщение, отброшено выходом или запись не удалась.
+    @discardableResult
+    func applySent(_ message: Message) async -> SentMessageWriteResult
+}
+
+/// Итог записи сообщения из ответа `/messages/send` в кэш — по нему очередь отправки решает, удалять ли
+/// неотправленную копию самой.
+enum SentMessageWriteResult: Sendable {
+    /// Сообщение записано, неотправленная копия удалена в той же транзакции.
+    case written
+    /// Кэш в выходе: запись отброшена, и копию, кроме очереди, никто не удалит.
+    case discarded
+    /// Запись не удалась: копия осталась в БД в статусе «отправляется» и при следующей загрузке очереди уйдёт
+    /// повторно с тем же `clientId` — сервер вернёт уже созданное сообщение, и кэш запишет его.
+    case failed
 }
 
 /// Выход из аккаунта для кэша сообщений — его передаёт `MessageCacheLogoutObserver`.
@@ -274,10 +288,13 @@ actor MessageCacheService: MessageCacheServiceProtocol, MessageCacheLogoutHandli
 
     /// Записывает сообщение из ответа `/messages/send` — всегда, и в несинхронизированную переписку: экран уже
     /// показывает его, и после перечитывания окна оно не должно пропасть. `syncMark` двигается только при признаке.
-    /// Ошибка записи логируется.
+    /// Неотправленная копия удаляется в той же транзакции. Ошибка записи логируется.
     /// - Parameter message: созданное сервером сообщение.
-    func applySent(_ message: Message) async {
-        guard !isLoggingOut else { return }
+    /// - Returns: `.written`; `.discarded` — идёт выход (запись отброшена или отменена), неотправленную копию тогда
+    ///   удаляет очередь отправки; `.failed` — ошибка записи, копия остаётся для повторной отправки.
+    @discardableResult
+    func applySent(_ message: Message) async -> SentMessageWriteResult {
+        guard !isLoggingOut else { return .discarded }
         let conversationId = message.conversationId
         var changes = MessageStorageChanges(upserts: [message], confirmed: [message])
         if isSynced(conversationId: conversationId) {
@@ -288,8 +305,12 @@ actor MessageCacheService: MessageCacheServiceProtocol, MessageCacheLogoutHandli
         let task = enqueueWrite { [changes] in self.publishUpserted(try await self.storage.write(changes)) }
         do {
             try await task.value
+            return .written
+        } catch is CancellationError {
+            return .discarded
         } catch {
             Logger.storage.error("Не удалось сохранить отправленное сообщение: \(String(describing: error), privacy: .public)")
+            return .failed
         }
     }
 

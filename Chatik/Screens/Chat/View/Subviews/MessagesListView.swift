@@ -22,8 +22,14 @@ struct MessagesListView: View {
     let sections: [MessageDaySectionDisplayModel]
     let isLoadingOlder: Bool
     let onAppear: (MessageDisplayModel) -> Void
+    /// `clientId` неотправленного сообщения, у пузыря которого показан выбор «повторить / удалить». `nil` — выбор скрыт.
+    @Binding var failedActionsClientId: String?
     /// Тап по неотправленному сообщению.
     let onTapFailed: (MessageDisplayModel) -> Void
+    /// Выбрано «повторить» у неотправленного сообщения.
+    let onRetry: (MessageDisplayModel) -> Void
+    /// Выбрано «удалить» у неотправленного сообщения.
+    let onDelete: (MessageDisplayModel) -> Void
 
     @State private var tracker = FloatingDateTracker()
 
@@ -32,7 +38,13 @@ struct MessagesListView: View {
             LazyVStack(spacing: 2) {
                 ForEach(sections) { section in
                     ForEach(section.messages) { message in
-                        MessageBubbleView(message: message, onTapFailed: { onTapFailed(message) })
+                        MessageBubbleView(
+                            message: message,
+                            isShowingFailedActions: isShowingFailedActions(for: message),
+                            onTapFailed: { onTapFailed(message) },
+                            onRetry: { onRetry(message) },
+                            onDelete: { onDelete(message) }
+                        )
                             .flippedVertically()
                             .onAppear { onAppear(message) }
                             .trackFrame(FloatingDateRow(kind: .message(message.id), section: section.id), in: tracker)
@@ -60,6 +72,18 @@ struct MessagesListView: View {
         .onChange(of: isLoadingOlder) { tracker.layoutDidChange() }
         .scrollEdgeEffectsHiddenIfAvailable()
         .scrollDismissesKeyboard(.interactively)
+    }
+
+    /// Показан ли выбор «повторить / удалить» у сообщения. Закрытие выбора сбрасывает `failedActionsClientId`.
+    /// - Parameter message: сообщение строки.
+    private func isShowingFailedActions(for message: MessageDisplayModel) -> Binding<Bool> {
+        Binding(
+            get: { failedActionsClientId == message.id.clientId },
+            set: { isShowing in
+                guard !isShowing, failedActionsClientId == message.id.clientId else { return }
+                failedActionsClientId = nil
+            }
+        )
     }
 
     /// Заголовки секций для трекера плавающей даты.
@@ -137,6 +161,9 @@ private extension View {
         ],
         isLoadingOlder: true,
         onAppear: { _ in },
-        onTapFailed: { _ in }
+        failedActionsClientId: .constant(nil),
+        onTapFailed: { _ in },
+        onRetry: { _ in },
+        onDelete: { _ in }
     )
 }

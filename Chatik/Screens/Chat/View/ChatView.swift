@@ -22,7 +22,10 @@ struct ChatView: View {
             sections: viewModel.sections,
             isLoadingOlder: viewModel.isLoadingOlder,
             onAppear: viewModel.prefetchOlderIfNeeded,
-            onTapFailed: viewModel.didTapMessage
+            failedActionsClientId: $viewModel.failedMessageActionsClientId,
+            onTapFailed: viewModel.didTapMessage,
+            onRetry: { viewModel.retrySending(clientId: $0.id.clientId) },
+            onDelete: { viewModel.deleteOutgoing(clientId: $0.id.clientId) }
         )
         .onTapGesture { isInputFocused = false }
         .overlay(alignment: .top) { navigationBarBackground }
@@ -52,15 +55,6 @@ struct ChatView: View {
             Button(CommonStrings.ok, role: .cancel) {}
         } message: { message in
             Text(message)
-        }
-        .confirmationDialog(
-            ChatStrings.failedActionsTitle,
-            isPresented: $viewModel.failedMessageActionsClientId.isPresent(),
-            titleVisibility: .visible,
-            presenting: viewModel.failedMessageActionsClientId
-        ) { clientId in
-            Button(ChatStrings.failedActionsRetry) { viewModel.retrySending(clientId: clientId) }
-            Button(ChatStrings.failedActionsDelete, role: .destructive) { viewModel.deleteOutgoing(clientId: clientId) }
         }
     }
 

@@ -15,9 +15,16 @@ import SwiftUI
 /// часы, у неотправленного — светло-розовое «Не отправлено» и красный значок слева от пузыря; тап по неотправленному
 /// сообщению вызывает `onTapFailed`. Высота подвала одна при любом состоянии — пузырь не прыгает при смене статуса.
 /// Тапы по остальным сообщениям не перехватываются — их обрабатывает лента (убирает клавиатуру).
+///
+/// Выбор «повторить / удалить» привязан к пузырю, а не к экрану: на iOS 26 он всплывает от пузыря, до iOS 26 —
+/// обычным листом снизу.
 struct MessageBubbleView: View {
     let message: MessageDisplayModel
+    /// Показан выбор «повторить / удалить» у неотправленного сообщения.
+    var isShowingFailedActions: Binding<Bool> = .constant(false)
     var onTapFailed: () -> Void = {}
+    var onRetry: () -> Void = {}
+    var onDelete: () -> Void = {}
 
     private static let avatarSize: CGFloat = 32
     /// Промежуток между аватаром и входящим пузырём.
@@ -38,6 +45,14 @@ struct MessageBubbleView: View {
             if message.isOutgoing {
                 Spacer(minLength: Self.avatarSideInset + Self.outgoingShift)
                 bubble
+                    .confirmationDialog(
+                        ChatStrings.failedActionsTitle,
+                        isPresented: isShowingFailedActions,
+                        titleVisibility: .visible
+                    ) {
+                        Button(ChatStrings.failedActionsRetry, action: onRetry)
+                        Button(ChatStrings.failedActionsDelete, role: .destructive, action: onDelete)
+                    }
                     // Значок — снаружи пузыря, у его нижнего края: ширина пузыря не меняется при смене статуса.
                     .overlay(alignment: .bottomLeading) {
                         failedMark

@@ -18,6 +18,8 @@ enum ChatListStrings {
     static var rowLoading: String { localized("chat_list.row.loading") }
     static var rowDeletedUser: String { localized("chat_list.row.deleted_user") }
     static var rowMessage: String { localized("chat_list.row.message") }
+    static var rowNoMessages: String { localized("chat_list.row.no_messages") }
+    static var rowDraftPrefix: String { localized("chat_list.row.draft_prefix") }
     static var create: String { localized("chat_list.create") }
     static var createSingle: String { localized("chat_list.create.single") }
 

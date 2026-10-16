@@ -42,4 +42,25 @@ final class LocalStorageCleanerTests: XCTestCase {
         XCTAssertTrue(remainingMessages.isEmpty)
         XCTAssertNil(remainingCacheState)
     }
+
+    /// Кейс: в БД сохранены переписка и черновики двух пользователей.
+    /// Ожидание: после `clearAll()` переписка удалена, а черновики обоих пользователей на месте.
+    func test_clearAll_keepsMessageDrafts() async throws {
+        let container = CoreDataStack.makeContainer(inMemory: true)
+        let conversations = ConversationStorageService(container: container)
+        let drafts = MessageDraftStorageService(container: container)
+        try await conversations.save(conversations: [.groupStub], state: ConversationListState(isLoaded: true))
+        try await drafts.apply([7: .save("Черновик первого")], userId: 1)
+        try await drafts.apply([7: .save("Черновик второго")], userId: 2)
+        let sut = LocalStorageCleaner(container: container)
+
+        try await sut.clearAll()
+
+        let remainingList = try await conversations.fetchList()
+        let firstDrafts = try await drafts.fetchAll(userId: 1)
+        let secondDrafts = try await drafts.fetchAll(userId: 2)
+        XCTAssertTrue(remainingList.conversations.isEmpty)
+        XCTAssertEqual(firstDrafts, [7: "Черновик первого"])
+        XCTAssertEqual(secondDrafts, [7: "Черновик второго"])
+    }
 }

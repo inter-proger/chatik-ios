@@ -25,3 +25,9 @@
 
 /* Row preview when the last message has no text or its type is not supported */
 "chat_list.row.message" = "Message";
+
+/* Row preview when the conversation has no messages yet and no draft */
+"chat_list.row.no_messages" = "New chat";
+
+/* Prefix of a row preview with a draft: "Draft: <text>". The space after the prefix is added in code */
+"chat_list.row.draft_prefix" = "Draft:";

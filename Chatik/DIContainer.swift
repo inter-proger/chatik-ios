@@ -41,20 +41,33 @@ final class DIContainer {
     let realtimeEventQueue: RealtimeEventQueueProtocol
     /// Список переписок — единственный, кто пишет переписки в БД.
     let conversationListService: ConversationListServiceProtocol
+    /// Черновики сообщений — единственный, кто пишет их в БД.
+    let messageDraftService: MessageDraftServiceProtocol
     /// Держит наблюдение за сетью, пока жив контейнер: при появлении сети WebSocket переподключается сразу.
     private let networkPathMonitor: NetworkPathMonitor
     /// Подписка кэша сообщений на очередь событий — живёт, пока жив контейнер.
     private let messageCacheSubscription: RealtimeSubscription
     /// Передаёт кэшу сообщений выход из аккаунта; `AuthService` держит наблюдателей слабо.
     private let messageCacheLogoutObserver: MessageCacheLogoutObserver
+    /// Передаёт сервису черновиков выход из аккаунта; `AuthService` держит наблюдателей слабо.
+    private let messageDraftLogoutObserver: MessageDraftLogoutObserver
 
     private init() {
         // Хранилище открывается в фоне: открытие SQLite и возможная миграция не задерживают первый кадр.
         let storageContainer = BackgroundLoadedContainer { CoreDataStack.makeContainer() }
         let userDefaultsService = UserDefaultsService()
+        // Черновики создаются раньше сессии: она загружает их при восстановлении и открытии.
+        let messageDraftService = MessageDraftService(
+            storage: MessageDraftStorageService(container: storageContainer),
+            backgroundTasks: BackgroundTaskRunner()
+        )
+        let messageDraftLogoutObserver = MessageDraftLogoutObserver(draftService: messageDraftService)
+        self.messageDraftService = messageDraftService
+        self.messageDraftLogoutObserver = messageDraftLogoutObserver
         let sessionService = SessionService(
             userDefaultsService: userDefaultsService,
-            localStorageCleaner: LocalStorageCleaner(container: storageContainer)
+            localStorageCleaner: LocalStorageCleaner(container: storageContainer),
+            draftLoader: messageDraftService
         )
         let actionDispatcher = APIActionDispatcher()
         let sessionExpirationRelay = SessionExpirationRelay()
@@ -131,7 +144,7 @@ final class DIContainer {
             positionUpdater: conversationListService
         )
         self.messageSendQueue = messageSendQueue
-        // Соединение, очередь событий, список, очередь отправки и кэш сообщений останавливаются в фазе `authServiceWillLogout`
+        // Соединение, очередь событий, список, очередь отправки, кэш сообщений и черновики останавливаются в фазе `authServiceWillLogout`
         // (до запроса выхода), сессия завершается в `authServiceDidLogout` (после него) — от порядка подписки
         // это не зависит.
         authService.addObserver(realtimeService)
@@ -139,6 +152,7 @@ final class DIContainer {
         authService.addObserver(conversationListService)
         authService.addObserver(messageSendQueue)
         authService.addObserver(messageCacheLogoutObserver)
+        authService.addObserver(messageDraftLogoutObserver)
         authService.addObserver(sessionService)
         self.networkPathMonitor = NetworkPathMonitor { [weak realtimeService] in
             realtimeService?.networkDidBecomeAvailable()

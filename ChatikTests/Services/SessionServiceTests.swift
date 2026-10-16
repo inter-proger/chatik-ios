@@ -270,6 +270,91 @@ final class SessionServiceTests: XCTestCase {
 
         XCTAssertFalse(sut.isLoggedIn)
     }
+
+    // MARK: - Черновики
+
+    /// Кейс: в хранилище есть сохранённый пользователь; вызван `restore()`.
+    /// Ожидание: черновики этого пользователя загружены до того, как сессия восстановлена.
+    func test_restore_loadsDraftsBeforeRestored() async {
+        let drafts = MessageDraftServiceMock()
+        let sut = SessionService(
+            userDefaultsService: UserDefaultsServiceMock(currentUser: user),
+            localStorageCleaner: LocalStorageCleanerMock(),
+            draftLoader: drafts
+        )
+        var isRestoredDuringLoad: Bool?
+        drafts.onLoad = { isRestoredDuringLoad = sut.isRestored }
+
+        await sut.restore()
+
+        XCTAssertEqual(drafts.loadedUserIds, [user.userId])
+        XCTAssertEqual(isRestoredDuringLoad, false)
+        XCTAssertTrue(sut.isRestored)
+    }
+
+    /// Кейс: в хранилище нет пользователя; вызван `restore()`.
+    /// Ожидание: черновики не загружаются.
+    func test_restore_withoutUser_doesNotLoadDrafts() async {
+        let drafts = MessageDraftServiceMock()
+        let sut = SessionService(userDefaultsService: UserDefaultsServiceMock(), localStorageCleaner: LocalStorageCleanerMock(), draftLoader: drafts)
+
+        await sut.restore()
+
+        XCTAssertTrue(drafts.loadedUserIds.isEmpty)
+    }
+
+    /// Кейс: вход пользователя.
+    /// Ожидание: черновики загружены после очистки БД и до открытия сессии — корень покажет список чатов
+    /// уже с черновиками.
+    func test_start_loadsDraftsAfterClearBeforeOpeningSession() async {
+        let cleaner = LocalStorageCleanerMock()
+        let drafts = MessageDraftServiceMock()
+        let sut = SessionService(userDefaultsService: UserDefaultsServiceMock(), localStorageCleaner: cleaner, draftLoader: drafts)
+        await sut.restore()
+        var clearCountDuringLoad: Int?
+        var isLoggedInDuringLoad: Bool?
+        drafts.onLoad = {
+            clearCountDuringLoad = cleaner.clearAllCallCount
+            isLoggedInDuringLoad = sut.isLoggedIn
+        }
+
+        await sut.start(user: user)
+
+        XCTAssertEqual(drafts.loadedUserIds, [user.userId])
+        XCTAssertEqual(clearCountDuringLoad, 1)
+        XCTAssertEqual(isLoggedInDuringLoad, false)
+        XCTAssertTrue(sut.isLoggedIn)
+    }
+
+    /// Кейс: настоящие черновики и очистка над одной БД; пользователь сохранил черновик, вышел, вошёл другой
+    /// пользователь, затем снова первый.
+    /// Ожидание: черновик переживает очистку при выходе и входе; второй пользователь его не видит, первый — видит.
+    func test_drafts_surviveEndAndStart() async throws {
+        let container = CoreDataStack.makeContainer(inMemory: true)
+        let backgroundTasks = BackgroundTaskRunnerMock()
+        let drafts = MessageDraftService(storage: MessageDraftStorageService(container: container), backgroundTasks: backgroundTasks)
+        let sut = SessionService(
+            userDefaultsService: UserDefaultsServiceMock(),
+            localStorageCleaner: LocalStorageCleaner(container: container),
+            draftLoader: drafts
+        )
+        let other = User(userId: 2, login: "petr", name: "Petr", avatar: nil)
+        await sut.restore()
+        await sut.start(user: user)
+        drafts.save(text: "Черновик", conversationId: 7, userId: user.userId)
+        await waitUntil { backgroundTasks.runningCount == 0 }
+
+        drafts.prepareForLogout()
+        await sut.end()
+        await sut.start(user: other)
+        let otherDraft = drafts.draft(for: 7)
+        drafts.prepareForLogout()
+        await sut.end()
+        await sut.start(user: user)
+
+        XCTAssertNil(otherDraft)
+        XCTAssertEqual(drafts.draft(for: 7), "Черновик")
+    }
 }
 
 /// Значение, снятое из `@Sendable`-замыкания `withObservationTracking`.

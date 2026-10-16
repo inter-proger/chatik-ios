@@ -7,9 +7,11 @@ import SwiftUI
 
 /// Экран переписки: сообщения с подгрузкой более старых при прокрутке вверх, обновлением жестом вверх у нижнего края
 /// ленты (pull-to-refresh) и поле ввода с кнопкой отправки. Тап по ленте убирает клавиатуру.
+/// Черновик записывается в БД при уходе с экрана и при уходе приложения в неактивное состояние или в фон.
 struct ChatView: View {
     @State private var viewModel: ChatViewModel
     @FocusState private var isInputFocused: Bool
+    @Environment(\.scenePhase) private var scenePhase
 
     init(viewModel: ChatViewModel) {
         _viewModel = State(initialValue: viewModel)
@@ -33,6 +35,13 @@ struct ChatView: View {
         .refreshable { await viewModel.refresh() }
         // Отмена задачи при уходе с экрана останавливает ленту: синхронизация отменяется и снимает аренду очереди.
         .task { await viewModel.observeMessages() }
+        .onDisappear { viewModel.saveDraft() }
+        // `.inactive` — не только шторка: закрытие из переключателя приложений не гарантирует перехода в `.background`.
+        // Повторное сохранение без изменений в БД не пишет.
+        .onChange(of: scenePhase) { _, phase in
+            guard phase != .active else { return }
+            viewModel.saveDraft()
+        }
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .principal) {

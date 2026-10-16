@@ -170,6 +170,40 @@ final class CoreDataStackTests: XCTestCase {
         XCTAssertEqual(stateAfter, state)
     }
 
+    /// Кейс: хранилище создано седьмой версией модели (без черновиков); в нём сообщение и неотправленное сообщение.
+    /// Ожидание: лёгкая миграция без очистки — данные на месте, черновики можно записать и прочитать.
+    func test_makeContainer_seventhModelVersion_keepsDataAndAddsDrafts() async throws {
+        try makeStore(modelVersion: "Chatik 7") { context in
+            let message = NSEntityDescription.insertNewObject(forEntityName: "MessageEntity", into: context)
+            message.setValue(1, forKey: "messageId")
+            message.setValue(7, forKey: "conversationId")
+            message.setValue(3, forKey: "blockId")
+            message.setValue("c1", forKey: "clientId")
+            message.setValue("text", forKey: "type")
+            message.setValue("Сохранённое", forKey: "text")
+            message.setValue(1_790_846_400_000, forKey: "createdAtMs")
+            message.setValue(1_790_846_400_000, forKey: "updatedAtMs")
+            let outgoing = NSEntityDescription.insertNewObject(forEntityName: "OutgoingMessageEntity", into: context)
+            outgoing.setValue("pending", forKey: "clientId")
+            outgoing.setValue(7, forKey: "conversationId")
+            outgoing.setValue(1, forKey: "senderId")
+            outgoing.setValue("Не отправлено", forKey: "text")
+            outgoing.setValue("failed", forKey: "status")
+            outgoing.setValue(Date(timeIntervalSince1970: 1_790_846_400), forKey: "createdAt")
+        }
+
+        let container = CoreDataStack.makeContainer(storeURL: storeURL)
+        let drafts = MessageDraftStorageService(container: container)
+        try await drafts.apply([7: .save("Черновик")], userId: 1)
+
+        let messages = try await MessageStorageService(container: container).fetchLatestBlocks(conversationId: 7, minCount: 10)
+        let outgoing = try await OutgoingMessageStorageService(container: container).fetchAll()
+        let storedDrafts = try await drafts.fetchAll(userId: 1)
+        XCTAssertEqual(messages.map(\.text), ["Сохранённое"])
+        XCTAssertEqual(outgoing.map(\.clientId), ["pending"])
+        XCTAssertEqual(storedDrafts, [7: "Черновик"])
+    }
+
     // MARK: - Helpers
 
     /// Создаёт по адресу `storeURL` хранилище указанной прежней версии модели, заполняет его и закрывает.

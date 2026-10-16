@@ -11,6 +11,7 @@ final class ChatViewModelTests: XCTestCase {
     private var list: MessagesListServiceMock!
     private var messageSendQueue: MessageSendQueueMock!
     private var sessionService: SessionService!
+    private var draftService: MessageDraftServiceMock!
     private var userCache: UserCacheServiceMock!
     private var localizationService: LocalizationService!
     private var timeChanges: SignificantTimeChangeServiceMock!
@@ -26,6 +27,7 @@ final class ChatViewModelTests: XCTestCase {
         let userDefaultsService = UserDefaultsServiceMock(currentUser: User(userId: 1, login: "ivan", name: "Ivan", avatar: nil))
         sessionService = SessionService(userDefaultsService: userDefaultsService, localStorageCleaner: LocalStorageCleanerMock())
         await sessionService.restore()
+        draftService = MessageDraftServiceMock()
         userCache = UserCacheServiceMock()
         localizationService = LocalizationService(userDefaultsService: UserDefaultsServiceMock(), systemLanguage: .ru)
         timeChanges = SignificantTimeChangeServiceMock()
@@ -412,6 +414,84 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertEqual(messageSendQueue.deletedClientIds, ["b"])
     }
 
+    // MARK: - Черновик
+
+    /// Кейс: у переписки есть черновик; экран открыт.
+    /// Ожидание: черновик подставлен в поле ввода, при этом в сервис черновиков ничего не записано.
+    func test_init_fillsInputFromDraftWithoutWriting() {
+        draftService.drafts = [Conversation.singleStub.id: "Привет"]
+
+        let sut = makeSUT()
+
+        XCTAssertEqual(sut.messageText, "Привет")
+        XCTAssertTrue(draftService.updates.isEmpty)
+        XCTAssertTrue(draftService.saves.isEmpty)
+        XCTAssertTrue(draftService.removals.isEmpty)
+    }
+
+    /// Кейс: пользователь меняет текст в поле ввода.
+    /// Ожидание: каждое изменение передаётся сервису как черновик пользователя сессии в открытой переписке.
+    func test_messageText_change_updatesDraft() {
+        let sut = makeSUT()
+
+        sut.messageText = "П"
+        sut.messageText = "Привет"
+
+        XCTAssertEqual(draftService.updates, [
+            MessageDraftServiceMock.Call(text: "П", conversationId: Conversation.singleStub.id, userId: 1),
+            MessageDraftServiceMock.Call(text: "Привет", conversationId: Conversation.singleStub.id, userId: 1),
+        ])
+        XCTAssertTrue(draftService.saves.isEmpty)
+    }
+
+    /// Кейс: в поле текст; экран сохраняет черновик (уход с экрана или приложения в фон).
+    /// Ожидание: сервису передан текст поля, переписка и пользователь сессии.
+    func test_saveDraft_passesTextAndUser() {
+        let sut = makeSUT()
+        sut.messageText = "Привет"
+
+        sut.saveDraft()
+
+        XCTAssertEqual(draftService.saves, [MessageDraftServiceMock.Call(text: "Привет", conversationId: Conversation.singleStub.id, userId: 1)])
+    }
+
+    /// Кейс: экран открыт; сессия завершилась (истекла) раньше, чем экран ушёл; экран сохраняет черновик.
+    /// Ожидание: черновик сохраняется пользователю, открывшему экран, а не текущей (пустой) сессии.
+    func test_saveDraft_afterSessionEnded_usesUserWhoOpenedScreen() async {
+        let sut = makeSUT()
+        sut.messageText = "Набрано до выхода"
+        await sessionService.end()
+
+        sut.saveDraft()
+
+        XCTAssertEqual(draftService.saves.map(\.userId), [1])
+    }
+
+    /// Кейс: сессии нет; экран открыт, текст набран и сохранён.
+    /// Ожидание: черновики не меняются и не сохраняются.
+    func test_draft_withoutSession_isIgnored() async {
+        await sessionService.end()
+        let sut = makeSUT()
+
+        sut.messageText = "Текст"
+        sut.saveDraft()
+
+        XCTAssertTrue(draftService.updates.isEmpty)
+        XCTAssertTrue(draftService.saves.isEmpty)
+    }
+
+    /// Кейс: в поле текст; нажата «Отправить».
+    /// Ожидание: черновик удалён сразу, не дожидаясь ухода с экрана.
+    func test_didTapSend_removesDraft() {
+        let sut = makeSUT()
+        sut.messageText = "Привет"
+
+        sut.didTapSend()
+
+        XCTAssertEqual(draftService.removals.map(\.conversationId), [Conversation.singleStub.id])
+        XCTAssertEqual(draftService.removals.map(\.userId), [1])
+    }
+
     // MARK: - Секции по дням
 
     /// Кейс: сообщения сегодняшнего, вчерашнего и позавчерашнего дня.
@@ -541,6 +621,7 @@ final class ChatViewModelTests: XCTestCase {
             messagesList: list,
             messageSendQueue: messageSendQueue,
             sessionService: sessionService,
+            draftService: draftService,
             userCache: userCache,
             localizationService: localizationService,
             messageTextValidator: MessageTextValidator(),

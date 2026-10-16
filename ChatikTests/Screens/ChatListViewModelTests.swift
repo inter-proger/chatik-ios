@@ -12,6 +12,7 @@ final class ChatListViewModelTests: XCTestCase {
     private var sessionService: SessionService!
     private var conversationList: ConversationListServiceMock!
     private var userCache: UserCacheServiceMock!
+    private var draftService: MessageDraftServiceMock!
     private var router: ChatListRouter!
     private var sleeper: RowsUpdateSleeper!
     private var sut: ChatListViewModel!
@@ -25,6 +26,7 @@ final class ChatListViewModelTests: XCTestCase {
         await sessionService.restore()
         conversationList = ConversationListServiceMock()
         userCache = UserCacheServiceMock()
+        draftService = MessageDraftServiceMock()
         router = ChatListRouter()
         sleeper = RowsUpdateSleeper()
         sut = makeSUT(now: { ServerTime.stub.date })
@@ -44,7 +46,7 @@ final class ChatListViewModelTests: XCTestCase {
         await observeRows()
 
         XCTAssertEqual(sut.conversations.map(\.id), [Conversation.groupStub.id, Conversation.singleStub.id])
-        XCTAssertEqual(sut.conversations.first?.preview, "Привет!")
+        XCTAssertEqual(sut.conversations.first?.preview, .message("Привет!"))
         XCTAssertFalse(sut.conversations.first?.time.isEmpty ?? true)
     }
 
@@ -389,6 +391,40 @@ final class ChatListViewModelTests: XCTestCase {
         XCTAssertTrue(sut.isLoadingNextPage)
     }
 
+    // MARK: - Черновики
+
+    /// Кейс: у одной из переписок есть черновик.
+    /// Ожидание: её строка показывает черновик вместо последнего сообщения, остальные — последнее сообщение.
+    func test_conversations_draft_replacesPreview() async {
+        draftService.drafts = [Conversation.groupStub.id: "Черновик"]
+        conversationList.conversations = [.groupStub, .make(id: 9)]
+
+        await observeRows()
+
+        guard case let .draft(text) = sut.conversations.first?.preview else { return XCTFail("Превью не черновик") }
+        XCTAssertEqual(String(text.characters), "\(ChatListStrings.rowDraftPrefix) Черновик")
+        XCTAssertEqual(sut.conversations.last?.preview, .message(ChatListStrings.rowNoMessages))
+    }
+
+    /// Кейс: строки показаны; у одной переписки появился черновик.
+    /// Ожидание: экран узнаёт об этом через Observation — её строка собрана заново, а не взята из кэша;
+    /// остальные строки из кэша.
+    func test_conversations_draftChanged_rebuildsRow() async {
+        let recorder = RowBuildRecorder()
+        await replaceSUT(makeSUT(now: { ServerTime.stub.date }, makeRow: recorder.build))
+        conversationList.conversations = [.make(id: 1), .make(id: 2)]
+        await observeRows()
+        recorder.ids = []
+
+        draftService.drafts[2] = "Черновик"
+        await yieldUntil { [unowned self] in
+            guard case .draft = sut.conversations.last?.preview else { return false }
+            return true
+        }
+
+        XCTAssertEqual(recorder.ids, [2])
+    }
+
     // MARK: - Создание и выбор
 
     /// Кейс: экран создания завершился созданной перепиской.
@@ -525,10 +561,11 @@ final class ChatListViewModelTests: XCTestCase {
             conversationList: conversationList,
             sessionService: sessionService,
             userCache: userCache,
+            draftService: draftService,
             localizationService: localizationService ?? LocalizationService(userDefaultsService: UserDefaultsServiceMock(), systemLanguage: .ru),
             router: router,
             now: now,
-            makeRow: makeRow ?? { ChatRowDisplayModel(conversation: $0, opponent: $1, timeFormatter: $2) },
+            makeRow: makeRow ?? { ChatRowDisplayModel(conversation: $0, opponent: $1, draft: $2, timeFormatter: $3) },
             sleep: { [sleeper] in try await sleeper!.sleep($0) }
         )
     }
@@ -586,10 +623,11 @@ private final class RowBuildRecorder {
     /// - Parameters:
     ///   - conversation: переписка.
     ///   - opponent: собеседник из кэша.
+    ///   - draft: черновик переписки.
     ///   - timeFormatter: формат времени.
-    func build(_ conversation: Conversation, _ opponent: CachedUser?, _ timeFormatter: MessageTimeFormatter) -> ChatRowDisplayModel {
+    func build(_ conversation: Conversation, _ opponent: CachedUser?, _ draft: String?, _ timeFormatter: MessageTimeFormatter) -> ChatRowDisplayModel {
         ids.append(conversation.id)
-        return ChatRowDisplayModel(conversation: conversation, opponent: opponent, timeFormatter: timeFormatter)
+        return ChatRowDisplayModel(conversation: conversation, opponent: opponent, draft: draft, timeFormatter: timeFormatter)
     }
 }
 

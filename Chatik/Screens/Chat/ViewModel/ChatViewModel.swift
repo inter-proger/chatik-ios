@@ -24,12 +24,19 @@ import os
 /// показывает её сообщения этой переписки внизу ленты (в статусах «отправляется» и «не отправлено») и передаёт ей
 /// действия с неотправленными. Отправка продолжается и после закрытия экрана.
 ///
+/// Текст поля ввода — черновик (`MessageDraftService`): при создании экрана в поле подставляется сохранённый
+/// черновик, каждое изменение текста меняет черновик в памяти (список чатов видит его сразу), а в БД он уходит
+/// в точках сохранения — уход с экрана, уход приложения в неактивное состояние или в фон (их сообщает View),
+/// отправка. Черновик принадлежит пользователю, открывшему экран: экран может уйти уже после выхода из аккаунта.
+///
 /// Тексты и производные данные — в `ChatViewModel+Texts`.
 @MainActor
 @Observable
 final class ChatViewModel {
-    /// Текст в поле ввода.
-    var messageText = ""
+    /// Текст в поле ввода. Каждое изменение меняет черновик в памяти.
+    var messageText = "" {
+        didSet { updateDraft() }
+    }
     /// Текст ошибки для всплывающего сообщения. `nil` — сообщение скрыто.
     var errorMessage: String?
     /// `clientId` неотправленного сообщения, для которого показан выбор «повторить / удалить». `nil` — выбор скрыт.
@@ -58,6 +65,10 @@ final class ChatViewModel {
     let messageTextValidator: MessageTextValidatorProtocol
     let messageSendQueue: MessageSendQueueProtocol
     let now: () -> Date
+    private let draftService: MessageDraftServiceProtocol
+    /// Пользователь, открывший экран, — владелец черновика; `nil` — сессии нет, черновик не меняется.
+    /// Задаётся в конце `init`, после подстановки черновика: подстановка не возвращается в сервис через `didSet`.
+    @ObservationIgnored private var draftUserId: Int?
     /// Календарь, по которому лента делится на дни. Функция, а не значение: после смены часового пояса
     /// `Calendar.current` уже другой.
     private let calendar: () -> Calendar
@@ -91,7 +102,9 @@ final class ChatViewModel {
     ///   - conversation: открытая переписка.
     ///   - messagesList: лента переписки.
     ///   - messageSendQueue: очередь отправки сообщений.
-    ///   - sessionService: сессия — по ней сообщения делятся на исходящие и входящие.
+    ///   - sessionService: сессия — по ней сообщения делятся на исходящие и входящие; её пользователь — владелец
+    ///     черновика.
+    ///   - draftService: черновики — текст поля ввода между открытиями экрана.
     ///   - userCache: кэш пользователей — имена собеседника и отправителей.
     ///   - localizationService: язык форматирования времени и заголовков дней.
     ///   - messageTextValidator: проверка текста перед отправкой.
@@ -105,6 +118,7 @@ final class ChatViewModel {
         messagesList: MessagesListServiceProtocol,
         messageSendQueue: MessageSendQueueProtocol,
         sessionService: SessionServiceProtocol,
+        draftService: MessageDraftServiceProtocol,
         userCache: UserCacheServiceProtocol,
         localizationService: LocalizationServiceProtocol,
         messageTextValidator: MessageTextValidatorProtocol,
@@ -118,6 +132,7 @@ final class ChatViewModel {
         self.messagesList = messagesList
         self.messageSendQueue = messageSendQueue
         self.sessionService = sessionService
+        self.draftService = draftService
         self.userCache = userCache
         self.localizationService = localizationService
         self.messageTextValidator = messageTextValidator
@@ -126,6 +141,9 @@ final class ChatViewModel {
         self.now = now
         self.calendar = calendar
         self.sleep = sleep
+        // Только чтение: SwiftUI может создать ViewModel несколько раз и оставить первый экземпляр.
+        messageText = draftService.draft(for: conversation.conversationId) ?? ""
+        draftUserId = sessionService.currentUser?.userId
     }
 
     // MARK: - Лента
@@ -308,7 +326,25 @@ final class ChatViewModel {
         guard isSendEnabled else { return }
         messageSendQueue.enqueue(text: messageText, conversationId: conversation.conversationId)
         messageText = ""
+        if let draftUserId {
+            draftService.remove(conversationId: conversation.conversationId, userId: draftUserId)
+        }
         requestImmediateUpdate()
+    }
+
+    // MARK: - Черновик
+
+    /// Записывает черновик в БД — точка сохранения: уход с экрана, уход приложения в неактивное состояние или в фон.
+    /// Повторное сохранение без изменений в БД не пишет.
+    func saveDraft() {
+        guard let draftUserId else { return }
+        draftService.save(text: messageText, conversationId: conversation.conversationId, userId: draftUserId)
+    }
+
+    /// Меняет черновик в памяти после изменения поля ввода.
+    private func updateDraft() {
+        guard let draftUserId else { return }
+        draftService.update(text: messageText, conversationId: conversation.conversationId, userId: draftUserId)
     }
 
     /// Обработчик тапа по сообщению: для неотправленного показывает выбор «повторить / удалить».

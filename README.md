@@ -22,6 +22,7 @@ iOS-клиент мессенджера на SwiftUI (iOS 17+): авториза
 | [Подъём чатов в списке: архитектура клиента](docs/conversation-list-architecture.md) | `ConversationListService`, очередь WS-событий с приостановкой, стартовая синхронизация списка |
 | [Синхронизация ленты сообщений: архитектура клиента](docs/messages-sync-architecture.md) | `MessageCacheService` — единый писатель сообщений, `MessagesListService`, признак синхронизации, `receivedAfter` и `getBlockBatch` |
 | [Заголовки дат в ленте сообщений](docs/message-date-headers.md) | правила дат «Сегодня / Вчера / день недели / год», сервис `MessageDateHeaderFormatting` с реализацией для русского, секции по дням, в сообщениях только время, плавающая дата при прокрутке |
+| [Черновики сообщений: архитектура клиента](docs/message-drafts.md) | `MessageDraftService` с кэшем в памяти, `MessageDraftEntity` по пользователю и переписке, переживает выход из аккаунта, точки сохранения, «Черновик:» в списке чатов |
 
 ### Изменения серверного API
 

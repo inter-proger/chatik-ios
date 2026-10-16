@@ -19,6 +19,7 @@ struct ChatListRootView: View {
             conversationList: DIContainer.shared.conversationListService,
             sessionService: DIContainer.shared.sessionService,
             userCache: DIContainer.shared.userCache,
+            draftService: DIContainer.shared.messageDraftService,
             localizationService: DIContainer.shared.localizationService,
             router: router
         ))
@@ -44,6 +45,7 @@ struct ChatListRootView: View {
                             messagesList: DIContainer.shared.makeMessagesListService(conversationId: conversation.conversationId),
                             messageSendQueue: DIContainer.shared.messageSendQueue,
                             sessionService: DIContainer.shared.sessionService,
+                            draftService: DIContainer.shared.messageDraftService,
                             userCache: DIContainer.shared.userCache,
                             localizationService: DIContainer.shared.localizationService,
                             messageTextValidator: DIContainer.shared.messageTextValidator,

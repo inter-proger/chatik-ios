@@ -12,6 +12,11 @@ import UIKit
 enum PreviewDependencies {
     static let storageContainer = CoreDataStack.makeContainer(inMemory: true)
     static let userDefaultsService = UserDefaultsServicePreviewMock()
+    /// Черновики превью — в БД превью; загружаются при восстановлении сессий превью.
+    static let messageDraftService = MessageDraftService(
+        storage: MessageDraftStorageService(container: storageContainer),
+        backgroundTasks: BackgroundTaskRunner()
+    )
     static let sessionService = makeSessionService(userDefaultsService: userDefaultsService)
     static let localizationService = LocalizationService(userDefaultsService: userDefaultsService, systemLanguage: .ru)
     static let userCache = UserCacheService(
@@ -55,6 +60,7 @@ enum PreviewDependencies {
             conversationList: conversationList,
             sessionService: sessionService,
             userCache: userCache,
+            draftService: messageDraftService,
             localizationService: localizationService,
             router: ChatListRouter()
         )
@@ -96,6 +102,7 @@ enum PreviewDependencies {
             ),
             messageSendQueue: messageSendQueue,
             sessionService: sessionService,
+            draftService: messageDraftService,
             userCache: userCache,
             localizationService: localizationService,
             messageTextValidator: MessageTextValidator(),
@@ -104,12 +111,14 @@ enum PreviewDependencies {
         )
     }
 
-    /// Сессия над заданным хранилищем настроек; при выходе очищается БД превью, а не приложения.
+    /// Сессия над заданным хранилищем настроек; при выходе очищается БД превью, а не приложения, черновики
+    /// загружаются из БД превью.
     /// - Parameter userDefaultsService: хранилище настроек превью.
     static func makeSessionService(userDefaultsService: UserDefaultsServiceProtocol) -> SessionService {
         SessionService(
             userDefaultsService: userDefaultsService,
-            localStorageCleaner: LocalStorageCleaner(container: storageContainer)
+            localStorageCleaner: LocalStorageCleaner(container: storageContainer),
+            draftLoader: messageDraftService
         )
     }
 

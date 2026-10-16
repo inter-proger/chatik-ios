@@ -16,13 +16,15 @@ protocol SessionServiceProtocol: AuthServiceObserver {
     /// `true`, если сессия была завершена сервером (код 2003), и пользователю это ещё не показано.
     var isExpired: Bool { get }
 
-    /// Восстанавливает сессию из хранилища при старте приложения.
+    /// Восстанавливает сессию из хранилища при старте приложения и загружает черновики её пользователя.
     func restore() async
-    /// Открывает сессию после успешной регистрации / входа: очищает локальную БД и сохраняет пользователя.
+    /// Открывает сессию после успешной регистрации / входа: очищает локальную БД (кроме черновиков), загружает
+    /// черновики пользователя и сохраняет его.
     func start(user: User) async
     /// Обновляет данные текущего пользователя (например, после смены аватара). Если сессии нет — ничего не делает.
     func update(user: User) async
-    /// Завершает сессию по инициативе пользователя (выход): очищает локальную БД и удаляет пользователя.
+    /// Завершает сессию по инициативе пользователя (выход): очищает локальную БД (кроме черновиков) и удаляет
+    /// пользователя.
     func end() async
     /// Завершает сессию по инициативе сервера (код 2003). Если сессии нет — ничего не делает.
     func expire() async
@@ -32,7 +34,10 @@ protocol SessionServiceProtocol: AuthServiceObserver {
 
 /// Единая точка истины о текущей сессии. Хранит пользователя в памяти и в `UserDefaults`;
 /// экраны и корневой роутер наблюдают за `currentUser`. Завершение сессии — единая точка выхода:
-/// и выход пользователя, и истечение сессии на сервере очищают локальную БД.
+/// и выход пользователя, и истечение сессии на сервере очищают локальную БД. Черновики сообщений очистка
+/// не трогает — их нет на сервере; чужие черновики скрывает ключ `userId` в записи. Черновики пользователя
+/// загружаются здесь же, до того как сессия станет видна корню: экран переписки, открытый раньше загрузки,
+/// показал бы пустое поле и стёр бы черновик при уходе.
 @MainActor
 @Observable
 final class SessionService: SessionServiceProtocol {
@@ -42,28 +47,45 @@ final class SessionService: SessionServiceProtocol {
 
     private let userDefaultsService: UserDefaultsServiceProtocol
     private let localStorageCleaner: LocalStorageCleanerProtocol
+    private let draftLoader: MessageDraftLoading?
 
-    init(userDefaultsService: UserDefaultsServiceProtocol, localStorageCleaner: LocalStorageCleanerProtocol) {
+    /// - Parameters:
+    ///   - userDefaultsService: хранилище пользователя сессии.
+    ///   - localStorageCleaner: очистка локальной БД при входе и выходе.
+    ///   - draftLoader: загрузка черновиков при открытии сессии; `nil` — черновики не загружаются
+    ///     (тесты и превью, которым черновики не нужны).
+    init(
+        userDefaultsService: UserDefaultsServiceProtocol,
+        localStorageCleaner: LocalStorageCleanerProtocol,
+        draftLoader: MessageDraftLoading? = nil
+    ) {
         self.userDefaultsService = userDefaultsService
         self.localStorageCleaner = localStorageCleaner
+        self.draftLoader = draftLoader
     }
 
     var isLoggedIn: Bool { currentUser != nil }
 
-    /// Читает сохранённого пользователя из `UserDefaults`. Повторные вызовы ничего не делают.
+    /// Читает сохранённого пользователя из `UserDefaults` и загружает его черновики, затем поднимает `isRestored`.
+    /// Ошибка загрузки черновиков восстановление не задерживает. Повторные вызовы ничего не делают.
     func restore() async {
         guard !isRestored else { return }
-        currentUser = await userDefaultsService.currentUser()
+        let user = await userDefaultsService.currentUser()
+        if let user {
+            await draftLoader?.load(userId: user.userId)
+        }
+        currentUser = user
         isRestored = true
     }
 
-    /// Очищает локальную БД, сохраняет пользователя и открывает сессию.
+    /// Очищает локальную БД (кроме черновиков), загружает черновики пользователя, сохраняет его и открывает сессию.
     /// БД уже очищалась при завершении прошлой сессии, но сессию можно завершить и в обход `AuthService`
     /// (`end()` / `expire()` напрямую), без ожидания записей экранов. Повторная очистка при входе гарантирует,
     /// что новый пользователь не увидит данных прежнего.
     /// - Parameter user: пользователь из ответа `/auth/signup` или `/auth/login`.
     func start(user: User) async {
         await clearLocalStorage()
+        await draftLoader?.load(userId: user.userId)
         currentUser = user
         isExpired = false
         await userDefaultsService.setCurrentUser(user)
@@ -80,6 +102,7 @@ final class SessionService: SessionServiceProtocol {
 
     /// Очищает локальную БД, затем удаляет пользователя из памяти и `UserDefaults`.
     /// БД — кэш данных этого пользователя: следующий пользователь на устройстве не должен увидеть чужие переписки.
+    /// Черновики остаются — они вернутся пользователю при следующем входе.
     /// Ошибка очистки не блокирует выход, но логируется.
     func end() async {
         await clearLocalStorage()

@@ -5,13 +5,21 @@
 
 import CoreData
 
-/// Запись БД о черновике сообщения. Ключ — пара `userId` и `conversationId`: черновики переживают выход
-/// из аккаунта (`LocalStorageCleaner` их не удаляет), и пользователей на устройстве разделяет ключ, а не очистка.
+/// Запись БД о поле ввода переписки: черновик нового сообщения и незавершённое редактирование своего сообщения.
+/// Ключ — пара `userId` и `conversationId`: записи переживают выход из аккаунта (`LocalStorageCleaner` их
+/// не удаляет), и пользователей на устройстве разделяет ключ, а не очистка.
 @objc(MessageDraftEntity)
 final class MessageDraftEntity: NSManagedObject {
     @NSManaged var userId: Int64
     @NSManaged var conversationId: Int64
+    /// Черновик нового сообщения; `nil` — черновика нет.
     @NSManaged var text: String?
+    /// Редактируемое сообщение; `0` — режим редактирования выключен.
+    @NSManaged var editMessageId: Int64
+    /// Текст сообщения на момент включения режима редактирования.
+    @NSManaged var editOriginalText: String?
+    /// Набранный текст правки.
+    @NSManaged var editText: String?
     @NSManaged var updatedAt: Date?
 
     static let entityName = "MessageDraftEntity"

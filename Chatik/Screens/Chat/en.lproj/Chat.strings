@@ -13,7 +13,7 @@
 "chat.input.too_long" = "Message must be at most %d characters";
 
 /* Mark next to the time of an edited message */
-"chat.message.edited" = "edited";
+"chat.message.edited" = "Edited";
 
 /* Text shown instead of a message whose type the app cannot display yet */
 "chat.message.unsupported" = "Unsupported message";
@@ -40,3 +40,15 @@
 
 /* Subtitle under the title while the conversation syncs with the server */
 "chat.updating" = "Updating…";
+
+/* Action in the long-press menu of an own message */
+"chat.message_actions.edit" = "Edit";
+
+/* Title of the banner above the input field in editing mode */
+"chat.edit.title" = "Editing";
+
+/* Close button of the editing banner (VoiceOver) */
+"chat.edit.cancel" = "Cancel editing";
+
+/* Confirm button that replaces "Send" while editing (VoiceOver) */
+"chat.edit.save" = "Save";

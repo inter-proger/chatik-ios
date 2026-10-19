@@ -15,7 +15,8 @@ enum MessageEndpoint: Endpoint {
     /// POST /messages/send — отправка текстового сообщения от лица текущего пользователя. Ответ: `MessageResponse`.
     /// Идемпотентен по `clientId`: повтор с тем же `clientId` возвращает уже созданное сообщение.
     case send(conversationId: Int, text: String, clientId: String)
-    /// POST /messages/edit — замена текста своего сообщения. Ответ: `MessageResponse` с `isEdited == true`.
+    /// POST /messages/edit — замена текста своего сообщения. Ответ: `MessageEditResult` — сообщение с `isEdited == true`
+    /// и `lastMessage`, если отредактировано последнее сообщение переписки.
     case edit(messageId: Int, newText: String)
 
     var path: String {

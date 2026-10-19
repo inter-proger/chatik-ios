@@ -45,6 +45,7 @@ struct ChatListRootView: View {
                             conversation: conversation,
                             messagesList: DIContainer.shared.makeMessagesListService(conversationId: conversation.conversationId),
                             messageSendQueue: DIContainer.shared.messageSendQueue,
+                            editService: DIContainer.shared.messageEditService,
                             sessionService: DIContainer.shared.sessionService,
                             draftService: DIContainer.shared.messageDraftService,
                             userCache: DIContainer.shared.userCache,

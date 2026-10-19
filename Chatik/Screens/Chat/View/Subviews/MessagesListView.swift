@@ -30,6 +30,8 @@ struct MessagesListView: View {
     let onRetry: (MessageDisplayModel) -> Void
     /// Выбрано «удалить» у неотправленного сообщения.
     let onDelete: (MessageDisplayModel) -> Void
+    /// Выбран пункт меню по долгому нажатию на сообщение.
+    let onAction: (MessageAction, MessageDisplayModel) -> Void
 
     @State private var tracker = FloatingDateTracker()
 
@@ -43,7 +45,8 @@ struct MessagesListView: View {
                             isShowingFailedActions: isShowingFailedActions(for: message),
                             onTapFailed: { onTapFailed(message) },
                             onRetry: { onRetry(message) },
-                            onDelete: { onDelete(message) }
+                            onDelete: { onDelete(message) },
+                            onAction: { onAction($0, message) }
                         )
                             .flippedVertically()
                             .onAppear { onAppear(message) }
@@ -134,7 +137,9 @@ private extension View {
             self
         }
     }
+}
 
+extension View {
     /// Отражает View по вертикали — для перевёрнутой ленты сообщений.
     func flippedVertically() -> some View {
         scaleEffect(x: 1, y: -1)
@@ -149,14 +154,14 @@ private extension View {
     MessagesListView(
         sections: [
             MessageDaySectionDisplayModel(id: MessageDaySectionID(day: today, occurrence: 0), title: "Сегодня, 15 октября", messages: [
-                MessageDisplayModel(id: MessageClientKey(senderId: 1, clientId: "6"), text: "Ты где?", isUnsupported: false, isOutgoing: true, sender: nil, time: nil, editedLabel: nil, deliveryState: .failed, deliveryStateLabel: "Не отправлено"),
-                MessageDisplayModel(id: MessageClientKey(senderId: 1, clientId: "5"), text: "Я уже на месте", isUnsupported: false, isOutgoing: true, sender: ivan, time: nil, editedLabel: nil, deliveryState: .sending, deliveryStateLabel: "Отправляется"),
-                MessageDisplayModel(id: MessageClientKey(senderId: 1, clientId: "4"), text: "Отлично, до встречи!", isUnsupported: false, isOutgoing: true, sender: ivan, time: "12:05", editedLabel: nil, deliveryState: .delivered, deliveryStateLabel: nil),
-                MessageDisplayModel(id: MessageClientKey(senderId: 2, clientId: "3"), text: "Давай в 7 у входа", isUnsupported: false, isOutgoing: false, sender: maria, time: "12:04", editedLabel: "изменено", deliveryState: .delivered, deliveryStateLabel: nil),
+                MessageDisplayModel(id: MessageClientKey(senderId: 1, clientId: "6"), text: "Ты где?", isUnsupported: false, isOutgoing: true, sender: nil, time: nil, editedLabel: nil, deliveryState: .failed, deliveryStateLabel: "Не отправлено", actions: []),
+                MessageDisplayModel(id: MessageClientKey(senderId: 1, clientId: "5"), text: "Я уже на месте", isUnsupported: false, isOutgoing: true, sender: ivan, time: nil, editedLabel: nil, deliveryState: .sending, deliveryStateLabel: "Отправляется", actions: []),
+                MessageDisplayModel(id: MessageClientKey(senderId: 1, clientId: "4"), text: "Отлично, до встречи!", isUnsupported: false, isOutgoing: true, sender: ivan, time: "12:05", editedLabel: nil, deliveryState: .delivered, deliveryStateLabel: nil, actions: []),
+                MessageDisplayModel(id: MessageClientKey(senderId: 2, clientId: "3"), text: "Давай в 7 у входа", isUnsupported: false, isOutgoing: false, sender: maria, time: "12:04", editedLabel: "Изменено", deliveryState: .delivered, deliveryStateLabel: nil, actions: []),
             ]),
             MessageDaySectionDisplayModel(id: MessageDaySectionID(day: yesterday, occurrence: 0), title: "Вчера, 14 октября", messages: [
-                MessageDisplayModel(id: MessageClientKey(senderId: 2, clientId: "2"), text: "Привет!", isUnsupported: false, isOutgoing: false, sender: maria, time: "21:03", editedLabel: nil, deliveryState: .delivered, deliveryStateLabel: nil),
-                MessageDisplayModel(id: MessageClientKey(senderId: 1, clientId: "1"), text: "Привет! Во сколько встречаемся?", isUnsupported: false, isOutgoing: true, sender: ivan, time: "21:01", editedLabel: nil, deliveryState: .delivered, deliveryStateLabel: nil),
+                MessageDisplayModel(id: MessageClientKey(senderId: 2, clientId: "2"), text: "Привет!", isUnsupported: false, isOutgoing: false, sender: maria, time: "21:03", editedLabel: nil, deliveryState: .delivered, deliveryStateLabel: nil, actions: []),
+                MessageDisplayModel(id: MessageClientKey(senderId: 1, clientId: "1"), text: "Привет! Во сколько встречаемся?", isUnsupported: false, isOutgoing: true, sender: ivan, time: "21:01", editedLabel: nil, deliveryState: .delivered, deliveryStateLabel: nil, actions: []),
             ]),
         ],
         isLoadingOlder: true,
@@ -164,6 +169,7 @@ private extension View {
         failedActionsClientId: .constant(nil),
         onTapFailed: { _ in },
         onRetry: { _ in },
-        onDelete: { _ in }
+        onDelete: { _ in },
+        onAction: { _, _ in }
     )
 }

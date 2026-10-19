@@ -518,6 +518,72 @@ final class ConversationListServiceTests: XCTestCase {
         XCTAssertEqual(sut.conversations.first?.lastMessage?.messageId, 50)
     }
 
+    /// Кейс: две переписки; ответ `/messages/edit` по последнему сообщению нижней — с новым превью.
+    /// Ожидание: превью обновлено на месте, порядок не изменился, изменение записано в БД.
+    func test_applyEditedMessage_updatesPreviewWithoutMoving() async {
+        let edited = Conversation.make(id: 2).with(position: .stub, lastMessage: .make(id: 15, text: "Привет!"))
+        await start(cache: [.make(id: 1, position: .stub(10)), edited], state: loadedState)
+        let message = Message.make(id: 15, conversationId: 2, text: "Правка").withUpdatedAt(.stub(500))
+
+        sut.applyEditedMessage(message, lastMessage: LastMessage(message: message))
+
+        XCTAssertEqual(sut.conversations.map(\.id), [1, 2])
+        XCTAssertEqual(sut.conversations.last?.lastMessage?.text, "Правка")
+        await yieldUntil { [unowned self] in storage.saves.contains { $0.conversations.map(\.id) == [2] } }
+    }
+
+    /// Кейс: ответ `/messages/edit` без превью; ответ с превью по переписке, которой нет в списке.
+    /// Ожидание: список не меняется, переписка не загружается.
+    func test_applyEditedMessage_withoutPreviewOrUnknown_doesNothing() async {
+        let local = Conversation.make(id: 1).with(position: .stub, lastMessage: .make(id: 15, text: "Привет!"))
+        await start(cache: [local], state: loadedState)
+        let unknown = Message.make(id: 40, conversationId: 9).withUpdatedAt(.stub(500))
+
+        sut.applyEditedMessage(Message.make(id: 15, conversationId: 1, text: "Правка").withUpdatedAt(.stub(500)), lastMessage: nil)
+        sut.applyEditedMessage(unknown, lastMessage: LastMessage(message: unknown))
+
+        await yieldTimes()
+        XCTAssertEqual(sut.conversations, [local])
+        XCTAssertTrue(conversationService.batchRequests.isEmpty)
+    }
+
+    /// Кейс: правка применена по ответу, затем пришло эхо-событие `edited` с той же версией.
+    /// Ожидание: событие ничего не меняет — превью прежнее, переписка в БД повторно не пишется.
+    func test_applyEditedMessage_thenSameEvent_isIdempotent() async {
+        let local = Conversation.make(id: 1).with(position: .stub, lastMessage: .make(id: 15, text: "Привет!"))
+        await start(cache: [local], state: loadedState)
+        let message = Message.make(id: 15, conversationId: 1, text: "Правка").withUpdatedAt(.stub(500))
+        sut.applyEditedMessage(message, lastMessage: LastMessage(message: message))
+        await yieldTimes()
+        let savesBefore = storage.saves.count
+        let conversationsBefore = sut.conversations
+
+        await eventQueue.send(.edited(message))
+
+        await yieldTimes()
+        XCTAssertEqual(sut.conversations, conversationsBefore)
+        XCTAssertTrue(storage.saves.dropFirst(savesBefore).allSatisfy { $0.conversations.isEmpty })
+    }
+
+    /// Кейс: идёт полная загрузка; в это время пришёл ответ `/messages/edit`, а страница собрана раньше правки.
+    /// Ожидание: после замены списка страницей превью осталось отредактированным.
+    func test_applyEditedMessage_duringFullLoad_survivesReplacement() async {
+        let local = Conversation.make(id: 1).with(position: .stub, lastMessage: .make(id: 15, text: "Привет!"))
+        await start(cache: [local])
+        let gate = Gate()
+        conversationService.stubbedPages = [.success(page([local]))]
+        conversationService.onRequest = { await gate.wait() }
+        await eventQueue.send(.connected)
+        await yieldUntil { gate.isWaiting }
+        let message = Message.make(id: 15, conversationId: 1, text: "Правка").withUpdatedAt(.stub(500))
+
+        sut.applyEditedMessage(message, lastMessage: LastMessage(message: message))
+        gate.open()
+        await yieldUntil { [unowned self] in !sut.isSyncing }
+
+        XCTAssertEqual(sut.conversations.first?.lastMessage?.text, "Правка")
+    }
+
     /// Кейс: созданная переписка применена (`createSingle`).
     /// Ожидание: она встала по сортировке; водяные знаки не двигаются.
     func test_apply_insertsWithoutWatermarks() async {

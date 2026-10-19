@@ -50,9 +50,36 @@ extension ChatViewModel {
         sections.isEmpty && !isSyncing && isLoaded
     }
 
-    /// Можно ли нажать «Отправить»: текст проходит проверку. Идущая отправка не мешает — сообщения встают в очередь.
+    /// Можно ли нажать «Отправить» или «Сохранить»: текст проходит проверку. Идущая отправка не мешает — сообщения
+    /// встают в очередь; идущий запрос правки мешает — правка отправляется один раз. Пустая правка не проходит
+    /// проверку: удаления сообщений через пустую правку нет.
     var isSendEnabled: Bool {
-        messageTextValidator.validate(messageText) == nil
+        messageTextValidator.validate(messageText) == nil && !isEditSubmitting
+    }
+
+    /// Идёт запрос правки этой переписки: кнопка показывает индикатор, поле ввода и крестик недоступны.
+    var isEditSubmitting: Bool {
+        editService.isSubmitting(conversationId: conversation.conversationId)
+    }
+
+    /// `true` — включён режим редактирования: над полем ввода плашка.
+    var isEditing: Bool {
+        inputMode != .compose
+    }
+
+    /// Текст редактируемого сообщения для плашки в одну строку: переводы строк заменены пробелом.
+    var editBannerText: String {
+        (editedMessageText ?? "").split(whereSeparator: \.isNewline).joined(separator: " ")
+    }
+
+    /// Значок кнопки под полем ввода: отправка или сохранение правки.
+    var sendButtonIcon: String {
+        isEditing ? "checkmark.circle.fill" : "arrow.up.circle.fill"
+    }
+
+    /// Подпись кнопки под полем ввода для VoiceOver.
+    var sendButtonLabel: String {
+        isEditing ? ChatStrings.editSave : ChatStrings.send
     }
 
     /// Подсказка под полем ввода. Пустой текст подсказкой не сопровождается — кнопка просто неактивна.

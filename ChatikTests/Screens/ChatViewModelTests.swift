@@ -12,11 +12,14 @@ final class ChatViewModelTests: XCTestCase {
     private var messageSendQueue: MessageSendQueueMock!
     private var sessionService: SessionService!
     private var draftService: MessageDraftServiceMock!
+    private var editService: MessageEditServiceMock!
     private var userCache: UserCacheServiceMock!
     private var localizationService: LocalizationService!
     private var timeChanges: SignificantTimeChangeServiceMock!
     private var sleeper: ThrottleSleeper!
     private var observation: Task<Void, Never>?
+    /// Ожидание исходов запросов правки (`observeEditSubmission`) — как `.task` показанного экрана.
+    private var editObservation: Task<Void, Never>?
     /// Текущее время для тестов заголовков дней.
     private var currentTime = ServerTime.stub.date
 
@@ -28,6 +31,7 @@ final class ChatViewModelTests: XCTestCase {
         sessionService = SessionService(userDefaultsService: userDefaultsService, localStorageCleaner: LocalStorageCleanerMock())
         await sessionService.restore()
         draftService = MessageDraftServiceMock()
+        editService = MessageEditServiceMock()
         userCache = UserCacheServiceMock()
         localizationService = LocalizationService(userDefaultsService: UserDefaultsServiceMock(), systemLanguage: .ru)
         timeChanges = SignificantTimeChangeServiceMock()
@@ -35,6 +39,8 @@ final class ChatViewModelTests: XCTestCase {
     }
 
     override func tearDown() async throws {
+        editObservation?.cancel()
+        editObservation = nil
         observation?.cancel()
         sleeper.releaseAll()
         await observation?.value
@@ -603,7 +609,321 @@ final class ChatViewModelTests: XCTestCase {
         await waitUntil { sut.sections.first?.title.hasPrefix("Today, ") == true }
     }
 
+    // MARK: - Редактирование
+
+    /// Кейс: в поле черновик; в меню своего сообщения выбрано «Редактировать».
+    /// Ожидание: черновик сохранён до включения режима, в поле текст сообщения, режим — редактирование этого
+    /// сообщения, плашка показывает его текст; подстановка не записана ни в черновик, ни в правку.
+    func test_didSelectEdit_savesDraftAndFillsInput() async {
+        let sut = await makeEditingReadySUT()
+        sut.messageText = "Черновик"
+
+        sut.didSelectAction(.edit, for: sut.messages[0])
+
+        XCTAssertEqual(draftService.log, ["save", "beginEditing"])
+        XCTAssertEqual(draftService.saves.map(\.text), ["Черновик"])
+        XCTAssertEqual(sut.messageText, "Привет")
+        XCTAssertEqual(sut.inputMode, .editing(messageId: 15, originalText: "Привет"))
+        XCTAssertEqual(sut.editBannerText, "Привет")
+        XCTAssertTrue(draftService.editUpdates.isEmpty)
+        XCTAssertEqual(draftService.updates.map(\.text), ["Черновик"])
+    }
+
+    /// Кейс: режим редактирования включён, затем выключен крестиком.
+    /// Ожидание: пока режим включён, «Редактировать» нет ни у одного сообщения ленты; после выключения — снова есть.
+    func test_editMode_hidesAndRestoresEditAction() async {
+        let sut = await makeEditingReadySUT()
+
+        sut.didSelectAction(.edit, for: sut.messages[0])
+        sleeper.releaseAll()
+        await waitUntil { sut.messages.first?.actions == [] }
+        sut.cancelEditing()
+        sleeper.releaseAll()
+
+        await waitUntil { sut.messages.first?.actions == [.edit] }
+    }
+
+    /// Кейс: в режиме редактирования меняется текст поля.
+    /// Ожидание: меняется текст правки, а не черновик.
+    func test_messageText_inEditMode_updatesEdit() async {
+        let sut = await makeEditingReadySUT()
+        sut.didSelectAction(.edit, for: sut.messages[0])
+
+        sut.messageText = "Привет всем"
+
+        XCTAssertEqual(draftService.editUpdates.map(\.text), ["Привет всем"])
+        XCTAssertTrue(draftService.updates.isEmpty)
+    }
+
+    /// Кейс: у переписки черновик; режим редактирования включён и выключен крестиком.
+    /// Ожидание: режим выключен в сервисе, в поле снова черновик, подстановка не записана в черновик.
+    func test_cancelEditing_restoresDraft() async {
+        draftService.drafts = [Conversation.singleStub.id: "Черновик"]
+        let sut = await makeEditingReadySUT()
+        sut.didSelectAction(.edit, for: sut.messages[0])
+
+        sut.cancelEditing()
+
+        XCTAssertEqual(draftService.endEditings.map(\.messageId), [15])
+        XCTAssertEqual(sut.inputMode, .compose)
+        XCTAssertEqual(sut.messageText, "Черновик")
+        XCTAssertTrue(draftService.updates.isEmpty)
+    }
+
+    /// Кейс: у переписки сохранённая правка; экран открыт заново.
+    /// Ожидание: экран открыт в режиме редактирования с текстом правки, плашка — с исходным текстом.
+    func test_init_withSavedEdit_opensInEditMode() {
+        draftService.drafts = [Conversation.singleStub.id: "Черновик"]
+        draftService.edits = [Conversation.singleStub.id: MessageEditDraft(messageId: 15, originalText: "Привет", text: "Привет всем")]
+
+        let sut = makeSUT()
+
+        XCTAssertEqual(sut.inputMode, .editing(messageId: 15, originalText: "Привет"))
+        XCTAssertEqual(sut.messageText, "Привет всем")
+        XCTAssertEqual(sut.editBannerText, "Привет")
+    }
+
+    /// Кейс: в режиме редактирования текст поля пуст или состоит из пробелов.
+    /// Ожидание: кнопка неактивна, нажатие не выключает режим и не отправляет правку.
+    func test_submit_emptyEdit_isDisabled() async {
+        let sut = await makeEditingReadySUT()
+        sut.didSelectAction(.edit, for: sut.messages[0])
+        let texts = [
+            "",
+            "  \n ",
+        ]
+
+        for text in texts {
+            sut.messageText = text
+            sut.didTapSend()
+            XCTAssertFalse(sut.isSendEnabled, text.debugDescription)
+        }
+        XCTAssertTrue(editService.submits.isEmpty)
+        XCTAssertNotEqual(sut.inputMode, .compose)
+    }
+
+    /// Кейс: в режиме редактирования текст не изменён или отличается только краевыми пробелами; нажата «Сохранить».
+    /// Ожидание: режим выключен без запроса, в поле черновик.
+    func test_submit_unchangedText_closesWithoutRequest() async {
+        draftService.drafts = [Conversation.singleStub.id: "Черновик"]
+        let sut = await makeEditingReadySUT()
+        let texts = [
+            "Привет",
+            "  Привет\n",
+        ]
+
+        for text in texts {
+            sut.didSelectAction(.edit, for: sut.messages[0])
+            sut.messageText = text
+
+            sut.didTapSend()
+
+            XCTAssertEqual(sut.inputMode, .compose, text.debugDescription)
+            XCTAssertEqual(sut.messageText, "Черновик", text.debugDescription)
+        }
+        XCTAssertTrue(editService.submits.isEmpty)
+        XCTAssertEqual(draftService.endEditings.count, 2)
+    }
+
+    /// Кейс: текст правки изменён; нажата «Сохранить», сервер отвечает успехом.
+    /// Ожидание: правка сохранена и отправлена; кнопка неактивна сразу после нажатия, и повторное нажатие не
+    /// отправляет второй раз; после успеха режим выключен и в поле черновик.
+    func test_submit_success_returnsDraft() async {
+        draftService.drafts = [Conversation.singleStub.id: "Черновик"]
+        let sut = await makeEditingReadySUT()
+        await startObservingEdits(sut)
+        sut.didSelectAction(.edit, for: sut.messages[0])
+        sut.messageText = "Привет всем"
+
+        sut.didTapSend()
+        let isEnabledDuringRequest = sut.isSendEnabled
+        sut.didTapSend()
+        draftService.endEditing(messageId: 15, conversationId: Conversation.singleStub.id, userId: 1)
+        await editService.finish(conversationId: Conversation.singleStub.id, with: .success(()))
+
+        await waitUntil { sut.inputMode == .compose }
+        XCTAssertFalse(isEnabledDuringRequest)
+        XCTAssertEqual(draftService.editSaves.map(\.edit.text), ["Привет всем"])
+        XCTAssertEqual(editService.submits.count, 1)
+        XCTAssertEqual(sut.messageText, "Черновик")
+    }
+
+    /// Кейс: текст правки изменён; нажата «Сохранить», сервер отвечает ошибкой.
+    /// Ожидание: ошибка показана, режим остаётся включённым с набранным текстом.
+    func test_submit_failure_showsErrorAndKeepsMode() async {
+        let sut = await makeEditingReadySUT()
+        await startObservingEdits(sut)
+        sut.didSelectAction(.edit, for: sut.messages[0])
+        sut.messageText = "Привет всем"
+
+        sut.didTapSend()
+        await editService.finish(conversationId: Conversation.singleStub.id, with: .failure(NetworkError.transport(URLError(.notConnectedToInternet))))
+
+        await waitUntil { sut.errorMessage != nil }
+        XCTAssertEqual(sut.inputMode, .editing(messageId: 15, originalText: "Привет"))
+        XCTAssertEqual(sut.messageText, "Привет всем")
+        XCTAssertTrue(editService.failures.isEmpty)
+    }
+
+    /// Кейс: правка отправлена, экран закрыт до ответа; сервер отвечает ошибкой; затем экран открыт заново.
+    /// Ожидание: закрытый экран ошибку не забирает; новое открытие показывает её в режиме редактирования.
+    func test_submit_failureAfterScreenClosed_shownOnReopen() async {
+        let sut = await makeEditingReadySUT()
+        await startObservingEdits(sut)
+        sut.didSelectAction(.edit, for: sut.messages[0])
+        sut.messageText = "Привет всем"
+        sut.didTapSend()
+        let edit = MessageEditDraft(messageId: 15, originalText: "Привет", text: "Привет всем")
+
+        await yieldTimes()
+        editObservation?.cancel()
+        await editService.finish(conversationId: Conversation.singleStub.id, with: .failure(NetworkError.api(code: NetworkError.Code.messageNotFound)))
+        await editObservation?.value
+        XCTAssertNil(sut.errorMessage)
+        draftService.edits = [Conversation.singleStub.id: edit]
+        let reopened = makeSUT()
+        await startObservingEdits(reopened)
+
+        await waitUntil { reopened.errorMessage != nil }
+        XCTAssertEqual(reopened.inputMode, .editing(messageId: 15, originalText: "Привет"))
+        XCTAssertTrue(editService.failures.isEmpty)
+    }
+
+    /// Кейс: правка отправлена, сервис правок отказал в запросе (например, правки нет в его памяти).
+    /// Ожидание: режим и текст не тронуты, ошибки нет.
+    func test_submit_rejectedByService_keepsMode() async {
+        let sut = await makeEditingReadySUT()
+        sut.didSelectAction(.edit, for: sut.messages[0])
+        sut.messageText = "Привет всем"
+        editService.acceptsSubmit = false
+
+        sut.didTapSend()
+
+        XCTAssertEqual(editService.submits.count, 1)
+        XCTAssertEqual(sut.inputMode, .editing(messageId: 15, originalText: "Привет"))
+        XCTAssertEqual(sut.messageText, "Привет всем")
+        XCTAssertNil(sut.errorMessage)
+    }
+
+    /// Кейс: запрос правки начат на прошлом открытии экрана; экран открыт заново и завершился успехом.
+    /// Ожидание: экран открыт в режиме редактирования, после успеха режим выключен и в поле черновик.
+    func test_observeEditSubmission_previousRequestSuccess_returnsDraft() async {
+        draftService.drafts = [Conversation.singleStub.id: "Черновик"]
+        draftService.edits = [Conversation.singleStub.id: MessageEditDraft(messageId: 15, originalText: "Привет", text: "Привет всем")]
+        editService.startPendingSubmission(conversationId: Conversation.singleStub.id)
+        let sut = makeSUT()
+        await startObservingEdits(sut)
+
+        draftService.endEditing(messageId: 15, conversationId: Conversation.singleStub.id, userId: 1)
+        await editService.finish(conversationId: Conversation.singleStub.id, with: .success(()))
+
+        await waitUntil { sut.inputMode == .compose }
+        XCTAssertEqual(sut.messageText, "Черновик")
+    }
+
+    /// Кейс: запрос правки начат на прошлом открытии экрана; экран открыт заново, запрос завершился ошибкой.
+    /// Ожидание: ошибка показана, режим остаётся.
+    func test_observeEditSubmission_previousRequestFailure_showsError() async {
+        draftService.edits = [Conversation.singleStub.id: MessageEditDraft(messageId: 15, originalText: "Привет", text: "Привет всем")]
+        editService.startPendingSubmission(conversationId: Conversation.singleStub.id)
+        let sut = makeSUT()
+        await startObservingEdits(sut)
+
+        await editService.finish(conversationId: Conversation.singleStub.id, with: .failure(NetworkError.api(code: NetworkError.Code.messageNotFound)))
+
+        await waitUntil { sut.errorMessage != nil }
+        XCTAssertEqual(sut.inputMode, .editing(messageId: 15, originalText: "Привет"))
+    }
+
+    /// Кейс: запрос правки упал, пока экран был закрыт: ошибка ждёт в сервисе; экран открыт заново.
+    /// Ожидание: ошибка показана и забрана из сервиса, режим остаётся.
+    func test_observeEditSubmission_unseenFailure_showsErrorOnce() async {
+        draftService.edits = [Conversation.singleStub.id: MessageEditDraft(messageId: 15, originalText: "Привет", text: "Привет всем")]
+        editService.failures = [Conversation.singleStub.id: NetworkError.api(code: NetworkError.Code.messageNotFound)]
+        let sut = makeSUT()
+
+        await startObservingEdits(sut)
+
+        await waitUntil { sut.errorMessage != nil }
+        XCTAssertEqual(sut.inputMode, .editing(messageId: 15, originalText: "Привет"))
+        XCTAssertTrue(editService.failures.isEmpty)
+    }
+
+    /// Кейс: экран в режиме редактирования; запрос отменён выходом из аккаунта (сервис черновиков очистил память).
+    /// Ожидание: ошибка не показана, режим и текст поля не тронуты — черновик не подменён пустым.
+    func test_observeEditSubmission_cancelledByLogout_keepsMode() async {
+        draftService.edits = [Conversation.singleStub.id: MessageEditDraft(messageId: 15, originalText: "Привет", text: "Привет всем")]
+        editService.startPendingSubmission(conversationId: Conversation.singleStub.id)
+        let sut = makeSUT()
+        await startObservingEdits(sut)
+
+        draftService.edits = [:]
+        await editService.finish(conversationId: Conversation.singleStub.id, with: .failure(CancellationError()))
+        await yieldTimes()
+
+        XCTAssertNil(sut.errorMessage)
+        XCTAssertEqual(sut.inputMode, .editing(messageId: 15, originalText: "Привет"))
+        XCTAssertEqual(sut.messageText, "Привет всем")
+    }
+
+    /// Кейс: правка сохранена для сообщения, которого нет в окне ленты; затем сообщение появилось в ленте с текстом,
+    /// изменённым с другого устройства.
+    /// Ожидание: сначала плашка показывает исходный текст, затем — текст из ленты в одну строку.
+    func test_editBannerText_followsFeed() async {
+        draftService.edits = [Conversation.singleStub.id: MessageEditDraft(messageId: 15, originalText: "Привет", text: "Привет всем")]
+        let sut = makeSUT()
+        await startObserving(sut)
+        XCTAssertEqual(sut.editBannerText, "Привет")
+
+        list.publish(.make(messages: [.make(id: 15, senderId: 1, text: "Привет,\nдрузья", updatedAt: .stub(1000))], isUrgent: true))
+
+        await waitUntil { sut.editBannerText == "Привет, друзья" }
+    }
+
+    /// Кейс: в режиме редактирования экран сохраняет текст (уход с экрана).
+    /// Ожидание: сервису передана правка с текстом поля, черновик не сохраняется.
+    func test_saveDraft_inEditMode_savesEdit() async {
+        let sut = await makeEditingReadySUT()
+        sut.didSelectAction(.edit, for: sut.messages[0])
+        sut.messageText = "Привет всем"
+        let savesBefore = draftService.saves.count
+
+        sut.saveDraft()
+
+        XCTAssertEqual(draftService.editSaves.map(\.edit), [MessageEditDraft(messageId: 15, originalText: "Привет", text: "Привет всем")])
+        XCTAssertEqual(draftService.saves.count, savesBefore)
+    }
+
+    /// Кейс: лента показана, пауза между обновлениями прошла; в режиме редактирования набирается текст.
+    /// Ожидание: набор текста не пересобирает ленту — новых пауз обновления нет.
+    func test_typingInEditMode_doesNotRebuildFeed() async {
+        let sut = await makeEditingReadySUT()
+        sut.didSelectAction(.edit, for: sut.messages[0])
+        sleeper.releaseAll()
+        await waitUntil { sut.messages.first?.actions == [] }
+        await yieldUntil { [unowned self] in sleeper.isWaiting }
+        sleeper.releaseAll()
+        await yieldTimes()
+        let requestsBefore = sleeper.requested.count
+
+        sut.messageText = "П"
+        sut.messageText = "Пр"
+        sut.messageText = "При"
+
+        await yieldTimes()
+        XCTAssertEqual(sleeper.requested.count, requestsBefore)
+    }
+
     // MARK: - Helpers
+
+    /// ViewModel с запущенной лентой, в которой своё доставленное сообщение 15 с текстом «Привет».
+    private func makeEditingReadySUT() async -> ChatViewModel {
+        let sut = makeSUT()
+        await startObserving(sut)
+        list.publish(.make(messages: [.make(id: 15, senderId: 1, text: "Привет")], isUrgent: true))
+        await waitUntil { sut.messages.count == 1 }
+        return sut
+    }
 
     /// Время сообщения, сдвинутое от `ServerTime.stub` на целое число суток.
     /// - Parameter offset: сдвиг в сутках; отрицательный — в прошлое.
@@ -620,6 +940,7 @@ final class ChatViewModelTests: XCTestCase {
             conversation: conversation,
             messagesList: list,
             messageSendQueue: messageSendQueue,
+            editService: editService,
             sessionService: sessionService,
             draftService: draftService,
             userCache: userCache,
@@ -631,6 +952,14 @@ final class ChatViewModelTests: XCTestCase {
             calendar: { .stub() },
             sleep: { [sleeper] in try await sleeper!.sleep($0) }
         )
+    }
+
+    /// Запускает ожидание исходов запросов правки, как `.task` показанного экрана, и дожидается его начала.
+    /// - Parameter sut: ViewModel экрана.
+    private func startObservingEdits(_ sut: ChatViewModel) async {
+        editObservation = Task { await sut.observeEditSubmission() }
+        await yieldUntil { sut.editSubmissionRequests != nil }
+        await yieldTimes()
     }
 
     /// Запускает наблюдение за лентой, как `.task` экрана, и ждёт подписки на снимки.

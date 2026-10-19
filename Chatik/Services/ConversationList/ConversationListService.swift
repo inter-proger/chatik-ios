@@ -11,6 +11,9 @@ import os
 protocol ConversationPositionUpdating: AnyObject {
     /// Поднимает переписку по сообщению, которое создал сервер в ответ на отправку.
     func applySentMessage(_ message: Message)
+    /// Обновляет превью переписки по ответу `/messages/edit`. Без `lastMessage` ничего не делает.
+    /// Переписки нет в списке — не загружает её.
+    func applyEditedMessage(_ message: Message, lastMessage: LastMessage?)
 }
 
 @MainActor
@@ -257,6 +260,17 @@ final class ConversationListService: ConversationListServiceProtocol {
             return
         }
         lookUpSentConversation(patch)
+    }
+
+    /// Обновляет превью переписки по ответу `/messages/edit`, не дожидаясь события. Позиция не меняется (тот же
+    /// `messageId` и `positionUpdatedAt`) — срабатывает правило 2 слияния; позднее событие `edited` с той же версией
+    /// сливается вхолостую. Патч не вставляет переписку, которой нет в списке.
+    /// - Parameters:
+    ///   - message: отредактированное сообщение.
+    ///   - lastMessage: новое превью; `nil` — отредактировано не последнее сообщение или текст не изменился.
+    func applyEditedMessage(_ message: Message, lastMessage: LastMessage?) {
+        guard let lastMessage else { return }
+        applyLocal(.patch(ConversationPatch(message: message, lastMessage: lastMessage)))
     }
 
     /// Применяет полную версию переписки из REST (`createSingle`). Водяные знаки не двигаются.

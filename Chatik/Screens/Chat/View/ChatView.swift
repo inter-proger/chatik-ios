@@ -7,7 +7,8 @@ import SwiftUI
 
 /// Экран переписки: сообщения с подгрузкой более старых при прокрутке вверх, обновлением жестом вверх у нижнего края
 /// ленты (pull-to-refresh) и поле ввода с кнопкой отправки. Тап по ленте убирает клавиатуру.
-/// Черновик записывается в БД при уходе с экрана и при уходе приложения в неактивное состояние или в фон.
+/// Черновик (или текст правки в режиме редактирования) записывается в БД при уходе с экрана и при уходе приложения
+/// в неактивное состояние или в фон. Долгое нажатие на своё сообщение открывает меню с «Редактировать».
 struct ChatView: View {
     @State private var viewModel: ChatViewModel
     @FocusState private var isInputFocused: Bool
@@ -25,7 +26,8 @@ struct ChatView: View {
             failedActionsClientId: $viewModel.failedMessageActionsClientId,
             onTapFailed: viewModel.didTapMessage,
             onRetry: { viewModel.retrySending(clientId: $0.id.clientId) },
-            onDelete: { viewModel.deleteOutgoing(clientId: $0.id.clientId) }
+            onDelete: { viewModel.deleteOutgoing(clientId: $0.id.clientId) },
+            onAction: viewModel.didSelectAction
         )
         .onTapGesture { isInputFocused = false }
         .overlay(alignment: .top) { navigationBarBackground }
@@ -34,10 +36,15 @@ struct ChatView: View {
         .safeAreaInset(edge: .bottom) {
             ChatInputPanel(viewModel: viewModel, isFocused: $isInputFocused)
         }
+        // Плашка редактирования меняет высоту панели: лента сдвигается в той же анимации, что и плашка, а не скачком
+        // до её конца. Анимация здесь, а не в панели: иначе анимировалась бы только панель.
+        .animation(.default, value: viewModel.isEditing)
         // Лента перевёрнута (см. `MessagesListView`), поэтому индикатор обновления появляется внизу, у новых сообщений.
         .refreshable { await viewModel.refresh() }
         // Отмена задачи при уходе с экрана останавливает ленту: синхронизация отменяется и снимает аренду очереди.
         .task { await viewModel.observeMessages() }
+        // Запрос правки, начатый на прошлом открытии экрана: его успех возвращает в поле черновик, ошибка показывается.
+        .task { await viewModel.observeEditSubmission() }
         .onDisappear { viewModel.saveDraft() }
         // `.inactive` — не только шторка: закрытие из переключателя приложений не гарантирует перехода в `.background`.
         // Повторное сохранение без изменений в БД не пишет.

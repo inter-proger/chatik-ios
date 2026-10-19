@@ -45,6 +45,8 @@ final class DIContainer {
     let sessionWorkLauncher: SessionWorkStarting
     /// Черновики сообщений — единственный, кто пишет их в БД.
     let messageDraftService: MessageDraftServiceProtocol
+    /// Отправка правок сообщений: запрос переживает уход с экрана.
+    let messageEditService: MessageEditServiceProtocol
     /// Держит наблюдение за сетью, пока жив контейнер: при появлении сети WebSocket переподключается сразу.
     private let networkPathMonitor: NetworkPathMonitor
     /// Подписка кэша сообщений на очередь событий — живёт, пока жив контейнер.
@@ -127,6 +129,13 @@ final class DIContainer {
             positionUpdater: conversationListService
         )
         self.messageSendQueue = messageSendQueue
+        let messageEditService = MessageEditService(
+            messageService: messageService,
+            messageCache: messageCache,
+            positionUpdater: conversationListService,
+            draftService: messageDraftService
+        )
+        self.messageEditService = messageEditService
         let sessionService = SessionService(
             userDefaultsService: userDefaultsService,
             localStorageCleaner: LocalStorageCleaner(container: storageContainer),
@@ -150,13 +159,15 @@ final class DIContainer {
             messageDelivery: messageSendQueue,
             realtimeService: realtimeService
         )
-        // Соединение, очередь событий, список, очередь отправки, кэш сообщений и черновики останавливаются в фазе `authServiceWillLogout`
+        // Соединение, очередь событий, список, очередь отправки, правки, кэш сообщений и черновики останавливаются
+        // в фазе `authServiceWillLogout`
         // (до запроса выхода), сессия завершается в `authServiceDidLogout` (после него) — от порядка подписки
         // это не зависит.
         authService.addObserver(realtimeService)
         authService.addObserver(realtimeEventQueue)
         authService.addObserver(conversationListService)
         authService.addObserver(messageSendQueue)
+        authService.addObserver(messageEditService)
         authService.addObserver(messageCacheLogoutObserver)
         authService.addObserver(messageDraftLogoutObserver)
         authService.addObserver(sessionService)

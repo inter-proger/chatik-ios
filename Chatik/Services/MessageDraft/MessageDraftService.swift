@@ -19,6 +19,24 @@ protocol MessageDraftServiceProtocol: AnyObject, SessionDataLoading {
     func save(text: String, conversationId: Int, userId: Int)
     /// Удаляет черновик пользователя `userId` из памяти и из БД — после отправки сообщения.
     func remove(conversationId: Int, userId: Int)
+
+    /// Незавершённое редактирование переписки вместе с набранным текстом; `nil` — режим выключен. Читается
+    /// из памяти, отслеживается Observation и меняется при каждом изменении текста правки.
+    func edit(for conversationId: Int) -> MessageEditDraft?
+    /// Редактируемое сообщение переписки; `nil` — режим выключен. Отслеживается Observation и меняется только
+    /// при включении и выключении режима — для тех, кому текст правки не нужен (список чатов).
+    func editingMessageId(for conversationId: Int) -> Int?
+    /// Включает режим редактирования с исходным текстом сообщения и сразу ставит запись в очередь — точка
+    /// сохранения. Черновик не меняется. Если режим уже включён, ничего не делает.
+    func beginEditing(messageId: Int, originalText: String, conversationId: Int, userId: Int)
+    /// Меняет текст правки в памяти — при каждом изменении поля ввода в режиме редактирования. БД не трогает.
+    func updateEdit(text: String, conversationId: Int, userId: Int)
+    /// Меняет текст правки, как `updateEdit`, и ставит в очередь записи все незаписанные изменения — в точках
+    /// сохранения. Для вышедшего пользователя записывает правку целиком, поэтому принимает её, а не только текст.
+    func saveEdit(_ edit: MessageEditDraft, conversationId: Int, userId: Int)
+    /// Выключает режим редактирования сообщения `messageId` и ставит запись в очередь. Если редактируется другое
+    /// сообщение, ничего не делает: поздний ответ на прежнюю правку не должен закрыть новую.
+    func endEditing(messageId: Int, conversationId: Int, userId: Int)
 }
 
 /// Реакция сервиса черновиков на выход — всё, что о нём знает `MessageDraftLogoutObserver`.
@@ -28,12 +46,18 @@ protocol MessageDraftLogoutHandling: AnyObject {
     func prepareForLogout()
 }
 
-/// Черновики сообщений: единственный, кто читает и пишет их в БД.
+/// Состояние полей ввода переписок: черновики сообщений и незавершённые правки своих сообщений. Единственный,
+/// кто читает и пишет их в БД.
 ///
-/// В памяти — черновики текущего пользователя (`conversationId` → текст). Чтение синхронное и отслеживается
-/// Observation: список чатов перерисовывается, когда черновик меняется. Экран переписки меняет память при каждом
-/// изменении поля ввода (`update`), а в БД изменения уходят в точках сохранения (`save`, `remove`) — одной пачкой
-/// и строго по очереди. Неудавшаяся запись не теряется: переписка остаётся помеченной и уходит со следующей пачкой.
+/// В памяти — состояние текущего пользователя: черновики (`conversationId` → текст) и правки. Чтение синхронное
+/// и отслеживается Observation: список чатов перерисовывается, когда черновик или режим редактирования меняется.
+/// Экран переписки меняет память при каждом изменении поля ввода (`update`, `updateEdit`), а в БД изменения уходят
+/// в точках сохранения (`save`, `remove`, `saveEdit`, `beginEditing`, `endEditing`) — одной пачкой и строго
+/// по очереди. Неудавшаяся запись не теряется: поле переписки остаётся помеченным и уходит со следующей пачкой.
+///
+/// Черновик и правка переписки лежат в одной записи БД, но пишутся по отдельности — только изменённые поля.
+/// Сервис не всегда знает оба поля (черновики не загрузились, пользователь вышел), и запись целиком стёрла бы
+/// невидимое поле. Текст правки не обрезается: пустое поле в режиме редактирования — всё ещё режим редактирования.
 ///
 /// Черновик пустой, если после обрезки `MessageTextValidator.trimmedCharacters` в нём ничего не осталось, —
 /// так же сервер решает, пусто ли сообщение. Непустой хранится как есть, без обрезки.
@@ -55,17 +79,23 @@ final class MessageDraftService: MessageDraftServiceProtocol, MessageDraftLogout
         /// нет в памяти, ничего не удаляет — поле было пустым, потому что черновик не загрузился.
         case loadFailed(userId: Int)
         /// Сессия пользователя закончилась: память пуста, его изменения пишутся только в БД.
-        /// `deletableConversationIds` — переписки, которые на момент выхода были в памяти или ждали записи:
-        /// только у них пустой текст удаляет черновик. У остальных черновика в БД либо нет, либо он не
-        /// загрузился (`loadFailed`), и пустое поле означает не «стёр», а «не видел».
-        case loggedOut(userId: Int, deletableConversationIds: Set<Int>)
+        /// `deletableConversationIds` — переписки, черновики которых на момент выхода были в памяти или ждали
+        /// записи: только у них пустой текст удаляет черновик. У остальных черновика в БД либо нет, либо он не
+        /// загрузился (`loadFailed`), и пустое поле означает не «стёр», а «не видел». `editConversationIds` —
+        /// то же для правок: только их можно записать или выключить.
+        case loggedOut(userId: Int, deletableConversationIds: Set<Int>, editConversationIds: Set<Int>)
     }
 
     /// Черновики, которые видит интерфейс.
     private var drafts: [Int: String] = [:]
+    /// Незавершённые правки с набранным текстом.
+    private var edits: [Int: MessageEditDraft] = [:]
+    /// Редактируемые сообщения: меняются только при включении и выключении режима, а не при наборе текста —
+    /// наблюдатели режима не перерисовываются на каждое нажатие клавиши.
+    private var editingMessageIds: [Int: Int] = [:]
     @ObservationIgnored private var state = State.idle
-    /// Переписки, изменённые в памяти и ещё не записанные в БД (в том числе после неудачной записи).
-    @ObservationIgnored private var dirtyConversationIds: Set<Int> = []
+    /// Поля переписок, изменённые в памяти и ещё не записанные в БД (в том числе после неудачной записи).
+    @ObservationIgnored private var dirtyFields: [Int: MessageDraftFields] = [:]
     /// Растёт при каждой смене владельца памяти (загрузка, выход): поздние результаты к новому владельцу
     /// не применяются.
     @ObservationIgnored private var generation = 0
@@ -108,6 +138,18 @@ final class MessageDraftService: MessageDraftServiceProtocol, MessageDraftLogout
         draft(for: conversationId) != nil
     }
 
+    /// Незавершённое редактирование переписки из памяти.
+    /// - Parameter conversationId: переписка.
+    func edit(for conversationId: Int) -> MessageEditDraft? {
+        edits[conversationId]
+    }
+
+    /// Редактируемое сообщение переписки из памяти.
+    /// - Parameter conversationId: переписка.
+    func editingMessageId(for conversationId: Int) -> Int? {
+        editingMessageIds[conversationId]
+    }
+
     // MARK: - Загрузка
 
     /// Загружает черновики пользователя: дожидается предыдущей загрузки и очереди записи (поздняя запись прошлой
@@ -134,7 +176,7 @@ final class MessageDraftService: MessageDraftServiceProtocol, MessageDraftLogout
         await pendingWrite?.value
         await deleteExpiredDrafts()
         let loadGeneration = generation
-        let fetched: [Int: String]?
+        let fetched: [Int: MessageDraft]?
         do {
             fetched = try await storage.fetchAll(userId: userId)
         } catch {
@@ -142,9 +184,9 @@ final class MessageDraftService: MessageDraftServiceProtocol, MessageDraftLogout
             fetched = nil
         }
         guard loadGeneration == generation else { return }
-        drafts = fetched ?? [:]
+        setMemory(fetched ?? [:])
         state = fetched == nil ? .loadFailed(userId: userId) : .loaded(userId: userId)
-        dirtyConversationIds = []
+        dirtyFields = [:]
         generation += 1
     }
 
@@ -181,12 +223,12 @@ final class MessageDraftService: MessageDraftServiceProtocol, MessageDraftLogout
         if ownerUserId == userId {
             applyToMemory(text: text, conversationId: conversationId)
             flush(userId: userId)
-        } else if case .loggedOut(userId, var deletableConversationIds) = state {
+        } else if case .loggedOut(userId, var deletableConversationIds, let editConversationIds) = state {
             let draftText = Self.draftText(text)
             guard draftText != nil || deletableConversationIds.contains(conversationId) else { return }
-            enqueueWrite([conversationId: Self.change(for: draftText)], userId: userId)
+            enqueueWrite([conversationId: .draft(draftText)], userId: userId)
             deletableConversationIds.insert(conversationId)
-            state = .loggedOut(userId: userId, deletableConversationIds: deletableConversationIds)
+            state = .loggedOut(userId: userId, deletableConversationIds: deletableConversationIds, editConversationIds: editConversationIds)
         }
     }
 
@@ -202,11 +244,26 @@ final class MessageDraftService: MessageDraftServiceProtocol, MessageDraftLogout
     func prepareForLogout() {
         guard let userId = ownerUserId else { return }
         flush(userId: userId)
-        let deletableConversationIds = dirtyConversationIds.union(drafts.keys)
-        drafts = [:]
-        dirtyConversationIds = []
-        state = .loggedOut(userId: userId, deletableConversationIds: deletableConversationIds)
+        let deletableConversationIds = conversationIds(dirtyIn: .text).union(drafts.keys)
+        let editConversationIds = conversationIds(dirtyIn: .edit).union(edits.keys)
+        setMemory([:])
+        dirtyFields = [:]
+        state = .loggedOut(userId: userId, deletableConversationIds: deletableConversationIds, editConversationIds: editConversationIds)
         generation += 1
+    }
+
+    /// Заменяет память состояниями полей ввода.
+    /// - Parameter fields: состояния по `conversationId`.
+    private func setMemory(_ fields: [Int: MessageDraft]) {
+        drafts = fields.compactMapValues(\.text)
+        edits = fields.compactMapValues(\.edit)
+        editingMessageIds = edits.mapValues(\.messageId)
+    }
+
+    /// Переписки, у которых помечено незаписанным указанное поле.
+    /// - Parameter field: поле.
+    private func conversationIds(dirtyIn field: MessageDraftFields) -> Set<Int> {
+        Set(dirtyFields.filter { $0.value.contains(field) }.keys)
     }
 
     /// Пользователь, чьи черновики в памяти и чьи изменения принимаются; `nil` — таких нет.
@@ -226,17 +283,94 @@ final class MessageDraftService: MessageDraftServiceProtocol, MessageDraftLogout
         let newValue = Self.draftText(text)
         guard newValue != drafts[conversationId] else { return }
         drafts[conversationId] = newValue
-        dirtyConversationIds.insert(conversationId)
+        dirtyFields[conversationId, default: []].insert(.text)
+    }
+
+    // MARK: - Редактирование
+
+    /// Включает режим редактирования и ставит запись в очередь. Изменения от пользователя, чьи черновики
+    /// не в памяти, игнорируются: включить режим можно только на открытом экране текущей сессии.
+    /// - Parameters:
+    ///   - messageId: редактируемое сообщение.
+    ///   - originalText: текст сообщения на момент включения.
+    ///   - conversationId: переписка.
+    ///   - userId: пользователь, открывший экран переписки.
+    func beginEditing(messageId: Int, originalText: String, conversationId: Int, userId: Int) {
+        guard ownerUserId == userId else { return }
+        guard edits[conversationId] == nil else {
+            Logger.storage.error("Режим редактирования уже включён: повторное включение пропущено")
+            return
+        }
+        edits[conversationId] = MessageEditDraft(messageId: messageId, originalText: originalText, text: originalText)
+        editingMessageIds[conversationId] = messageId
+        dirtyFields[conversationId, default: []].insert(.edit)
+        flush(userId: userId)
+    }
+
+    /// Меняет текст правки в памяти. Режим выключен или изменение от чужого пользователя — ничего не делает.
+    /// - Parameters:
+    ///   - text: текст поля ввода, как есть.
+    ///   - conversationId: переписка.
+    ///   - userId: пользователь, открывший экран переписки.
+    func updateEdit(text: String, conversationId: Int, userId: Int) {
+        guard ownerUserId == userId, var edit = edits[conversationId], edit.text != text else { return }
+        edit.text = text
+        edits[conversationId] = edit
+        dirtyFields[conversationId, default: []].insert(.edit)
+    }
+
+    /// Меняет текст правки в памяти и ставит в очередь записи все незаписанные изменения. Правка другого сообщения
+    /// или выключенный режим не воскрешаются. Для вышедшего пользователя записывается только эта переписка и только
+    /// если её правка была в памяти к моменту выхода.
+    /// - Parameters:
+    ///   - edit: правка с текстом поля ввода.
+    ///   - conversationId: переписка.
+    ///   - userId: пользователь, открывший экран переписки.
+    func saveEdit(_ edit: MessageEditDraft, conversationId: Int, userId: Int) {
+        if ownerUserId == userId {
+            guard edits[conversationId]?.messageId == edit.messageId else { return }
+            updateEdit(text: edit.text, conversationId: conversationId, userId: userId)
+            flush(userId: userId)
+        } else if case let .loggedOut(userId, _, editConversationIds) = state, editConversationIds.contains(conversationId) {
+            enqueueWrite([conversationId: .edit(edit)], userId: userId)
+        }
+    }
+
+    /// Выключает режим редактирования и ставит запись в очередь. Черновик не меняется.
+    /// - Parameters:
+    ///   - messageId: сообщение, редактирование которого закончилось.
+    ///   - conversationId: переписка.
+    ///   - userId: пользователь, открывший экран переписки.
+    func endEditing(messageId: Int, conversationId: Int, userId: Int) {
+        if ownerUserId == userId {
+            guard edits[conversationId]?.messageId == messageId else { return }
+            edits[conversationId] = nil
+            editingMessageIds[conversationId] = nil
+            dirtyFields[conversationId, default: []].insert(.edit)
+            flush(userId: userId)
+        } else if case let .loggedOut(userId, _, editConversationIds) = state, editConversationIds.contains(conversationId) {
+            enqueueWrite([conversationId: .edit(nil)], userId: userId)
+        }
     }
 
     // MARK: - Запись в БД
 
-    /// Ставит в очередь записи все незаписанные переписки: текст из памяти или удаление.
+    /// Ставит в очередь записи все незаписанные поля: значения из памяти или удаление.
     /// - Parameter userId: владелец памяти.
     private func flush(userId: Int) {
-        guard !dirtyConversationIds.isEmpty else { return }
-        let changes = dirtyConversationIds.map { ($0, Self.change(for: drafts[$0])) }
-        enqueueWrite(Dictionary(uniqueKeysWithValues: changes), userId: userId)
+        guard !dirtyFields.isEmpty else { return }
+        enqueueWrite(dirtyChanges, userId: userId)
+    }
+
+    /// Изменения для записи в БД: помеченные поля каждой переписки со значениями из памяти.
+    private var dirtyChanges: [Int: MessageDraftChange] {
+        Dictionary(uniqueKeysWithValues: dirtyFields.map { conversationId, fields in
+            let change = MessageDraftChange(
+                text: fields.contains(.text) ? .some(drafts[conversationId]) : nil,
+                edit: fields.contains(.edit) ? .some(edits[conversationId]) : nil
+            )
+            return (conversationId, change)
+        })
     }
 
     /// Ставит пачку изменений в очередь: запись начинается после предыдущей и выполняется внутри фоновой задачи
@@ -259,14 +393,21 @@ final class MessageDraftService: MessageDraftServiceProtocol, MessageDraftLogout
         }
     }
 
-    /// Снимает пометку с записанных переписок, текст которых в памяти не изменился за время записи.
+    /// Снимает пометку с записанных полей, значение которых в памяти не изменилось за время записи.
     /// - Parameters:
     ///   - changes: записанные изменения.
     ///   - generation: поколение, в котором собрана пачка; сменилось — память уже другого владельца.
     private func didWrite(_ changes: [Int: MessageDraftChange], generation: Int) {
         guard generation == self.generation else { return }
-        for (conversationId, change) in changes where change == Self.change(for: drafts[conversationId]) {
-            dirtyConversationIds.remove(conversationId)
+        for (conversationId, change) in changes {
+            var fields = dirtyFields[conversationId] ?? []
+            if change.text == .some(drafts[conversationId]) {
+                fields.remove(.text)
+            }
+            if change.edit == .some(edits[conversationId]) {
+                fields.remove(.edit)
+            }
+            dirtyFields[conversationId] = fields.isEmpty ? nil : fields
         }
     }
 
@@ -276,12 +417,16 @@ final class MessageDraftService: MessageDraftServiceProtocol, MessageDraftLogout
     private static func draftText(_ text: String) -> String? {
         text.trimmingCharacters(in: MessageTextValidator.trimmedCharacters).isEmpty ? nil : text
     }
+}
 
-    /// Изменение для записи в БД.
-    /// - Parameter text: текст черновика; `nil` — черновика нет.
-    private static func change(for text: String?) -> MessageDraftChange {
-        text.map(MessageDraftChange.save) ?? .delete
-    }
+/// Поля состояния поля ввода переписки — для пометки незаписанного.
+struct MessageDraftFields: OptionSet, Hashable, Sendable {
+    let rawValue: Int
+
+    /// Черновик нового сообщения.
+    static let text = MessageDraftFields(rawValue: 1 << 0)
+    /// Незавершённое редактирование.
+    static let edit = MessageDraftFields(rawValue: 1 << 1)
 }
 
 /// Передаёт сервису черновиков выход из аккаунта; `AuthService` держит наблюдателей слабо.

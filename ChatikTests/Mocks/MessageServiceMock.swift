@@ -23,6 +23,11 @@ final class MessageServiceMock: MessageServiceProtocol, @unchecked Sendable {
     var stubbedSentMessages: [Result<Message, Error>] = []
     /// Вызывается внутри `send` до возврата результата — пока запрос гарантированно выполняется.
     var onSend: (@MainActor () async -> Void)?
+    /// Ответы на последовательные правки; когда очередь пуста — ошибка.
+    var stubbedEditResults: [Result<MessageEditResult, Error>] = []
+    private(set) var editRequests: [(messageId: Int, newText: String)] = []
+    /// Вызывается внутри `edit` до возврата результата — пока запрос гарантированно выполняется.
+    var onEdit: (@MainActor () async -> Void)?
 
     func fetchMessages(conversationId: Int, filter: MessageListFilter) async throws -> MessagesPage {
         pageRequests.append((conversationId, filter))
@@ -44,7 +49,10 @@ final class MessageServiceMock: MessageServiceProtocol, @unchecked Sendable {
         return try result.get()
     }
 
-    func edit(messageId: Int, newText: String) async throws -> Message {
-        throw NetworkError.missingResponse
+    func edit(messageId: Int, newText: String) async throws -> MessageEditResult {
+        editRequests.append((messageId, newText))
+        let result = stubbedEditResults.isEmpty ? .failure(NetworkError.missingResponse) : stubbedEditResults.removeFirst()
+        await onEdit?()
+        return try result.get()
     }
 }

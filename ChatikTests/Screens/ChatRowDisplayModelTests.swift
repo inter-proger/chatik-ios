@@ -194,6 +194,20 @@ final class ChatRowDisplayModelTests: XCTestCase {
         XCTAssertEqual(runs.map(\.1), [Color.draftLabel, nil])
     }
 
+    // MARK: - Редактирование
+
+    /// Кейс: в переписке незавершённое редактирование.
+    /// Ожидание: превью — фраза «Редактирование активно» целиком цветом `DraftLabel`, без текста после неё.
+    func test_init_editing_showsPhraseInDraftColor() {
+        let model = ChatRowDisplayModel(conversation: .groupStub, opponent: nil, localPreview: .editing, timeFormatter: timeFormatter)
+        guard case let .labeled(attributed) = model.preview else { return XCTFail("Превью не редактирование") }
+
+        let runs = attributed.runs.map { (String(attributed[$0.range].characters), $0.swiftUI.foregroundColor) }
+
+        XCTAssertEqual(runs.map(\.0), [ChatListStrings.rowEditing])
+        XCTAssertEqual(runs.map(\.1), [Color.draftLabel])
+    }
+
     // MARK: - Неотправленное сообщение
 
     /// Кейс: у переписки с последним сообщением есть неотправленное сообщение.

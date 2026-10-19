@@ -27,6 +27,9 @@ protocol MessageCacheServiceProtocol: Sendable {
     /// - Returns: записано ли сообщение, отброшено выходом или запись не удалась.
     @discardableResult
     func applySent(_ message: Message) async -> SentMessageWriteResult
+    /// Сообщение из ответа `/messages/edit`: обновляет его, если оно есть в БД, и публикует `.upserted`.
+    /// Записей не создаёт. `syncMark` двигается только при признаке. Ошибка записи логируется.
+    func applyEdited(_ message: Message) async
 }
 
 /// Итог записи сообщения из ответа `/messages/send` в кэш — по нему очередь отправки решает, удалять ли
@@ -311,6 +314,33 @@ actor MessageCacheService: MessageCacheServiceProtocol, MessageCacheLogoutHandli
         } catch {
             Logger.storage.error("Не удалось сохранить отправленное сообщение: \(String(describing: error), privacy: .public)")
             return .failed
+        }
+    }
+
+    // MARK: - Редактирование
+
+    /// Записывает сообщение из ответа `/messages/edit`, если оно есть в БД, — и в несинхронизированную переписку:
+    /// экран уже показывает это сообщение, и новый текст должен появиться без ожидания события и синхронизации.
+    /// Записей не создаёт, иначе в непрерывном кэше появилась бы дыра. `syncMark` двигается только при признаке.
+    /// Идущие синхронизации переписки не удаляют сообщение (`protectedIds`), а их более старая версия не затрёт
+    /// новую: при записи побеждает больший `updatedAt`. Во время выхода запись отбрасывается.
+    /// - Parameter message: отредактированное сообщение.
+    func applyEdited(_ message: Message) async {
+        guard !isLoggingOut else { return }
+        let conversationId = message.conversationId
+        var changes = MessageStorageChanges(updatesOfExisting: [message])
+        if isSynced(conversationId: conversationId) {
+            let mark = max(message.createdAt, message.updatedAt)
+            changes.stateChanges = [MessageCacheStateChange(conversationId: conversationId, kind: .advanceSyncMark(mark))]
+        }
+        updateSyncs(of: conversationId) { $0.protectedIds.insert(message.messageId) }
+        let task = enqueueWrite { [changes] in self.publishUpserted(try await self.storage.write(changes)) }
+        do {
+            try await task.value
+        } catch is CancellationError {
+            return
+        } catch {
+            Logger.storage.error("Не удалось сохранить отредактированное сообщение: \(String(describing: error), privacy: .public)")
         }
     }
 

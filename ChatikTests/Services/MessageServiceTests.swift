@@ -95,13 +95,14 @@ final class MessageServiceTests: XCTestCase {
     }
 
     /// Кейс: редактирование своего сообщения.
-    /// Ожидание: POST /messages/edit с `messageId` и `newText`, наружу отдано отредактированное сообщение.
-    func test_edit_requestsEndpointAndUnwrapsMessage() async throws {
-        networkService.stubbedResult = .success(MessageResponse(message: .editedStub))
+    /// Ожидание: POST /messages/edit с `messageId` и `newText`, наружу отдан ответ целиком.
+    func test_edit_requestsEndpointAndReturnsResult() async throws {
+        let expected = MessageEditResult(message: .editedStub, lastMessage: LastMessage(message: .editedStub))
+        networkService.stubbedResult = .success(expected)
 
-        let message = try await sut.edit(messageId: 15, newText: "Привет всем!")
+        let result = try await sut.edit(messageId: 15, newText: "Привет всем!")
 
-        XCTAssertEqual(message, .editedStub)
+        XCTAssertEqual(result, expected)
         let endpoint = try XCTUnwrap(networkService.requestedEndpoints.first)
         XCTAssertEqual(endpoint.path, "/messages/edit")
         XCTAssertEqual(endpoint.method, .post)

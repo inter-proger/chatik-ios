@@ -15,6 +15,12 @@ enum MessageDeliveryState: Equatable, Sendable {
     case failed
 }
 
+/// Действие с сообщением из меню по долгому нажатию.
+enum MessageAction: Equatable, Sendable {
+    /// Редактировать своё сообщение.
+    case edit
+}
+
 /// Сообщение переписки в готовом для отображения виде.
 struct MessageDisplayModel: Identifiable, Equatable, Sendable {
     /// Отправитель и `clientId`: у неотправленного сообщения и созданного из него серверного он один и тот же,
@@ -37,6 +43,8 @@ struct MessageDisplayModel: Identifiable, Equatable, Sendable {
     let deliveryState: MessageDeliveryState
     /// Описание состояния доставки для VoiceOver; `nil` — сообщение доставлено.
     let deliveryStateLabel: String?
+    /// Действия меню по долгому нажатию; пусто — меню нет.
+    let actions: [MessageAction]
 }
 
 /// Отправитель сообщения в готовом для отображения виде.
@@ -86,6 +94,9 @@ struct MessageDisplayContext: Sendable {
     let strings: MessageDisplayStrings
     /// Заголовки дней на языке `locale`.
     let dateHeaderFormatter: any MessageDateHeaderFormatting
+    /// Включён режим редактирования: действие «Редактировать» скрыто у всех сообщений — чтобы отредактировать
+    /// другое, текущее редактирование нужно сначала закрыть.
+    let isEditing: Bool
 }
 
 extension MessageDisplayModel {
@@ -105,12 +116,24 @@ extension MessageDisplayModel {
             time: Self.formattedTime(message.createdAt.date, context: context),
             editedLabel: message.isEdited ? context.strings.edited : nil,
             deliveryState: .delivered,
-            deliveryStateLabel: nil
+            deliveryStateLabel: nil,
+            actions: Self.actions(for: message, context: context)
         )
+    }
+
+    /// Действия с доставленным сообщением: редактировать можно своё текстовое сообщение, пока не редактируется
+    /// другое.
+    /// - Parameters:
+    ///   - message: сообщение с сервера.
+    ///   - context: общие параметры отображения.
+    static func actions(for message: Message, context: MessageDisplayContext) -> [MessageAction] {
+        guard message.senderId == context.currentUserId, message.type == .text, !context.isEditing else { return [] }
+        return [.edit]
     }
 
     /// Собирает для отображения сообщение, ещё не подтверждённое сервером. Оно всегда исходящее и без времени:
     /// момент нажатия «Отправить» — ещё не время сообщения на сервере, вместо него показывается состояние доставки.
+    /// Действий у него нет: редактировать можно только доставленное сообщение.
     /// - Parameters:
     ///   - outgoing: сообщение очереди отправки.
     ///   - sender: отправитель (текущий пользователь); `nil` — сообщение продолжает серию.
@@ -126,7 +149,8 @@ extension MessageDisplayModel {
             time: nil,
             editedLabel: nil,
             deliveryState: deliveryState,
-            deliveryStateLabel: deliveryState == .failed ? context.strings.failed : context.strings.sending
+            deliveryStateLabel: deliveryState == .failed ? context.strings.failed : context.strings.sending,
+            actions: []
         )
     }
 

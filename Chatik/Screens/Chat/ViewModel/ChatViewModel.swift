@@ -29,14 +29,25 @@ import os
 /// в точках сохранения — уход с экрана, уход приложения в неактивное состояние или в фон (их сообщает View),
 /// отправка. Черновик принадлежит пользователю, открывшему экран: экран может уйти уже после выхода из аккаунта.
 ///
+/// Своё доставленное сообщение можно отредактировать (`ChatViewModel+Editing`): в режиме редактирования текст поля —
+/// текст правки, а черновик ждёт в сервисе черновиков нетронутым и возвращается в поле после выхода из режима.
+///
 /// Тексты и производные данные — в `ChatViewModel+Texts`.
 @MainActor
 @Observable
 final class ChatViewModel {
-    /// Текст в поле ввода. Каждое изменение меняет черновик в памяти.
+    /// Текст в поле ввода. Каждое изменение меняет в памяти черновик или, в режиме редактирования, текст правки.
     var messageText = "" {
         didSet { updateDraft() }
     }
+    /// Режим поля ввода. Хранится, а не вычисляется по сервису черновиков: при выходе из аккаунта сервис очищает
+    /// память, и вычисляемый режим принял бы выход за выключение редактирования. Меняется в явных точках — включение,
+    /// крестик, подтверждение без изменений и успех запроса.
+    private(set) var inputMode = ChatInputMode.compose
+    /// Текст редактируемого сообщения для плашки: из ленты, если сообщение в её окне (правка с другого устройства
+    /// обновит плашку), иначе — на момент включения режима. `nil` — режим выключен. Хранится, а не вычисляется
+    /// по `serverMessages`: тот не наблюдается, и View не узнала бы о правке.
+    private(set) var editedMessageText: String?
     /// Текст ошибки для всплывающего сообщения. `nil` — сообщение скрыто.
     var errorMessage: String?
     /// `clientId` неотправленного сообщения, для которого показан выбор «повторить / удалить». `nil` — выбор скрыт.
@@ -64,11 +75,16 @@ final class ChatViewModel {
     let localizationService: LocalizationServiceProtocol
     let messageTextValidator: MessageTextValidatorProtocol
     let messageSendQueue: MessageSendQueueProtocol
+    let editService: MessageEditServiceProtocol
     let now: () -> Date
-    private let draftService: MessageDraftServiceProtocol
+    let draftService: MessageDraftServiceProtocol
     /// Пользователь, открывший экран, — владелец черновика; `nil` — сессии нет, черновик не меняется.
     /// Задаётся в конце `init`, после подстановки черновика: подстановка не возвращается в сервис через `didSet`.
-    @ObservationIgnored private var draftUserId: Int?
+    @ObservationIgnored private(set) var draftUserId: Int?
+    /// Идёт замена текста поля при смене режима: `didSet` не записывает подставленный текст в черновик или правку.
+    @ObservationIgnored private var isReplacingInput = false
+    /// Сигнал `observeEditSubmission` о начатом запросе правки; `nil` — экран ещё не показывался.
+    @ObservationIgnored var editSubmissionRequests: AsyncStream<Void>.Continuation?
     /// Календарь, по которому лента делится на дни. Функция, а не значение: после смены часового пояса
     /// `Calendar.current` уже другой.
     private let calendar: () -> Calendar
@@ -79,7 +95,7 @@ final class ChatViewModel {
 
     /// Сообщения с сервера из последнего снимка ленты. Не наблюдается: об изменении `observeMessages()` узнаёт
     /// из снимка.
-    @ObservationIgnored private var serverMessages: [Message] = []
+    @ObservationIgnored private(set) var serverMessages: [Message] = []
     /// Позиции сообщений ленты в плоском порядке, от самого нового, — для подгрузки старых.
     @ObservationIgnored private var messagePositions: [MessageClientKey: Int] = [:]
     /// `isLoaded` из последнего снимка; на экран попадает вместе с собранными из него сообщениями.
@@ -102,9 +118,10 @@ final class ChatViewModel {
     ///   - conversation: открытая переписка.
     ///   - messagesList: лента переписки.
     ///   - messageSendQueue: очередь отправки сообщений.
+    ///   - editService: отправка правок сообщений.
     ///   - sessionService: сессия — по ней сообщения делятся на исходящие и входящие; её пользователь — владелец
     ///     черновика.
-    ///   - draftService: черновики — текст поля ввода между открытиями экрана.
+    ///   - draftService: черновики и незавершённые правки — текст поля ввода между открытиями экрана.
     ///   - userCache: кэш пользователей — имена собеседника и отправителей.
     ///   - localizationService: язык форматирования времени и заголовков дней.
     ///   - messageTextValidator: проверка текста перед отправкой.
@@ -117,6 +134,7 @@ final class ChatViewModel {
         conversation: Conversation,
         messagesList: MessagesListServiceProtocol,
         messageSendQueue: MessageSendQueueProtocol,
+        editService: MessageEditServiceProtocol,
         sessionService: SessionServiceProtocol,
         draftService: MessageDraftServiceProtocol,
         userCache: UserCacheServiceProtocol,
@@ -131,6 +149,7 @@ final class ChatViewModel {
         self.conversation = conversation
         self.messagesList = messagesList
         self.messageSendQueue = messageSendQueue
+        self.editService = editService
         self.sessionService = sessionService
         self.draftService = draftService
         self.userCache = userCache
@@ -142,7 +161,13 @@ final class ChatViewModel {
         self.calendar = calendar
         self.sleep = sleep
         // Только чтение: SwiftUI может создать ViewModel несколько раз и оставить первый экземпляр.
-        messageText = draftService.draft(for: conversation.conversationId) ?? ""
+        if let edit = draftService.edit(for: conversation.conversationId) {
+            inputMode = .editing(messageId: edit.messageId, originalText: edit.originalText)
+            editedMessageText = edit.originalText
+            messageText = edit.text
+        } else {
+            messageText = draftService.draft(for: conversation.conversationId) ?? ""
+        }
         draftUserId = sessionService.currentUser?.userId
     }
 
@@ -248,6 +273,7 @@ final class ChatViewModel {
             errorMessage = ErrorMessages.message(for: failure)
         }
         serverMessages = snapshot.messages
+        refreshEditedMessageText()
         isServerWindowLoaded = snapshot.isLoaded
         if snapshot.isUrgent {
             requestImmediateUpdate()
@@ -294,7 +320,8 @@ final class ChatViewModel {
                 calendar: calendar,
                 now: now(),
                 strings: .current,
-                dateHeaderFormatter: dateHeaderFormatterProvider.formatter(locale: locale, calendar: calendar)
+                dateHeaderFormatter: dateHeaderFormatterProvider.formatter(locale: locale, calendar: calendar),
+                isEditing: inputMode != .compose
             )
         )
     }
@@ -320,10 +347,14 @@ final class ChatViewModel {
 
     // MARK: - Отправка
 
-    /// Обработчик кнопки отправки: ставит сообщение в очередь и сразу очищает поле. Сообщение появляется внизу
-    /// ленты в статусе «отправляется» — без паузы обновления.
+    /// Обработчик кнопки отправки: в режиме редактирования подтверждает правку, иначе ставит сообщение в очередь
+    /// и сразу очищает поле. Сообщение появляется внизу ленты в статусе «отправляется» — без паузы обновления.
     func didTapSend() {
         guard isSendEnabled else { return }
+        guard inputMode == .compose else {
+            submitEdit()
+            return
+        }
         messageSendQueue.enqueue(text: messageText, conversationId: conversation.conversationId)
         messageText = ""
         if let draftUserId {
@@ -334,17 +365,59 @@ final class ChatViewModel {
 
     // MARK: - Черновик
 
-    /// Записывает черновик в БД — точка сохранения: уход с экрана, уход приложения в неактивное состояние или в фон.
-    /// Повторное сохранение без изменений в БД не пишет.
+    /// Записывает в БД черновик или, в режиме редактирования, текст правки — точка сохранения: уход с экрана, уход
+    /// приложения в неактивное состояние или в фон. Повторное сохранение без изменений в БД не пишет.
     func saveDraft() {
         guard let draftUserId else { return }
-        draftService.save(text: messageText, conversationId: conversation.conversationId, userId: draftUserId)
+        switch inputMode {
+        case .compose:
+            draftService.save(text: messageText, conversationId: conversation.conversationId, userId: draftUserId)
+        case let .editing(messageId, originalText):
+            let edit = MessageEditDraft(messageId: messageId, originalText: originalText, text: messageText)
+            draftService.saveEdit(edit, conversationId: conversation.conversationId, userId: draftUserId)
+        }
     }
 
-    /// Меняет черновик в памяти после изменения поля ввода.
+    /// Меняет в памяти черновик или текст правки после изменения поля ввода. Подстановка текста при смене режима
+    /// не записывается: иначе черновик стал бы текстом правки или наоборот.
     private func updateDraft() {
-        guard let draftUserId else { return }
-        draftService.update(text: messageText, conversationId: conversation.conversationId, userId: draftUserId)
+        guard let draftUserId, !isReplacingInput else { return }
+        switch inputMode {
+        case .compose:
+            draftService.update(text: messageText, conversationId: conversation.conversationId, userId: draftUserId)
+        case .editing:
+            draftService.updateEdit(text: messageText, conversationId: conversation.conversationId, userId: draftUserId)
+        }
+    }
+
+    /// Подставляет текст в поле ввода, не записывая его в черновик или правку.
+    /// - Parameter text: новый текст поля.
+    func replaceInput(with text: String) {
+        isReplacingInput = true
+        messageText = text
+        isReplacingInput = false
+    }
+
+    /// Меняет режим поля ввода и текст плашки.
+    /// - Parameter mode: новый режим.
+    func setInputMode(_ mode: ChatInputMode) {
+        guard mode != inputMode else { return }
+        inputMode = mode
+        refreshEditedMessageText()
+    }
+
+    /// Обновляет текст плашки по режиму и ленте. Присваивает только при изменении: снимки без правки
+    /// не перерисовывают панель ввода.
+    private func refreshEditedMessageText() {
+        let text: String?
+        switch inputMode {
+        case .compose:
+            text = nil
+        case let .editing(messageId, originalText):
+            text = serverMessages.first { $0.messageId == messageId }?.text ?? originalText
+        }
+        guard text != editedMessageText else { return }
+        editedMessageText = text
     }
 
     /// Обработчик тапа по сообщению: для неотправленного показывает выбор «повторить / удалить».

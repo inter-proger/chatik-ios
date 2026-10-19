@@ -26,6 +26,7 @@ final class ConversationListServiceMock: ConversationListServiceProtocol {
     private(set) var nextPageRequests: [Int] = []
     private(set) var applied: [Conversation] = []
     private(set) var sentMessages: [Message] = []
+    private(set) var editedMessages: [(message: Message, lastMessage: LastMessage?)] = []
     /// Вызывается в `start()` — чтобы проверить, что к этому моменту уже сделано.
     var onStart: (() -> Void)?
 
@@ -58,5 +59,9 @@ final class ConversationListServiceMock: ConversationListServiceProtocol {
 
     func applySentMessage(_ message: Message) {
         sentMessages.append(message)
+    }
+
+    func applyEditedMessage(_ message: Message, lastMessage: LastMessage?) {
+        editedMessages.append((message, lastMessage))
     }
 }

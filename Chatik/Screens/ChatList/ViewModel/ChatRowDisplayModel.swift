@@ -16,6 +16,8 @@ enum ChatRowPreview: Equatable {
 
 /// Локальное состояние переписки, вытесняющее последнее сообщение в превью строки.
 enum ChatRowLocalPreview: Equatable {
+    /// Незавершённое редактирование своего сообщения — текст правки в строке не показывается.
+    case editing
     /// Последнее неотправленное сообщение.
     case failed(String)
     /// Черновик.
@@ -92,11 +94,14 @@ extension ChatRowDisplayModel {
     /// строку текста, а длинный вставленный текст не должен обрабатываться целиком при каждой пересборке списка.
     static let localPreviewLength = 200
 
-    /// Превью локального состояния переписки: «Не отправлено:» или «Черновик:» своим цветом и текст.
-    /// - Parameter localPreview: неотправленное сообщение или черновик.
+    /// Превью локального состояния переписки: «Не отправлено:» или «Черновик:» своим цветом и текст либо
+    /// «Редактирование активно» целиком цветом черновика.
+    /// - Parameter localPreview: редактирование, неотправленное сообщение или черновик.
     @MainActor
     static func localPreview(_ localPreview: ChatRowLocalPreview) -> AttributedString {
         switch localPreview {
+        case .editing:
+            labeledPreview(prefix: ChatListStrings.rowEditing, color: .draftLabel, text: nil)
         case let .failed(text):
             labeledPreview(prefix: ChatListStrings.rowFailedPrefix, color: .chatListFailedLabel, text: text)
         case let .draft(text):
@@ -108,19 +113,20 @@ extension ChatRowDisplayModel {
     /// пробельные символы заменены одним пробелом, края обрезаны по `MessageTextValidator.trimmedCharacters` —
     /// как и при решении, пуст ли черновик. Иначе в строке был бы виден только первый абзац.
     /// - Parameters:
-    ///   - prefix: префикс — «Черновик:», «Не отправлено:».
+    ///   - prefix: префикс — «Черновик:», «Не отправлено:» или фраза целиком.
     ///   - color: цвет префикса; текст остаётся без цвета.
-    ///   - text: непустой текст.
+    ///   - text: непустой текст; `nil` — превью из одного префикса, без пробела после него.
     @MainActor
-    private static func labeledPreview(prefix: String, color: Color, text: String) -> AttributedString {
+    private static func labeledPreview(prefix: String, color: Color, text: String?) -> AttributedString {
+        var label = AttributedString(prefix)
+        label.foregroundColor = color
+        guard let text else { return label }
         let trimmed = MessageTextValidator.trimmedCharacters
         let line = text.drop { $0.unicodeScalars.allSatisfy(trimmed.contains) }
             .prefix(localPreviewLength)
             .split(whereSeparator: \.isWhitespace)
             .joined(separator: " ")
             .trimmingCharacters(in: trimmed)
-        var label = AttributedString(prefix)
-        label.foregroundColor = color
         return label + AttributedString(" " + line)
     }
 

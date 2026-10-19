@@ -286,6 +286,63 @@ final class MessageCacheServiceTests: XCTestCase {
         XCTAssertEqual(state?.syncMark, .stub(7000))
     }
 
+    // MARK: - Редактирование
+
+    /// Кейс: ответ на правку сообщения, которое есть в БД несинхронизированной переписки с кэшем.
+    /// Ожидание: сообщение обновлено и опубликовано `upserted` (экран его показывает), `syncMark` не сдвинут.
+    func test_applyEdited_notSynced_updatesAndPublishes() async throws {
+        try await writeState(conversationId: 1, syncMark: .stub)
+        _ = try await storage.write(MessageStorageChanges(upserts: [.make(id: 3, text: "Привет")]))
+        var changes = await sut.changes(conversationId: 1).makeAsyncIterator()
+        let edited = Message.make(id: 3, text: "Привет всем", updatedAt: .stub(9000))
+
+        await sut.applyEdited(edited)
+
+        let change = await changes.next()
+        guard case let .upserted(published) = change else { return XCTFail("Ожидалось upserted") }
+        let stored = try await storage.fetchLatestBlocks(conversationId: 1, minCount: 10)
+        let state = try await storage.fetchState(conversationId: 1)
+        XCTAssertEqual(published, [edited])
+        XCTAssertEqual(stored.map(\.text), ["Привет всем"])
+        XCTAssertEqual(state?.syncMark, .stub)
+    }
+
+    /// Кейс: ответ на правку сообщения синхронизированной переписки.
+    /// Ожидание: сообщение обновлено, `syncMark` сдвинут до времени правки.
+    func test_applyEdited_synced_advancesMark() async throws {
+        try await makeSynced(page: [.make(id: 3, text: "Привет")])
+
+        await sut.applyEdited(.make(id: 3, text: "Привет всем", updatedAt: .stub(9000)))
+
+        let stored = try await storage.fetchLatestBlocks(conversationId: 1, minCount: 10)
+        let state = try await storage.fetchState(conversationId: 1)
+        XCTAssertEqual(stored.map(\.text), ["Привет всем"])
+        XCTAssertEqual(state?.syncMark, .stub(9000))
+    }
+
+    /// Кейс: ответ на правку сообщения, которого нет в БД.
+    /// Ожидание: сообщение не создано — запись создала бы дыру в непрерывном кэше.
+    func test_applyEdited_missingMessage_isNotCreated() async throws {
+        try await makeSynced(page: [.make(id: 5)])
+
+        await sut.applyEdited(.make(id: 1, updatedAt: .stub(9000)))
+
+        let stored = try await storage.fetchLatestBlocks(conversationId: 1, minCount: 10)
+        XCTAssertEqual(stored.map(\.id), [5])
+    }
+
+    /// Кейс: ответ на правку пришёл, когда кэш уже в выходе.
+    /// Ожидание: запись отброшена — сообщение прежнее.
+    func test_applyEdited_duringLogout_doesNotWrite() async throws {
+        _ = try await storage.write(MessageStorageChanges(upserts: [.make(id: 3, text: "Привет")]))
+        await sut.prepareForLogout()
+
+        await sut.applyEdited(.make(id: 3, text: "Привет всем", updatedAt: .stub(9000)))
+
+        let stored = try await storage.fetchLatestBlocks(conversationId: 1, minCount: 10)
+        XCTAssertEqual(stored.map(\.text), ["Привет"])
+    }
+
     // MARK: - Исключения из удаления
 
     /// Кейс: после начала синхронизации пришёл ответ на отправку; затем записан сброс, в странице которого

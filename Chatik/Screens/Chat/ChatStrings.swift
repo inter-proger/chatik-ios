@@ -24,6 +24,10 @@ enum ChatStrings {
     static var userLoading: String { localized("chat.user.loading") }
     static var userDeleted: String { localized("chat.user.deleted") }
     static var updating: String { localized("chat.updating") }
+    static var messageActionEdit: String { localized("chat.message_actions.edit") }
+    static var editTitle: String { localized("chat.edit.title") }
+    static var editCancel: String { localized("chat.edit.cancel") }
+    static var editSave: String { localized("chat.edit.save") }
 
     /// Подсказка о превышении длины сообщения.
     /// - Parameter maxLength: лимит длины на стороне сервера.

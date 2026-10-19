@@ -13,7 +13,7 @@ protocol MessageServiceProtocol: Sendable {
     /// Отправляет текстовое сообщение в переписку; повтор с тем же `clientId` не создаёт дубль.
     func send(conversationId: Int, text: String, clientId: String) async throws -> Message
     /// Заменяет текст своего сообщения.
-    func edit(messageId: Int, newText: String) async throws -> Message
+    func edit(messageId: Int, newText: String) async throws -> MessageEditResult
 }
 
 final class MessageService: MessageServiceProtocol {
@@ -59,10 +59,10 @@ final class MessageService: MessageServiceProtocol {
     /// - Parameters:
     ///   - messageId: сообщение текущего пользователя; чужое — ошибка 6003.
     ///   - newText: новый текст с теми же ограничениями, что и при отправке.
-    /// - Returns: сообщение с `isEdited == true` и новым `updatedAt`. Если текст после обрезки совпал с текущим,
-    ///   сервер сообщение не меняет и возвращает его как есть — `isEdited` и `updatedAt` прежние.
-    func edit(messageId: Int, newText: String) async throws -> Message {
-        let response: MessageResponse = try await networkService.request(MessageEndpoint.edit(messageId: messageId, newText: newText))
-        return response.message
+    /// - Returns: сообщение с `isEdited == true` и новым `updatedAt` и превью переписки, если отредактировано
+    ///   последнее сообщение. Если текст после обрезки совпал с текущим, сервер сообщение не меняет и возвращает его
+    ///   как есть — `isEdited` и `updatedAt` прежние, превью нет.
+    func edit(messageId: Int, newText: String) async throws -> MessageEditResult {
+        try await networkService.request(MessageEndpoint.edit(messageId: messageId, newText: newText))
     }
 }

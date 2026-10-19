@@ -183,7 +183,7 @@ final class MessageDraftServiceTests: XCTestCase {
 
         await waitForWrites()
         XCTAssertEqual(storage.applied.count, 1)
-        XCTAssertEqual(storage.applied.first?.changes, [7: .save("Первый"), 8: .save("Второй"), 9: .delete])
+        XCTAssertEqual(storage.applied.first?.changes, [7: .draft("Первый"), 8: .draft("Второй"), 9: .draft(nil)])
         XCTAssertEqual(storage.applied.first?.userId, 1)
         XCTAssertEqual(storage.drafts[1], [7: "Первый", 8: "Второй"])
     }
@@ -217,7 +217,7 @@ final class MessageDraftServiceTests: XCTestCase {
         gate.open()
 
         await waitForWrites()
-        XCTAssertEqual(storage.applied.map(\.changes), [[7: .save("Первый")], [7: .save("Второй")]])
+        XCTAssertEqual(storage.applied.map(\.changes), [[7: .draft("Первый")], [7: .draft("Второй")]])
         XCTAssertEqual(storage.drafts[1], [7: "Второй"])
     }
 
@@ -260,7 +260,7 @@ final class MessageDraftServiceTests: XCTestCase {
         sut.save(text: "Второй", conversationId: 8, userId: 1)
 
         await waitForWrites()
-        XCTAssertEqual(storage.applied.last?.changes, [7: .save("Первый"), 8: .save("Второй")])
+        XCTAssertEqual(storage.applied.last?.changes, [7: .draft("Первый"), 8: .draft("Второй")])
         XCTAssertEqual(storage.drafts[1], [7: "Первый", 8: "Второй"])
     }
 
@@ -427,10 +427,276 @@ final class MessageDraftServiceTests: XCTestCase {
         XCTAssertEqual(storage.drafts[1], [:])
     }
 
+    // MARK: - Редактирование
+
+    /// Кейс: у переписки черновик; включается редактирование сообщения.
+    /// Ожидание: правка с исходным текстом видна из памяти и сразу записана в БД, черновик не изменился.
+    func test_beginEditing_keepsDraftAndWritesEdit() async {
+        storage.drafts = [1: [7: "Черновик"]]
+        await sut.load(userId: 1)
+
+        sut.beginEditing(messageId: 15, originalText: "Привет", conversationId: 7, userId: 1)
+
+        await waitForWrites()
+        let edit = MessageEditDraft(messageId: 15, originalText: "Привет", text: "Привет")
+        XCTAssertEqual(sut.edit(for: 7), edit)
+        XCTAssertEqual(sut.editingMessageId(for: 7), 15)
+        XCTAssertEqual(sut.draft(for: 7), "Черновик")
+        XCTAssertEqual(storage.applied.map(\.changes), [[7: .edit(edit)]])
+        XCTAssertEqual(storage.drafts[1], [7: "Черновик"])
+    }
+
+    /// Кейс: режим редактирования уже включён; включается редактирование другого сообщения.
+    /// Ожидание: правка прежняя — повторное включение ничего не меняет.
+    func test_beginEditing_whileEditing_keepsCurrentEdit() async {
+        await sut.load(userId: 1)
+        sut.beginEditing(messageId: 15, originalText: "Привет", conversationId: 7, userId: 1)
+
+        sut.beginEditing(messageId: 16, originalText: "Пока", conversationId: 7, userId: 1)
+
+        XCTAssertEqual(sut.edit(for: 7), MessageEditDraft(messageId: 15, originalText: "Привет", text: "Привет"))
+    }
+
+    /// Кейс: в режиме редактирования меняется текст правки, в том числе на пустой, без точки сохранения.
+    /// Ожидание: текст правки меняется только в памяти, режим не выключается, черновик не трогается.
+    func test_updateEdit_changesMemoryOnly() async {
+        storage.drafts = [1: [7: "Черновик"]]
+        await sut.load(userId: 1)
+        sut.beginEditing(messageId: 15, originalText: "Привет", conversationId: 7, userId: 1)
+        await waitForWrites()
+
+        sut.updateEdit(text: "Привет всем", conversationId: 7, userId: 1)
+        sut.updateEdit(text: "", conversationId: 7, userId: 1)
+
+        await waitForWrites()
+        XCTAssertEqual(sut.edit(for: 7)?.text, "")
+        XCTAssertEqual(sut.editingMessageId(for: 7), 15)
+        XCTAssertEqual(sut.draft(for: 7), "Черновик")
+        XCTAssertEqual(storage.applied.count, 1)
+    }
+
+    /// Кейс: текст правки изменён и сохранён в точке сохранения.
+    /// Ожидание: в БД записана правка с новым текстом, черновик в БД на месте.
+    func test_saveEdit_writesEditText() async {
+        storage.drafts = [1: [7: "Черновик"]]
+        await sut.load(userId: 1)
+        sut.beginEditing(messageId: 15, originalText: "Привет", conversationId: 7, userId: 1)
+        let edit = MessageEditDraft(messageId: 15, originalText: "Привет", text: "Привет всем")
+
+        sut.saveEdit(edit, conversationId: 7, userId: 1)
+
+        await waitForWrites()
+        XCTAssertEqual(sut.edit(for: 7), edit)
+        XCTAssertEqual(storage.edits[1], [7: edit])
+        XCTAssertEqual(storage.drafts[1], [7: "Черновик"])
+    }
+
+    /// Кейс: правка сохраняется, но режим редактирования уже выключен (например, запрос успел завершиться).
+    /// Ожидание: правка не воскрешается ни в памяти, ни в БД.
+    func test_saveEdit_withoutEdit_doesNothing() async {
+        await sut.load(userId: 1)
+
+        sut.saveEdit(MessageEditDraft(messageId: 15, originalText: "Привет", text: "Привет всем"), conversationId: 7, userId: 1)
+
+        await waitForWrites()
+        XCTAssertNil(sut.edit(for: 7))
+        XCTAssertTrue(storage.applied.isEmpty)
+    }
+
+    /// Кейс: редактируется сообщение 15; приходит выключение режима для сообщения 16 (поздний ответ прежней правки).
+    /// Ожидание: режим не выключен.
+    func test_endEditing_otherMessage_keepsEdit() async {
+        await sut.load(userId: 1)
+        sut.beginEditing(messageId: 15, originalText: "Привет", conversationId: 7, userId: 1)
+
+        sut.endEditing(messageId: 16, conversationId: 7, userId: 1)
+
+        XCTAssertEqual(sut.editingMessageId(for: 7), 15)
+    }
+
+    /// Кейс: у переписки черновик и правка; режим редактирования выключается.
+    /// Ожидание: правки нет ни в памяти, ни в БД; черновик прежний.
+    func test_endEditing_clearsEditAndKeepsDraft() async {
+        storage.drafts = [1: [7: "Черновик"]]
+        await sut.load(userId: 1)
+        sut.beginEditing(messageId: 15, originalText: "Привет", conversationId: 7, userId: 1)
+
+        sut.endEditing(messageId: 15, conversationId: 7, userId: 1)
+
+        await waitForWrites()
+        XCTAssertNil(sut.edit(for: 7))
+        XCTAssertNil(sut.editingMessageId(for: 7))
+        XCTAssertEqual(sut.draft(for: 7), "Черновик")
+        XCTAssertEqual(storage.edits[1], [:])
+        XCTAssertEqual(storage.drafts[1], [7: "Черновик"])
+    }
+
+    /// Кейс: в БД правка; сервис загружает данные пользователя.
+    /// Ожидание: правка и редактируемое сообщение доступны из памяти.
+    func test_load_readsEdits() async {
+        let edit = MessageEditDraft(messageId: 15, originalText: "Привет", text: "Привет всем")
+        storage.edits = [1: [7: edit]]
+
+        await sut.load(userId: 1)
+
+        XCTAssertEqual(sut.edit(for: 7), edit)
+        XCTAssertEqual(sut.editingMessageId(for: 7), 15)
+        XCTAssertNil(sut.draft(for: 7))
+    }
+
+    /// Кейс: за `editingMessageId(for:)` наблюдают; меняются текст правки и черновик, затем режим выключается.
+    /// Ожидание: набор текста наблюдателя не будит, выключение режима — будит.
+    func test_editingMessageId_notifiesOnlyOnModeChange() async {
+        await sut.load(userId: 1)
+        sut.beginEditing(messageId: 15, originalText: "Привет", conversationId: 7, userId: 1)
+        let changeCount = trackEditingMessageIdChanges(conversationId: 7)
+
+        sut.updateEdit(text: "Привет всем", conversationId: 7, userId: 1)
+        sut.update(text: "Черновик другой переписки", conversationId: 8, userId: 1)
+        let countAfterTyping = changeCount.value
+        sut.endEditing(messageId: 15, conversationId: 7, userId: 1)
+
+        XCTAssertEqual(countAfterTyping, 0)
+        XCTAssertEqual(changeCount.value, 1)
+    }
+
+    /// Кейс: правка изменена в памяти; запись черновика этой переписки идёт, пока правка снова меняется.
+    /// Ожидание: после записи пометка правки не снята — следующее сохранение пишет последний текст правки.
+    func test_dirtyFields_trackedPerField() async {
+        await sut.load(userId: 1)
+        sut.beginEditing(messageId: 15, originalText: "Привет", conversationId: 7, userId: 1)
+        await waitForWrites()
+        let gate = Gate()
+        storage.nextApplyGate = gate
+        sut.save(text: "Черновик", conversationId: 7, userId: 1)
+        await yieldUntil { gate.isWaiting }
+        sut.updateEdit(text: "Привет всем", conversationId: 7, userId: 1)
+        gate.open()
+        await waitForWrites()
+
+        sut.save(text: "Черновик", conversationId: 7, userId: 1)
+
+        await waitForWrites()
+        XCTAssertEqual(storage.edits[1]?[7]?.text, "Привет всем")
+        XCTAssertEqual(storage.drafts[1], [7: "Черновик"])
+    }
+
+    /// Кейс: чтение упало; у переписки в БД черновик, которого нет в памяти; включается и выключается
+    /// редактирование, текст правки сохраняется.
+    /// Ожидание: черновик в БД не стёрт ни одной записью — пишется только поле правки.
+    func test_editing_afterFailedLoad_keepsUnseenDraft() async {
+        storage.drafts = [1: [7: "Невиденный"]]
+        storage.stubbedFetchError = URLError(.unknown)
+        await sut.load(userId: 1)
+
+        sut.beginEditing(messageId: 15, originalText: "Привет", conversationId: 7, userId: 1)
+        sut.saveEdit(MessageEditDraft(messageId: 15, originalText: "Привет", text: "Привет всем"), conversationId: 7, userId: 1)
+        sut.endEditing(messageId: 15, conversationId: 7, userId: 1)
+
+        await waitForWrites()
+        XCTAssertEqual(storage.drafts[1], [7: "Невиденный"])
+        XCTAssertTrue(storage.applied.allSatisfy { $0.changes[7]?.text == nil })
+    }
+
+    /// Кейс: чтение упало; выключается редактирование переписки, правки которой нет в памяти.
+    /// Ожидание: ничего не записывается — правку в БД сервис не видел.
+    func test_endEditing_afterFailedLoad_withoutEdit_writesNothing() async {
+        storage.edits = [1: [7: MessageEditDraft(messageId: 15, originalText: "Привет", text: "Привет всем")]]
+        storage.stubbedFetchError = URLError(.unknown)
+        await sut.load(userId: 1)
+
+        sut.endEditing(messageId: 15, conversationId: 7, userId: 1)
+
+        await waitForWrites()
+        XCTAssertTrue(storage.applied.isEmpty)
+    }
+
+    /// Кейс: текст правки изменён в памяти без сохранения; начинается выход.
+    /// Ожидание: правка записана в БД, память очищена; после повторного входа правка на месте.
+    func test_logout_writesDirtyEdit() async {
+        await sut.load(userId: 1)
+        sut.beginEditing(messageId: 15, originalText: "Привет", conversationId: 7, userId: 1)
+        sut.updateEdit(text: "Привет всем", conversationId: 7, userId: 1)
+
+        sut.prepareForLogout()
+        await waitForWrites()
+        XCTAssertNil(sut.edit(for: 7))
+        await sut.load(userId: 1)
+
+        XCTAssertEqual(sut.edit(for: 7), MessageEditDraft(messageId: 15, originalText: "Привет", text: "Привет всем"))
+    }
+
+    /// Кейс: у переписки в БД черновик, в памяти — правка; пользователь вышел, экран уходит после выхода
+    /// и сохраняет правку, затем выключает режим.
+    /// Ожидание: правка записана, затем выключена; черновик, которого нет в памяти, не стёрт.
+    func test_editChanges_afterLogout_keepDraft() async {
+        storage.drafts = [1: [7: "Черновик"]]
+        await sut.load(userId: 1)
+        sut.beginEditing(messageId: 15, originalText: "Привет", conversationId: 7, userId: 1)
+        sut.prepareForLogout()
+        let edit = MessageEditDraft(messageId: 15, originalText: "Привет", text: "Привет всем")
+
+        sut.saveEdit(edit, conversationId: 7, userId: 1)
+        await waitForWrites()
+        let savedEdit = storage.edits[1]?[7]
+        sut.endEditing(messageId: 15, conversationId: 7, userId: 1)
+
+        await waitForWrites()
+        XCTAssertEqual(savedEdit, edit)
+        XCTAssertNil(storage.edits[1]?[7])
+        XCTAssertEqual(storage.drafts[1], [7: "Черновик"])
+    }
+
+    /// Кейс: пользователь вышел без правки в памяти; экран после выхода сохраняет правку.
+    /// Ожидание: ничего не записывается — правка не воскрешается.
+    func test_saveEdit_afterLogout_withoutEdit_writesNothing() async {
+        await sut.load(userId: 1)
+        sut.prepareForLogout()
+
+        sut.saveEdit(MessageEditDraft(messageId: 15, originalText: "Привет", text: "Привет всем"), conversationId: 7, userId: 1)
+
+        await waitForWrites()
+        XCTAssertTrue(storage.applied.isEmpty)
+    }
+
+    /// Кейс: в БД черновик и правка, сохранённые давно; сервис загружает данные.
+    /// Ожидание: просроченные записи удаляются одним вызовом с общей границей — срок у черновика и правки общий.
+    func test_load_expiryIsSharedForDraftAndEdit() async {
+        storage.drafts = [1: [7: "Черновик"]]
+        storage.edits = [1: [7: MessageEditDraft(messageId: 15, originalText: "Привет", text: "Привет всем")]]
+
+        await sut.load(userId: 1)
+
+        XCTAssertEqual(storage.deleteCutoffs, [now.addingTimeInterval(-MessageDraftService.draftLifetime)])
+    }
+
     // MARK: - Helpers
+
+    /// Считает изменения `editingMessageId(for:)`, о которых сообщает Observation. Регистрация ставится заново
+    /// после каждого срабатывания.
+    /// - Parameter conversationId: переписка.
+    private func trackEditingMessageIdChanges(conversationId: Int) -> ChangeCounter {
+        let counter = ChangeCounter()
+        func track() {
+            withObservationTracking {
+                _ = sut.editingMessageId(for: conversationId)
+            } onChange: {
+                counter.value += 1
+                MainActor.assumeIsolated { track() }
+            }
+        }
+        track()
+        return counter
+    }
 
     /// Ждёт, пока закончатся все записи в БД, запущенные сервисом.
     private func waitForWrites() async {
         await waitUntil { [unowned self] in backgroundTasks.runningCount == 0 }
     }
+}
+
+/// Счётчик срабатываний Observation.
+private final class ChangeCounter: @unchecked Sendable {
+    /// Изменяется только на main: в тесте свойства сервиса меняются на main, и `onChange` вызывается там же.
+    var value = 0
 }

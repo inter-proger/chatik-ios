@@ -138,11 +138,13 @@ final class ChatListViewModel {
         return rows
     }
 
-    /// Локальное состояние переписки для превью: неотправленное сообщение важнее черновика.
+    /// Локальное состояние переписки для превью: незавершённое редактирование важнее неотправленного сообщения,
+    /// а оно — черновика. Режим читается через `editingMessageId(for:)`: набор текста правки строку не пересобирает.
     /// - Parameter conversationId: переписка.
-    /// - Returns: `nil` — нет ни неотправленного сообщения, ни черновика.
+    /// - Returns: `nil` — нет ни редактирования, ни неотправленного сообщения, ни черновика.
     private func localPreview(for conversationId: Int) -> ChatRowLocalPreview? {
-        unsentMessages.lastFailedText(for: conversationId).map(ChatRowLocalPreview.failed)
+        guard draftService.editingMessageId(for: conversationId) == nil else { return .editing }
+        return unsentMessages.lastFailedText(for: conversationId).map(ChatRowLocalPreview.failed)
             ?? draftService.draft(for: conversationId).map(ChatRowLocalPreview.draft)
     }
 

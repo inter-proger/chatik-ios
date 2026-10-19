@@ -6,7 +6,8 @@
 import Foundation
 @testable import Chatik
 
-/// Мок кэша сообщений для очереди отправки: запоминает отправленные сообщения; остальное — заглушки.
+/// Мок кэша сообщений для очереди отправки и сервиса правок: запоминает отправленные и отредактированные
+/// сообщения; остальное — заглушки.
 @MainActor
 final class MessageCacheServiceMock: MessageCacheServiceProtocol {
     /// Сообщения, переданные в `applySent`, по порядку.
@@ -15,6 +16,10 @@ final class MessageCacheServiceMock: MessageCacheServiceProtocol {
     var onApplySent: (@MainActor () async -> Void)?
     /// Что возвращает `applySent`: не `.written` — сообщение в `sentMessages` не попадает.
     var stubbedApplySentResult = SentMessageWriteResult.written
+    /// Сообщения, переданные в `applyEdited`, по порядку.
+    private(set) var editedMessages: [Message] = []
+    /// Вызывается внутри `applyEdited` после того, как сообщение запомнено, — пока запись идёт.
+    var onApplyEdited: (@MainActor () async -> Void)?
 
     @MainActor
     func isSynced(conversationId: Int) async -> Bool {
@@ -45,6 +50,12 @@ final class MessageCacheServiceMock: MessageCacheServiceProtocol {
     @MainActor
     func appendOlderPage(_ page: MessagesPage, requestedBlockId: Int, conversationId: Int) async throws -> Bool {
         false
+    }
+
+    @MainActor
+    func applyEdited(_ message: Message) async {
+        editedMessages.append(message)
+        await onApplyEdited?()
     }
 
     @MainActor

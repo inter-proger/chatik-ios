@@ -18,6 +18,9 @@ import SwiftUI
 ///
 /// Выбор «повторить / удалить» привязан к пузырю, а не к экрану: на iOS 26 он всплывает от пузыря, до iOS 26 —
 /// обычным листом снизу.
+///
+/// Долгое нажатие на пузырь открывает меню действий (`MessageDisplayModel.actions`). Модификатор `contextMenu` стоит
+/// всегда, а не по условию, — так он не меняет идентичность View; с пустым списком действий меню не показывается.
 struct MessageBubbleView: View {
     let message: MessageDisplayModel
     /// Показан выбор «повторить / удалить» у неотправленного сообщения.
@@ -25,6 +28,8 @@ struct MessageBubbleView: View {
     var onTapFailed: () -> Void = {}
     var onRetry: () -> Void = {}
     var onDelete: () -> Void = {}
+    /// Выбран пункт меню по долгому нажатию.
+    var onAction: (MessageAction) -> Void = { _ in }
 
     private static let avatarSize: CGFloat = 32
     /// Промежуток между аватаром и входящим пузырём.
@@ -44,7 +49,7 @@ struct MessageBubbleView: View {
         HStack(alignment: .top, spacing: 0) {
             if message.isOutgoing {
                 Spacer(minLength: Self.avatarSideInset + Self.outgoingShift)
-                bubble
+                bubbleWithMenu
                     .confirmationDialog(
                         ChatStrings.failedActionsTitle,
                         isPresented: isShowingFailedActions,
@@ -61,7 +66,7 @@ struct MessageBubbleView: View {
                     .padding(.trailing, Self.freeSideInset - Self.outgoingShift)
             } else {
                 avatar
-                bubble
+                bubbleWithMenu
                     .padding(.leading, Self.avatarSpacing)
                 Spacer(minLength: Self.freeSideInset)
             }
@@ -101,6 +106,34 @@ struct MessageBubbleView: View {
         } else {
             Color.clear
                 .frame(width: Self.avatarSize, height: 0)
+        }
+    }
+
+    /// Пузырь с меню по долгому нажатию. Превью задано явно: лента перевёрнута (`flippedVertically`), и снимок,
+    /// который система делает сама, получался вырожденным — вместо пузыря тонкая полоса.
+    ///
+    /// Пузырь отражён внутри меню и ещё раз снаружи — вместе это тождество, в ленте он выглядит как раньше. Подсветку
+    /// при нажатии и возврат при закрытии меню система рисует снимком того, что внутри меню, в своём контейнере
+    /// внутри перевёрнутой прокрутки, но без отражения строки. Без внутреннего отражения снимок был бы вверх ногами.
+    private var bubbleWithMenu: some View {
+        bubble
+            .flippedVertically()
+            .contextMenu {
+                ForEach(message.actions, id: \.self) { action in
+                    actionButton(action)
+                }
+            } preview: {
+                bubble
+            }
+            .flippedVertically()
+    }
+
+    /// Пункт меню действия с сообщением.
+    /// - Parameter action: действие.
+    private func actionButton(_ action: MessageAction) -> some View {
+        switch action {
+        case .edit:
+            Button(ChatStrings.messageActionEdit, systemImage: "pencil") { onAction(.edit) }
         }
     }
 
@@ -219,11 +252,11 @@ private struct MessageBubbleLayout: Layout {
 #Preview {
     let ivan = MessageSenderDisplayModel(name: "Иван Петров", isPlaceholder: false, avatarURL: nil)
     VStack(spacing: 0) {
-        MessageBubbleView(message: MessageDisplayModel(id: MessageClientKey(senderId: 1, clientId: "1"), text: "Привет!", isUnsupported: false, isOutgoing: true, sender: ivan, time: "12:01", editedLabel: nil, deliveryState: .delivered, deliveryStateLabel: nil))
-        MessageBubbleView(message: MessageDisplayModel(id: MessageClientKey(senderId: 1, clientId: "2"), text: "Как дела?", isUnsupported: false, isOutgoing: true, sender: nil, time: nil, editedLabel: nil, deliveryState: .sending, deliveryStateLabel: "Отправляется"))
-        MessageBubbleView(message: MessageDisplayModel(id: MessageClientKey(senderId: 1, clientId: "3"), text: "Ты тут?", isUnsupported: false, isOutgoing: true, sender: nil, time: nil, editedLabel: nil, deliveryState: .failed, deliveryStateLabel: "Не отправлено"))
-        MessageBubbleView(message: MessageDisplayModel(id: MessageClientKey(senderId: 2, clientId: "4"), text: "Ок", isUnsupported: false, isOutgoing: false, sender: MessageSenderDisplayModel(name: "Мария Александровна Константинопольская-Вознесенская", isPlaceholder: false, avatarURL: nil), time: "12:02", editedLabel: "изменено", deliveryState: .delivered, deliveryStateLabel: nil))
-        MessageBubbleView(message: MessageDisplayModel(id: MessageClientKey(senderId: 3, clientId: "5"), text: "Сообщение не поддерживается", isUnsupported: true, isOutgoing: false, sender: MessageSenderDisplayModel(name: "Загрузка…", isPlaceholder: true, avatarURL: nil), time: "12:03", editedLabel: nil, deliveryState: .delivered, deliveryStateLabel: nil))
+        MessageBubbleView(message: MessageDisplayModel(id: MessageClientKey(senderId: 1, clientId: "1"), text: "Привет!", isUnsupported: false, isOutgoing: true, sender: ivan, time: "12:01", editedLabel: nil, deliveryState: .delivered, deliveryStateLabel: nil, actions: []))
+        MessageBubbleView(message: MessageDisplayModel(id: MessageClientKey(senderId: 1, clientId: "2"), text: "Как дела?", isUnsupported: false, isOutgoing: true, sender: nil, time: nil, editedLabel: nil, deliveryState: .sending, deliveryStateLabel: "Отправляется", actions: []))
+        MessageBubbleView(message: MessageDisplayModel(id: MessageClientKey(senderId: 1, clientId: "3"), text: "Ты тут?", isUnsupported: false, isOutgoing: true, sender: nil, time: nil, editedLabel: nil, deliveryState: .failed, deliveryStateLabel: "Не отправлено", actions: []))
+        MessageBubbleView(message: MessageDisplayModel(id: MessageClientKey(senderId: 2, clientId: "4"), text: "Ок", isUnsupported: false, isOutgoing: false, sender: MessageSenderDisplayModel(name: "Мария Александровна Константинопольская-Вознесенская", isPlaceholder: false, avatarURL: nil), time: "12:02", editedLabel: "Изменено", deliveryState: .delivered, deliveryStateLabel: nil, actions: []))
+        MessageBubbleView(message: MessageDisplayModel(id: MessageClientKey(senderId: 3, clientId: "5"), text: "Сообщение не поддерживается", isUnsupported: true, isOutgoing: false, sender: MessageSenderDisplayModel(name: "Загрузка…", isPlaceholder: true, avatarURL: nil), time: "12:03", editedLabel: nil, deliveryState: .delivered, deliveryStateLabel: nil, actions: []))
     }
     .padding()
 }

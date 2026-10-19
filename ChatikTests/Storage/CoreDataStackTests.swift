@@ -194,11 +194,11 @@ final class CoreDataStackTests: XCTestCase {
 
         let container = CoreDataStack.makeContainer(storeURL: storeURL)
         let drafts = MessageDraftStorageService(container: container)
-        try await drafts.apply([7: .save("Черновик")], userId: 1)
+        try await drafts.apply([7: .draft("Черновик")], userId: 1)
 
         let messages = try await MessageStorageService(container: container).fetchLatestBlocks(conversationId: 7, minCount: 10)
         let outgoing = try await OutgoingMessageStorageService(container: container).fetchAll(senderId: 1)
-        let storedDrafts = try await drafts.fetchAll(userId: 1)
+        let storedDrafts = try await drafts.fetchAll(userId: 1).mapValues(\.text)
         XCTAssertEqual(messages.map(\.text), ["Сохранённое"])
         XCTAssertEqual(outgoing.map(\.clientId), ["pending"])
         XCTAssertEqual(storedDrafts, [7: "Черновик"])
@@ -228,6 +228,31 @@ final class CoreDataStackTests: XCTestCase {
         let second = try await storage.fetchAll(senderId: 2)
         XCTAssertEqual(first.map(\.text), ["Не отправлено"])
         XCTAssertEqual(second.map(\.text), ["Другого пользователя"])
+    }
+
+    /// Кейс: хранилище создано девятой версией модели (черновики без правок); в нём черновики двух переписок.
+    /// Ожидание: лёгкая миграция без потери данных — черновики на месте и без правок, а правку можно записать
+    /// рядом с черновиком и прочитать.
+    func test_makeContainer_ninthModelVersion_keepsDraftsAndAddsEdits() async throws {
+        try makeStore(modelVersion: "Chatik 9") { context in
+            for (conversationId, text) in [(7, "Первый"), (8, "Второй")] {
+                let draft = NSEntityDescription.insertNewObject(forEntityName: "MessageDraftEntity", into: context)
+                draft.setValue(1, forKey: "userId")
+                draft.setValue(conversationId, forKey: "conversationId")
+                draft.setValue(text, forKey: "text")
+                draft.setValue(Date(timeIntervalSince1970: 1_790_846_400), forKey: "updatedAt")
+            }
+        }
+
+        let container = CoreDataStack.makeContainer(storeURL: storeURL)
+        let drafts = MessageDraftStorageService(container: container)
+        let migrated = try await drafts.fetchAll(userId: 1)
+        let edit = MessageEditDraft(messageId: 15, originalText: "Привет", text: "Привет всем")
+        try await drafts.apply([7: .edit(edit)], userId: 1)
+
+        let stored = try await drafts.fetchAll(userId: 1)
+        XCTAssertEqual(migrated, [7: MessageDraft(text: "Первый"), 8: MessageDraft(text: "Второй")])
+        XCTAssertEqual(stored[7], MessageDraft(text: "Первый", edit: edit))
     }
 
     // MARK: - Helpers

@@ -105,6 +105,12 @@ enum PreviewDependencies {
                 messageSendQueue: messageSendQueue
             ),
             messageSendQueue: messageSendQueue,
+            editService: MessageEditService(
+                messageService: messageService,
+                messageCache: messageCache,
+                positionUpdater: ConversationPositionUpdatingPreviewMock(),
+                draftService: messageDraftService
+            ),
             sessionService: sessionService,
             draftService: messageDraftService,
             userCache: userCache,
@@ -355,9 +361,9 @@ final class MessageServicePreviewMock: MessageServiceProtocol, Sendable {
         return makeMessage(id: Int.random(in: 100...10_000), conversationId: conversationId, senderId: 1, text: text, clientId: clientId)
     }
 
-    func edit(messageId: Int, newText: String) async throws -> Message {
+    func edit(messageId: Int, newText: String) async throws -> MessageEditResult {
         try await Task.sleep(for: delay)
-        return makeMessage(id: messageId, conversationId: 1, senderId: 1, text: newText)
+        return MessageEditResult(message: makeMessage(id: messageId, conversationId: 1, senderId: 1, text: newText), lastMessage: nil)
     }
 
     /// Собирает текстовое сообщение, отправленное только что.
@@ -465,6 +471,7 @@ final class SessionWorkPreviewMock: SessionWorkStarting {
 @MainActor
 final class ConversationPositionUpdatingPreviewMock: ConversationPositionUpdating {
     func applySentMessage(_ message: Message) {}
+    func applyEditedMessage(_ message: Message, lastMessage: LastMessage?) {}
 }
 
 /// Хранилище настроек для превью: держит значения в памяти, `UserDefaults` не трогает.

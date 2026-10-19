@@ -466,6 +466,45 @@ final class ChatListViewModelTests: XCTestCase {
         XCTAssertEqual(recorder.ids, [2, 2])
     }
 
+    // MARK: - Редактирование
+
+    /// Кейс: в переписке незавершённое редактирование, неотправленное сообщение и черновик; в другой — только
+    /// черновик.
+    /// Ожидание: первая строка показывает «Редактирование активно», вторая — черновик.
+    func test_conversations_editing_takesPriority() async {
+        let recorder = RowBuildRecorder()
+        await replaceSUT(makeSUT(now: { ServerTime.stub.date }, makeRow: recorder.build))
+        unsentMessages.lastFailedTexts = [1: "Не ушло"]
+        draftService.drafts = [1: "Черновик", 2: "Другой черновик"]
+        draftService.edits = [1: MessageEditDraft(messageId: 15, originalText: "Привет", text: "Привет всем")]
+        conversationList.conversations = [.make(id: 1), .make(id: 2)]
+
+        await observeRows()
+
+        XCTAssertEqual(recorder.localPreviews.suffix(2), [.editing, .draft("Другой черновик")])
+        guard case let .labeled(text) = sut.conversations.first?.preview else { return XCTFail("Превью не редактирование") }
+        XCTAssertEqual(String(text.characters), ChatListStrings.rowEditing)
+    }
+
+    /// Кейс: строки показаны; режим редактирования в переписке выключается (запрос завершился после ухода
+    /// с экрана).
+    /// Ожидание: строка собрана заново и показывает черновик вместо «Редактирование активно».
+    func test_conversations_editingEnded_rebuildsRow() async {
+        draftService.drafts = [1: "Черновик"]
+        draftService.edits = [1: MessageEditDraft(messageId: 15, originalText: "Привет", text: "Привет всем")]
+        conversationList.conversations = [.make(id: 1)]
+        await observeRows()
+
+        draftService.endEditing(messageId: 15, conversationId: 1, userId: 1)
+
+        await yieldUntil { [unowned self] in
+            guard case let .labeled(text) = sut.conversations.first?.preview else { return false }
+            return String(text.characters) == "\(ChatListStrings.rowDraftPrefix) Черновик"
+        }
+        guard case let .labeled(text) = sut.conversations.first?.preview else { return XCTFail("Превью не черновик") }
+        XCTAssertEqual(String(text.characters), "\(ChatListStrings.rowDraftPrefix) Черновик")
+    }
+
     // MARK: - Создание и выбор
 
     /// Кейс: экран создания завершился созданной перепиской.

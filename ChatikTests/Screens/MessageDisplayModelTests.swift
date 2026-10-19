@@ -43,7 +43,7 @@ final class MessageDisplayModelTests: XCTestCase {
     // MARK: - Содержимое
 
     /// Кейс: отредактированное сообщение текущего пользователя.
-    /// Ожидание: исходящее, с пометкой «изменено» и исходным текстом.
+    /// Ожидание: исходящее, с пометкой «Изменено» и исходным текстом.
     func test_init_ownEditedMessage_isOutgoingWithEditedLabel() {
         let sut = MessageDisplayModel(message: .editedStub, sender: nil, context: makeContext(currentUserId: Message.editedStub.senderId))
 
@@ -61,6 +61,46 @@ final class MessageDisplayModelTests: XCTestCase {
 
         XCTAssertTrue(sut.isUnsupported)
         XCTAssertEqual(sut.text, ChatStrings.messageUnsupported)
+    }
+
+    /// Кейс: отредактированное сообщение собеседника и неотредактированное своё.
+    /// Ожидание: у отредактированного пометка «Изменено» независимо от отправителя, у неотредактированного — нет.
+    func test_init_editedLabel_dependsOnlyOnIsEdited() {
+        let othersEdited = Message.make(id: 1, senderId: 2, updatedAt: .stub(1000))
+
+        let edited = MessageDisplayModel(message: othersEdited, sender: nil, context: makeContext())
+        let notEdited = MessageDisplayModel(message: .make(id: 2, senderId: 1), sender: nil, context: makeContext())
+
+        XCTAssertEqual(edited.editedLabel, ChatStrings.messageEdited)
+        XCTAssertNil(notEdited.editedLabel)
+    }
+
+    // MARK: - Действия
+
+    /// Кейс: своё доставленное текстовое сообщение, режим редактирования выключен.
+    /// Ожидание: в меню есть «Редактировать».
+    func test_actions_ownTextMessage_hasEdit() {
+        let sut = MessageDisplayModel(message: .make(id: 1, senderId: 1), sender: nil, context: makeContext())
+
+        XCTAssertEqual(sut.actions, [.edit])
+    }
+
+    /// Кейс: чужое сообщение, своё сообщение неизвестного типа, неотправленное своё и своё сообщение при включённом
+    /// режиме редактирования.
+    /// Ожидание: ни у одного нет действий — меню по долгому нажатию нет.
+    func test_actions_notEditable_areEmpty() {
+        let unknown = Message(messageId: 3, clientId: "c", conversationId: 1, blockId: 1, senderId: 1, type: .unknown, text: "", isEdited: false, createdAt: .stub, updatedAt: .stub)
+        let models = [
+            MessageDisplayModel(message: .make(id: 1, senderId: 2), sender: nil, context: makeContext()),
+            MessageDisplayModel(message: unknown, sender: nil, context: makeContext()),
+            MessageDisplayModel(outgoing: .stub(clientId: "a", createdAt: now, status: .failed), sender: nil, context: makeContext()),
+            MessageDisplayModel(outgoing: .stub(clientId: "b", createdAt: now, status: .sending), sender: nil, context: makeContext()),
+            MessageDisplayModel(message: .make(id: 2, senderId: 1), sender: nil, context: makeContext(isEditing: true)),
+        ]
+
+        for model in models {
+            XCTAssertEqual(model.actions, [], "\(model.id)")
+        }
     }
 
     // MARK: - Состояние доставки
@@ -135,15 +175,18 @@ final class MessageDisplayModelTests: XCTestCase {
     // MARK: - Helpers
 
     /// Контекст отображения с русской локалью и часовым поясом UTC.
-    /// - Parameter currentUserId: текущий пользователь.
-    private func makeContext(currentUserId: Int? = 1) -> MessageDisplayContext {
+    /// - Parameters:
+    ///   - currentUserId: текущий пользователь.
+    ///   - isEditing: включён ли режим редактирования.
+    private func makeContext(currentUserId: Int? = 1, isEditing: Bool = false) -> MessageDisplayContext {
         MessageDisplayContext(
             currentUserId: currentUserId,
             locale: Locale(identifier: "ru"),
             calendar: calendar,
             now: now,
             strings: .current,
-            dateHeaderFormatter: RussianMessageDateHeaderFormatter(calendar: calendar)
+            dateHeaderFormatter: RussianMessageDateHeaderFormatter(calendar: calendar),
+            isEditing: isEditing
         )
     }
 }

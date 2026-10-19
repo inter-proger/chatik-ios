@@ -32,6 +32,8 @@ struct MessagesListView: View {
     let onDelete: (MessageDisplayModel) -> Void
     /// Выбран пункт меню по долгому нажатию на сообщение.
     let onAction: (MessageAction, MessageDisplayModel) -> Void
+    /// Сменилось состояние меню по долгому нажатию на сообщение.
+    var onMenuPhaseChange: (MessageMenuPhase) -> Void = { _ in }
 
     @State private var tracker = FloatingDateTracker()
 
@@ -46,7 +48,8 @@ struct MessagesListView: View {
                             onTapFailed: { onTapFailed(message) },
                             onRetry: { onRetry(message) },
                             onDelete: { onDelete(message) },
-                            onAction: { onAction($0, message) }
+                            onAction: { onAction($0, message) },
+                            onMenuPhaseChange: onMenuPhaseChange
                         )
                             .flippedVertically()
                             .onAppear { onAppear(message) }
@@ -137,9 +140,7 @@ private extension View {
             self
         }
     }
-}
 
-extension View {
     /// Отражает View по вертикали — для перевёрнутой ленты сообщений.
     func flippedVertically() -> some View {
         scaleEffect(x: 1, y: -1)

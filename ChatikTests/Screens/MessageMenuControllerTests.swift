@@ -66,12 +66,25 @@ final class MessageMenuControllerTests: XCTestCase {
         XCTAssertEqual(hideCount, 1)
         XCTAssertTrue(presenter.presented.isEmpty)
         XCTAssertNil(sut.menuMessageId)
-        sut.keyboardWillHide()
         source.screenFrame = CGRect(x: 100, y: 560, width: 200, height: 50)
         sut.keyboardDidHide()
 
         XCTAssertEqual(presenter.presented.map(\.frame), [CGRect(x: 100, y: 560, width: 200, height: 50)])
         XCTAssertEqual(sut.menuMessageId, message.id)
+    }
+
+    /// Кейс: клавиатура спряталась (`keyboardDidHide`), затем долгое нажатие.
+    /// Ожидание: клавиатура не трогается, меню показано сразу.
+    func test_request_afterKeyboardDidHide_presentsImmediately() {
+        let source = MessageMenuSourceMock(screenFrame: CGRect(x: 100, y: 300, width: 200, height: 50))
+        var hideCount = 0
+        sut.keyboardWillShow()
+        sut.keyboardDidHide()
+
+        sut.request(message: message, source: source, hideKeyboard: { hideCount += 1 }, onAction: { _ in })
+
+        XCTAssertEqual(hideCount, 0)
+        XCTAssertEqual(presenter.presented.count, 1)
     }
 
     /// Кейс: клавиатура открыта; долгое нажатие, а `keyboardDidHide` не пришло.
@@ -141,7 +154,7 @@ final class MessageMenuControllerTests: XCTestCase {
     }
 
     /// Кейс: меню открыто; лента пересобрана с тем же сообщением, с изменённым текстом, с изменённой пометкой
-    /// «Изменено» и без сообщения.
+    /// «Изменено», с другими действиями (неотправленное снова отправляется) и без сообщения.
     /// Ожидание: меню закрывается без выбора во всех случаях, кроме неизменного сообщения.
     func test_feedDidChange_closesMenuOnlyWhenShownMessageChanged() {
         let source = MessageMenuSourceMock(screenFrame: CGRect(x: 100, y: 300, width: 200, height: 50))
@@ -149,6 +162,7 @@ final class MessageMenuControllerTests: XCTestCase {
             ([message], false),
             ([message.with(text: "Привет всем")], true),
             ([message.with(editedLabel: "Изменено")], true),
+            ([message.with(actions: [])], true),
             ([], true),
         ]
 
@@ -160,6 +174,19 @@ final class MessageMenuControllerTests: XCTestCase {
             XCTAssertEqual(sut.menuMessageId == nil, testCase.dismisses)
             presenter.close(with: nil)
         }
+    }
+
+    /// Кейс: меню открыто у неотправленного сообщения; лента пересобрана, где оно снова отправляется.
+    /// Ожидание: меню закрывается без выбора — «Повторить отправку» и «Удалить» уже недоступны.
+    func test_feedDidChange_failedMessageStartsSending_closesMenu() {
+        let source = MessageMenuSourceMock(screenFrame: CGRect(x: 100, y: 300, width: 200, height: 50))
+        let failed = outgoingMessage(status: .failed)
+        sut.request(message: failed, source: source, hideKeyboard: {}, onAction: { _ in })
+
+        sut.feedDidChange([section([outgoingMessage(status: .sending)])])
+
+        XCTAssertEqual(presenter.dismissCount, 1)
+        XCTAssertNil(sut.menuMessageId)
     }
 
     /// Кейс: меню закрыто выбором действия и, отдельно, без выбора.
@@ -183,6 +210,22 @@ final class MessageMenuControllerTests: XCTestCase {
 
     // MARK: - Helpers
 
+    /// Своё сообщение очереди отправки в виде для ленты.
+    /// - Parameter status: состояние отправки.
+    private func outgoingMessage(status: OutgoingMessageStatus) -> MessageDisplayModel {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        let context = MessageDisplayContext(
+            currentUserId: 1,
+            locale: Locale(identifier: "ru"),
+            calendar: calendar,
+            now: .distantPast,
+            strings: .current,
+            dateHeaderFormatter: RussianMessageDateHeaderFormatter(calendar: calendar)
+        )
+        return MessageDisplayModel(outgoing: .stub(clientId: "f", status: status), sender: nil, context: context)
+    }
+
     /// Секция ленты с переданными сообщениями.
     /// - Parameter messages: сообщения секции.
     private func section(_ messages: [MessageDisplayModel]) -> MessageDaySectionDisplayModel {
@@ -191,11 +234,12 @@ final class MessageMenuControllerTests: XCTestCase {
 }
 
 private extension MessageDisplayModel {
-    /// Копия с другим текстом или пометкой «Изменено».
+    /// Копия с другим текстом, пометкой «Изменено» или действиями.
     /// - Parameters:
     ///   - text: новый текст; `nil` — прежний.
     ///   - editedLabel: новая пометка; `nil` — прежняя.
-    func with(text: String? = nil, editedLabel: String? = nil) -> MessageDisplayModel {
+    ///   - actions: новые действия; `nil` — прежние.
+    func with(text: String? = nil, editedLabel: String? = nil, actions: [MessageAction]? = nil) -> MessageDisplayModel {
         MessageDisplayModel(
             id: id,
             text: text ?? self.text,
@@ -206,7 +250,7 @@ private extension MessageDisplayModel {
             editedLabel: editedLabel ?? self.editedLabel,
             deliveryState: deliveryState,
             deliveryStateLabel: deliveryStateLabel,
-            actions: actions
+            actions: actions ?? self.actions
         )
     }
 }

@@ -12,32 +12,30 @@ import SwiftUI
 /// полосе, сдвинутой на `outgoingShift` вправо: не ближе 68 pt к левому краю экрана и 16 pt к правому.
 ///
 /// В подвале пузыря — только время (дату показывает заголовок дня). У отправляющегося сообщения на месте времени
-/// часы, у неотправленного — светло-розовое «Не отправлено» и красный значок слева от пузыря; тап по неотправленному
-/// сообщению вызывает `onTapFailed`. Высота подвала одна при любом состоянии — пузырь не прыгает при смене статуса.
-/// Тапы по остальным сообщениям не перехватываются — их обрабатывает лента (убирает клавиатуру).
-///
-/// Выбор «повторить / удалить» привязан к пузырю, а не к экрану: на iOS 26 он всплывает от пузыря, до iOS 26 —
-/// обычным листом снизу.
+/// часы, у неотправленного — светло-розовое «Не отправлено» и красный значок слева от пузыря. Высота подвала одна
+/// при любом состоянии — пузырь не прыгает при смене статуса.
 ///
 /// Долгое нажатие на пузырь у сообщения с действиями (`MessageDisplayModel.actions`) сообщает экрану
-/// `onLongPress`: меню показывает экран (`MessageMenuController`). Пока меню открыто, пузырь скрыт — на его месте
-/// копия в меню. Те же действия доступны VoiceOver. Пока экран выключил действия (`areActionsEnabled`, режим
-/// редактирования), нет ни меню, ни действий VoiceOver.
+/// `onMenuRequest`: меню показывает экран (`MessageMenuController`). У неотправленного сообщения меню («повторить /
+/// удалить») открывает и тап по пузырю или по красному значку рядом с ним. Тапы по остальным сообщениям
+/// не перехватываются — их обрабатывает лента (убирает клавиатуру). Пока меню открыто, пузырь скрыт — на его месте
+/// копия в меню. Те же действия доступны VoiceOver списком действий элемента; неотправленное сообщение для VoiceOver —
+/// кнопка, двойной тап открывает меню, как тап.
+/// Пока экран выключил действия (`areActionsEnabled`, режим редактирования), нет ни меню, ни действий VoiceOver.
 struct MessageBubbleView: View {
     let message: MessageDisplayModel
-    /// Показан выбор «повторить / удалить» у неотправленного сообщения.
-    var isShowingFailedActions: Binding<Bool> = .constant(false)
-    var onTapFailed: () -> Void = {}
-    var onRetry: () -> Void = {}
-    var onDelete: () -> Void = {}
     /// Выбрано действие для VoiceOver.
     var onAction: (MessageAction) -> Void = { _ in }
-    /// Долгое нажатие на пузырь; параметр — источник меню с текущим кадром пузыря на экране.
-    var onLongPress: (MessageMenuSource) -> Void = { _ in }
+    /// Долгое нажатие на пузырь или тап по неотправленному; параметр — источник меню с текущим кадром пузыря
+    /// на экране.
+    var onMenuRequest: (MessageMenuSource) -> Void = { _ in }
     /// Для сообщения открыто меню: пузырь скрыт, на его месте — копия в меню.
     var isHiddenForMenu = false
     /// Экран принимает действия с сообщениями; `false` — режим редактирования, действия скрыты у всех сообщений.
     var areActionsEnabled = true
+
+    /// Источник меню для двойного тапа VoiceOver: его записывает детектор жестов пузыря.
+    @State private var menuSourceReference = MessageMenuSourceReference()
 
     private static let avatarSize: CGFloat = 32
     /// Промежуток между аватаром и входящим пузырём.
@@ -52,20 +50,14 @@ struct MessageBubbleView: View {
     private static let outgoingShift: CGFloat = 16
     /// Промежуток между значком неотправленного сообщения и пузырём.
     private static let failedMarkSpacing: CGFloat = 6
+    /// Полоса касания слева от неотправленного пузыря: промежуток и значок с запасом под палец.
+    private static let failedMarkHitInset: CGFloat = 36
 
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
             if message.isOutgoing {
                 Spacer(minLength: Self.avatarSideInset + Self.outgoingShift)
                 bubbleWithMenu
-                    .confirmationDialog(
-                        ChatStrings.failedActionsTitle,
-                        isPresented: isShowingFailedActions,
-                        titleVisibility: .visible
-                    ) {
-                        Button(ChatStrings.failedActionsRetry, action: onRetry)
-                        Button(ChatStrings.failedActionsDelete, role: .destructive, action: onDelete)
-                    }
                     // Значок — снаружи пузыря, у его нижнего края: ширина пузыря не меняется при смене статуса.
                     .overlay(alignment: .bottomLeading) {
                         failedMark
@@ -81,12 +73,9 @@ struct MessageBubbleView: View {
         }
         // Отступ отделяет серии друг от друга; внутри серии пузыри идут плотно.
         .padding(.top, message.sender == nil ? 0 : 8)
-        .contentShape(Rectangle())
-        // Жест включается только у неотправленного сообщения, без смены структуры View: при повторной отправке
-        // пузырь не пересоздаётся.
-        .gesture(TapGesture().onEnded(onTapFailed), including: isFailed ? .all : .subviews)
         .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(isFailed ? .isButton : [])
+        .accessibilityAddTraits(opensMenuOnTap ? .isButton : [])
+        .accessibilityAction { openMenuForAccessibility() }
         .accessibilityActions {
             ForEach(actions, id: \.self) { action in
                 actionButton(action)
@@ -103,6 +92,11 @@ struct MessageBubbleView: View {
         areActionsEnabled ? message.actions : []
     }
 
+    /// Меню открывает и тап: неотправленное сообщение, пока действия доступны.
+    private var opensMenuOnTap: Bool {
+        isFailed && !actions.isEmpty
+    }
+
     /// Значок неотправленного сообщения слева от пузыря.
     @ViewBuilder
     private var failedMark: some View {
@@ -110,6 +104,8 @@ struct MessageBubbleView: View {
             Image(systemName: "exclamationmark.circle.fill")
                 .font(.title3)
                 .foregroundStyle(.red)
+                // Касание значка получает детектор жестов пузыря под ним.
+                .allowsHitTesting(false)
                 // Состояние читается из подвала — значок не повторяет его для VoiceOver.
                 .accessibilityHidden(true)
         }
@@ -137,17 +133,29 @@ struct MessageBubbleView: View {
             .transaction(value: isHiddenForMenu) { $0.animation = nil }
             .overlay {
                 if !actions.isEmpty {
-                    MessageLongPressDetector(onLongPress: onLongPress)
+                    MessageLongPressDetector(
+                        opensOnTap: opensMenuOnTap,
+                        leadingHitInset: opensMenuOnTap ? Self.failedMarkHitInset : 0,
+                        sourceReference: menuSourceReference,
+                        onMenuRequest: onMenuRequest
+                    )
+                    // У неотправленного детектор заходит влево на значок: тап по значку тоже открывает меню.
+                    .padding(.leading, opensMenuOnTap ? -Self.failedMarkHitInset : 0)
                 }
             }
+    }
+
+    /// Двойной тап VoiceOver: у неотправленного сообщения открывает меню, как тап.
+    private func openMenuForAccessibility() {
+        guard opensMenuOnTap, let source = menuSourceReference.source else { return }
+        onMenuRequest(source)
     }
 
     /// Действие с сообщением для VoiceOver.
     /// - Parameter action: действие.
     private func actionButton(_ action: MessageAction) -> some View {
-        switch action {
-        case .edit:
-            Button(ChatStrings.messageActionEdit, systemImage: "pencil") { onAction(.edit) }
+        Button(action.title, systemImage: action.systemImage, role: action.isDestructive ? .destructive : nil) {
+            onAction(action)
         }
     }
 }
@@ -276,7 +284,7 @@ private struct MessageBubbleLayout: Layout {
     VStack(spacing: 0) {
         MessageBubbleView(message: MessageDisplayModel(id: MessageClientKey(senderId: 1, clientId: "1"), text: "Привет!", isUnsupported: false, isOutgoing: true, sender: ivan, time: "12:01", editedLabel: nil, deliveryState: .delivered, deliveryStateLabel: nil, actions: []))
         MessageBubbleView(message: MessageDisplayModel(id: MessageClientKey(senderId: 1, clientId: "2"), text: "Как дела?", isUnsupported: false, isOutgoing: true, sender: nil, time: nil, editedLabel: nil, deliveryState: .sending, deliveryStateLabel: "Отправляется", actions: []))
-        MessageBubbleView(message: MessageDisplayModel(id: MessageClientKey(senderId: 1, clientId: "3"), text: "Ты тут?", isUnsupported: false, isOutgoing: true, sender: nil, time: nil, editedLabel: nil, deliveryState: .failed, deliveryStateLabel: "Не отправлено", actions: []))
+        MessageBubbleView(message: MessageDisplayModel(id: MessageClientKey(senderId: 1, clientId: "3"), text: "Ты тут?", isUnsupported: false, isOutgoing: true, sender: nil, time: nil, editedLabel: nil, deliveryState: .failed, deliveryStateLabel: "Не отправлено", actions: [.retrySending, .deleteUnsent]))
         MessageBubbleView(message: MessageDisplayModel(id: MessageClientKey(senderId: 2, clientId: "4"), text: "Ок", isUnsupported: false, isOutgoing: false, sender: MessageSenderDisplayModel(name: "Мария Александровна Константинопольская-Вознесенская", isPlaceholder: false, avatarURL: nil), time: "12:02", editedLabel: "Изменено", deliveryState: .delivered, deliveryStateLabel: nil, actions: []))
         MessageBubbleView(message: MessageDisplayModel(id: MessageClientKey(senderId: 3, clientId: "5"), text: "Сообщение не поддерживается", isUnsupported: true, isOutgoing: false, sender: MessageSenderDisplayModel(name: "Загрузка…", isPlaceholder: true, avatarURL: nil), time: "12:03", editedLabel: nil, deliveryState: .delivered, deliveryStateLabel: nil, actions: []))
     }

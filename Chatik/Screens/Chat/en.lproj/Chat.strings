@@ -33,16 +33,13 @@
 /* State of a message that failed to send */
 "chat.message.failed" = "Not sent";
 
-/* Title of the action choice shown on tapping an unsent message */
-"chat.failed_actions.title" = "Message not sent";
-"chat.failed_actions.retry" = "Retry sending";
-"chat.failed_actions.delete" = "Delete message";
-
 /* Subtitle under the title while the conversation syncs with the server */
 "chat.updating" = "Updating…";
 
-/* Action in the long-press menu of an own message */
+/* Message menu actions: edit an own delivered message, retry or delete an unsent one */
 "chat.message_actions.edit" = "Edit";
+"chat.message_actions.retry_sending" = "Retry sending";
+"chat.message_actions.delete_unsent" = "Delete";
 
 /* Title of the banner above the input field in editing mode */
 "chat.edit.title" = "Editing";

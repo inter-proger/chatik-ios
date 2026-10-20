@@ -105,18 +105,18 @@ struct MessageMenuOverlay: View {
         .position(x: frame.midX, y: frame.midY)
     }
 
-    /// Строка списка: название слева, значок справа — как в системных меню.
+    /// Строка списка: название слева, значок справа — как в системных меню; удаление — красным.
     /// - Parameter action: действие.
     private func actionRow(_ action: MessageAction) -> some View {
         Button {
             close(with: action)
         } label: {
             HStack {
-                Text(Self.title(of: action))
+                Text(action.title)
                 Spacer(minLength: 16)
-                Image(systemName: Self.imageName(of: action))
+                Image(systemName: action.systemImage)
             }
-            .foregroundStyle(Color.primary)
+            .foregroundStyle(action.isDestructive ? Color.red : Color.primary)
             .padding(.horizontal, 16)
             .frame(minHeight: Self.rowHeight)
             .contentShape(Rectangle())
@@ -145,22 +145,6 @@ struct MessageMenuOverlay: View {
             isShown = false
         } completion: {
             onClosed()
-        }
-    }
-
-    /// Название пункта меню.
-    /// - Parameter action: действие.
-    private static func title(of action: MessageAction) -> String {
-        switch action {
-        case .edit: ChatStrings.messageActionEdit
-        }
-    }
-
-    /// Значок пункта меню (SF Symbol).
-    /// - Parameter action: действие.
-    private static func imageName(of action: MessageAction) -> String {
-        switch action {
-        case .edit: "pencil"
         }
     }
 }

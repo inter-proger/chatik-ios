@@ -36,7 +36,8 @@ protocol MessageMenuPresenting: AnyObject {
 ///
 /// Пока меню открыто, `menuMessageId` указывает на сообщение: лента скрывает его пузырь, на его месте копия. С началом
 /// закрытия пузырь возвращается, а выбранное действие передаётся экрану. Если сообщение в ленте изменилось (правка
-/// с другого устройства) или пропало, меню закрывается без выбора: копия показывала бы устаревший текст.
+/// с другого устройства, неотправленное снова отправляется) или пропало, меню закрывается без выбора: копия
+/// показывала бы устаревший текст, а действия могли стать недоступны.
 @MainActor
 @Observable
 final class MessageMenuController {
@@ -103,24 +104,25 @@ final class MessageMenuController {
         isKeyboardVisible = true
     }
 
-    /// Клавиатура начала прятаться.
-    func keyboardWillHide() {
-        isKeyboardVisible = false
-    }
-
     /// Клавиатура спряталась: ждущее меню показывается.
+    ///
+    /// Клавиатура считается открытой до этого события, а не до `keyboardWillHide`: пока она уезжает, лента ещё
+    /// сдвигается, и меню по кадру пузыря в этот момент встало бы мимо него. Так бывает при тапе по неотправленному
+    /// сообщению: тот же тап ловит лента и начинает прятать клавиатуру раньше, чем пузырь запросит меню.
     func keyboardDidHide() {
+        isKeyboardVisible = false
         guard let pending else { return }
         presentPending(id: pending.id)
     }
 
-    /// Лента пересобрана: если сообщение открытого меню пропало или изменился его текст или пометка «Изменено»,
-    /// меню закрывается без выбора.
+    /// Лента пересобрана: если сообщение открытого меню пропало или изменились его текст, пометка «Изменено» или
+    /// действия, меню закрывается без выбора.
     /// - Parameter sections: новая лента.
     func feedDidChange(_ sections: [MessageDaySectionDisplayModel]) {
         guard let shownMessage else { return }
         let current = sections.lazy.flatMap(\.messages).first { $0.id == shownMessage.id }
-        guard current?.text != shownMessage.text || current?.editedLabel != shownMessage.editedLabel else { return }
+        guard current?.text != shownMessage.text || current?.editedLabel != shownMessage.editedLabel
+            || current?.actions != shownMessage.actions else { return }
         presenter.dismiss()
     }
 

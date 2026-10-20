@@ -9,7 +9,8 @@ import UIKit
 /// Экран переписки: сообщения с подгрузкой более старых при прокрутке вверх, обновлением жестом вверх у нижнего края
 /// ленты (pull-to-refresh) и поле ввода с кнопкой отправки. Тап по ленте убирает клавиатуру.
 /// Черновик (или текст правки в режиме редактирования) записывается в БД при уходе с экрана и при уходе приложения
-/// в неактивное состояние или в фон. Долгое нажатие на своё сообщение открывает меню с «Редактировать».
+/// в неактивное состояние или в фон. Долгое нажатие на своё сообщение открывает меню с «Редактировать», долгое
+/// нажатие или тап по неотправленному — меню с «Повторить отправку» и «Удалить».
 ///
 /// Меню сообщения показывает `MessageMenuController`: при открытой клавиатуре сначала прячет её, затем показывает
 /// меню над пузырём, уже сдвинувшимся вместе с лентой.
@@ -30,9 +31,6 @@ struct ChatView: View {
         // Клавиатура: меню сообщения показывается только после того, как она спрячется.
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
             menuController?.keyboardWillShow()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
-            menuController?.keyboardWillHide()
         }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidHideNotification)) { _ in
             menuController?.keyboardDidHide()
@@ -75,7 +73,8 @@ struct ChatView: View {
         }
     }
 
-    /// Долгое нажатие на сообщение: меню действий; открытую клавиатуру контроллер сначала прячет.
+    /// Долгое нажатие на сообщение или тап по неотправленному: меню действий; открытую клавиатуру контроллер
+    /// сначала прячет.
     /// - Parameters:
     ///   - message: сообщение.
     ///   - source: пузырь.
@@ -95,12 +94,8 @@ struct ChatView: View {
             sections: viewModel.sections,
             isLoadingOlder: viewModel.isLoadingOlder,
             onAppear: viewModel.prefetchOlderIfNeeded,
-            failedActionsClientId: $viewModel.failedMessageActionsClientId,
-            onTapFailed: viewModel.didTapMessage,
-            onRetry: { viewModel.retrySending(clientId: $0.id.clientId) },
-            onDelete: { viewModel.deleteOutgoing(clientId: $0.id.clientId) },
             onAction: viewModel.didSelectAction,
-            onLongPress: showMenu,
+            onMenuRequest: showMenu,
             menuMessageId: menuController?.menuMessageId,
             areActionsEnabled: viewModel.areMessageActionsEnabled
         )

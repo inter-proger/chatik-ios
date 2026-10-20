@@ -392,32 +392,22 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertNotNil(sut.messages.first?.time)
     }
 
-    /// Кейс: тап по доставленному и по неотправленному сообщению.
-    /// Ожидание: выбор действий показывается только для неотправленного.
-    func test_didTapMessage_showsActionsForFailedOnly() async {
+    /// Кейс: в меню неотправленных сообщений выбраны «Повторить отправку» и «Удалить».
+    /// Ожидание: действия переданы очереди с `clientId` сообщений; режим редактирования не включается.
+    func test_didSelectAction_retrySendingAndDeleteUnsent_forwardToQueue() async throws {
         let sut = makeSUT()
-        messageSendQueue.outgoingMessages = [.stub(clientId: "a", status: .failed)]
+        messageSendQueue.outgoingMessages = [.stub(clientId: "a", status: .failed), .stub(clientId: "b", status: .failed)]
         await startObserving(sut)
-        list.publish(.make(messages: [.make(id: 1)], isUrgent: true))
+        list.publish(.make(messages: [], isUrgent: true))
         await waitUntil { sut.messages.count == 2 }
+        let messages = Dictionary(uniqueKeysWithValues: sut.messages.map { ($0.id.clientId, $0) })
 
-        sut.didTapMessage(sut.messages[1])
-        XCTAssertNil(sut.failedMessageActionsClientId)
-        sut.didTapMessage(sut.messages[0])
-
-        XCTAssertEqual(sut.failedMessageActionsClientId, "a")
-    }
-
-    /// Кейс: в выборе действий нажаты «Повторить отправку» и «Удалить сообщение».
-    /// Ожидание: действия переданы очереди с `clientId` сообщения.
-    func test_retryAndDelete_forwardToQueue() {
-        let sut = makeSUT()
-
-        sut.retrySending(clientId: "a")
-        sut.deleteOutgoing(clientId: "b")
+        sut.didSelectAction(.retrySending, for: try XCTUnwrap(messages["a"]))
+        sut.didSelectAction(.deleteUnsent, for: try XCTUnwrap(messages["b"]))
 
         XCTAssertEqual(messageSendQueue.retriedClientIds, ["a"])
         XCTAssertEqual(messageSendQueue.deletedClientIds, ["b"])
+        XCTAssertFalse(sut.isEditing)
     }
 
     // MARK: - Черновик

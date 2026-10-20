@@ -11,14 +11,18 @@ enum MessageDeliveryState: Equatable, Sendable {
     case delivered
     /// Отправляется: сервер ещё не ответил.
     case sending
-    /// Не отправлено: по тапу можно повторить отправку или удалить сообщение.
+    /// Не отправлено: меню сообщения предлагает повторить отправку или удалить сообщение.
     case failed
 }
 
-/// Действие с сообщением из меню по долгому нажатию.
+/// Действие с сообщением из меню сообщения.
 enum MessageAction: Equatable, Sendable {
-    /// Редактировать своё сообщение.
+    /// Редактировать своё доставленное сообщение.
     case edit
+    /// Повторить отправку неотправленного сообщения.
+    case retrySending
+    /// Удалить неотправленное сообщение.
+    case deleteUnsent
 }
 
 /// Сообщение переписки в готовом для отображения виде.
@@ -43,7 +47,7 @@ struct MessageDisplayModel: Identifiable, Equatable, Sendable {
     let deliveryState: MessageDeliveryState
     /// Описание состояния доставки для VoiceOver; `nil` — сообщение доставлено.
     let deliveryStateLabel: String?
-    /// Действия меню по долгому нажатию; пусто — меню нет.
+    /// Действия меню сообщения; пусто — меню нет.
     let actions: [MessageAction]
 }
 
@@ -131,7 +135,8 @@ extension MessageDisplayModel {
 
     /// Собирает для отображения сообщение, ещё не подтверждённое сервером. Оно всегда исходящее и без времени:
     /// момент нажатия «Отправить» — ещё не время сообщения на сервере, вместо него показывается состояние доставки.
-    /// Действий у него нет: редактировать можно только доставленное сообщение.
+    /// Неотправленное можно повторить или удалить; у отправляющегося действий нет, а редактировать можно только
+    /// доставленное сообщение.
     /// - Parameters:
     ///   - outgoing: сообщение очереди отправки.
     ///   - sender: отправитель (текущий пользователь); `nil` — сообщение продолжает серию.
@@ -148,7 +153,7 @@ extension MessageDisplayModel {
             editedLabel: nil,
             deliveryState: deliveryState,
             deliveryStateLabel: deliveryState == .failed ? context.strings.failed : context.strings.sending,
-            actions: []
+            actions: deliveryState == .failed ? [.retrySending, .deleteUnsent] : []
         )
     }
 

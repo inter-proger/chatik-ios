@@ -54,8 +54,6 @@ final class ChatViewModel {
     private(set) var editedMessageText: String?
     /// Текст ошибки для всплывающего сообщения. `nil` — сообщение скрыто.
     var errorMessage: String?
-    /// `clientId` неотправленного сообщения, для которого показан выбор «повторить / удалить». `nil` — выбор скрыт.
-    var failedMessageActionsClientId: String?
     /// Лента по дням, сначала самые новые. Обновляется `observeMessages()` не чаще раза
     /// в `messagesUpdateInterval`.
     private(set) var sections: [MessageDaySectionDisplayModel] = []
@@ -428,7 +426,8 @@ final class ChatViewModel {
 
     // MARK: - Редактирование
 
-    /// Обработчик пункта меню по долгому нажатию на сообщение.
+    /// Обработчик пункта меню сообщения: редактирование включает режим, повтор и удаление неотправленного
+    /// передаются очереди отправки.
     /// - Parameters:
     ///   - action: выбранное действие.
     ///   - message: сообщение, у которого открыто меню.
@@ -436,6 +435,10 @@ final class ChatViewModel {
         switch action {
         case .edit:
             beginEditing(message)
+        case .retrySending:
+            messageSendQueue.retry(clientId: message.id.clientId)
+        case .deleteUnsent:
+            messageSendQueue.delete(clientId: message.id.clientId)
         }
     }
 
@@ -556,25 +559,6 @@ final class ChatViewModel {
     /// - Parameter text: текст.
     private static func trimmed(_ text: String) -> String {
         text.trimmingCharacters(in: MessageTextValidator.trimmedCharacters)
-    }
-
-    /// Обработчик тапа по сообщению: для неотправленного показывает выбор «повторить / удалить».
-    /// - Parameter message: сообщение, по которому тапнули.
-    func didTapMessage(_ message: MessageDisplayModel) {
-        guard message.deliveryState == .failed else { return }
-        failedMessageActionsClientId = message.id.clientId
-    }
-
-    /// Повторяет отправку неотправленного сообщения.
-    /// - Parameter clientId: идентификатор сообщения.
-    func retrySending(clientId: String) {
-        messageSendQueue.retry(clientId: clientId)
-    }
-
-    /// Удаляет неотправленное сообщение.
-    /// - Parameter clientId: идентификатор сообщения.
-    func deleteOutgoing(clientId: String) {
-        messageSendQueue.delete(clientId: clientId)
     }
 }
 

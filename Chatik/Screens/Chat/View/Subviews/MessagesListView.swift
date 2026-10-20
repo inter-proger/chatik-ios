@@ -22,18 +22,11 @@ struct MessagesListView: View {
     let sections: [MessageDaySectionDisplayModel]
     let isLoadingOlder: Bool
     let onAppear: (MessageDisplayModel) -> Void
-    /// `clientId` неотправленного сообщения, у пузыря которого показан выбор «повторить / удалить». `nil` — выбор скрыт.
-    @Binding var failedActionsClientId: String?
-    /// Тап по неотправленному сообщению.
-    let onTapFailed: (MessageDisplayModel) -> Void
-    /// Выбрано «повторить» у неотправленного сообщения.
-    let onRetry: (MessageDisplayModel) -> Void
-    /// Выбрано «удалить» у неотправленного сообщения.
-    let onDelete: (MessageDisplayModel) -> Void
     /// Выбрано действие с сообщением для VoiceOver.
     let onAction: (MessageAction, MessageDisplayModel) -> Void
-    /// Долгое нажатие на сообщение; второй параметр — пузырь как источник меню.
-    var onLongPress: (MessageDisplayModel, MessageMenuSource) -> Void = { _, _ in }
+    /// Запрошено меню сообщения (долгое нажатие или тап по неотправленному); второй параметр — пузырь как источник
+    /// меню.
+    var onMenuRequest: (MessageDisplayModel, MessageMenuSource) -> Void = { _, _ in }
     /// Сообщение, для которого открыто меню: его пузырь скрыт. `nil` — меню нет.
     var menuMessageId: MessageClientKey?
     /// Действия с сообщениями доступны; `false` — режим редактирования, действий нет ни у одного сообщения.
@@ -48,12 +41,8 @@ struct MessagesListView: View {
                     ForEach(section.messages) { message in
                         MessageBubbleView(
                             message: message,
-                            isShowingFailedActions: isShowingFailedActions(for: message),
-                            onTapFailed: { onTapFailed(message) },
-                            onRetry: { onRetry(message) },
-                            onDelete: { onDelete(message) },
                             onAction: { onAction($0, message) },
-                            onLongPress: { onLongPress(message, $0) },
+                            onMenuRequest: { onMenuRequest(message, $0) },
                             isHiddenForMenu: menuMessageId == message.id,
                             areActionsEnabled: areActionsEnabled
                         )
@@ -84,18 +73,6 @@ struct MessagesListView: View {
         .onChange(of: isLoadingOlder) { tracker.layoutDidChange() }
         .scrollEdgeEffectsHiddenIfAvailable()
         .scrollDismissesKeyboard(.interactively)
-    }
-
-    /// Показан ли выбор «повторить / удалить» у сообщения. Закрытие выбора сбрасывает `failedActionsClientId`.
-    /// - Parameter message: сообщение строки.
-    private func isShowingFailedActions(for message: MessageDisplayModel) -> Binding<Bool> {
-        Binding(
-            get: { failedActionsClientId == message.id.clientId },
-            set: { isShowing in
-                guard !isShowing, failedActionsClientId == message.id.clientId else { return }
-                failedActionsClientId = nil
-            }
-        )
     }
 
     /// Заголовки секций для трекера плавающей даты.
@@ -161,7 +138,7 @@ private extension View {
     MessagesListView(
         sections: [
             MessageDaySectionDisplayModel(id: MessageDaySectionID(day: today, occurrence: 0), title: "Сегодня, 15 октября", messages: [
-                MessageDisplayModel(id: MessageClientKey(senderId: 1, clientId: "6"), text: "Ты где?", isUnsupported: false, isOutgoing: true, sender: nil, time: nil, editedLabel: nil, deliveryState: .failed, deliveryStateLabel: "Не отправлено", actions: []),
+                MessageDisplayModel(id: MessageClientKey(senderId: 1, clientId: "6"), text: "Ты где?", isUnsupported: false, isOutgoing: true, sender: nil, time: nil, editedLabel: nil, deliveryState: .failed, deliveryStateLabel: "Не отправлено", actions: [.retrySending, .deleteUnsent]),
                 MessageDisplayModel(id: MessageClientKey(senderId: 1, clientId: "5"), text: "Я уже на месте", isUnsupported: false, isOutgoing: true, sender: ivan, time: nil, editedLabel: nil, deliveryState: .sending, deliveryStateLabel: "Отправляется", actions: []),
                 MessageDisplayModel(id: MessageClientKey(senderId: 1, clientId: "4"), text: "Отлично, до встречи!", isUnsupported: false, isOutgoing: true, sender: ivan, time: "12:05", editedLabel: nil, deliveryState: .delivered, deliveryStateLabel: nil, actions: []),
                 MessageDisplayModel(id: MessageClientKey(senderId: 2, clientId: "3"), text: "Давай в 7 у входа", isUnsupported: false, isOutgoing: false, sender: maria, time: "12:04", editedLabel: "Изменено", deliveryState: .delivered, deliveryStateLabel: nil, actions: []),
@@ -173,10 +150,6 @@ private extension View {
         ],
         isLoadingOlder: true,
         onAppear: { _ in },
-        failedActionsClientId: .constant(nil),
-        onTapFailed: { _ in },
-        onRetry: { _ in },
-        onDelete: { _ in },
         onAction: { _, _ in }
     )
 }

@@ -85,20 +85,27 @@ final class MessageDisplayModelTests: XCTestCase {
         XCTAssertEqual(sut.actions, [.edit])
     }
 
-    /// Кейс: чужое сообщение, своё сообщение неизвестного типа, неотправленное и отправляющееся своё.
-    /// Ожидание: ни у одного нет действий — меню по долгому нажатию нет.
+    /// Кейс: чужое сообщение, своё сообщение неизвестного типа и отправляющееся своё.
+    /// Ожидание: ни у одного нет действий — меню нет.
     func test_actions_notEditable_areEmpty() {
         let unknown = Message(messageId: 3, clientId: "c", conversationId: 1, blockId: 1, senderId: 1, type: .unknown, text: "", isEdited: false, createdAt: .stub, updatedAt: .stub)
         let models = [
             MessageDisplayModel(message: .make(id: 1, senderId: 2), sender: nil, context: makeContext()),
             MessageDisplayModel(message: unknown, sender: nil, context: makeContext()),
-            MessageDisplayModel(outgoing: .stub(clientId: "a", createdAt: now, status: .failed), sender: nil, context: makeContext()),
             MessageDisplayModel(outgoing: .stub(clientId: "b", createdAt: now, status: .sending), sender: nil, context: makeContext()),
         ]
 
         for model in models {
             XCTAssertEqual(model.actions, [], "\(model.id)")
         }
+    }
+
+    /// Кейс: своё неотправленное сообщение.
+    /// Ожидание: в меню «Повторить отправку» и «Удалить», без «Редактировать».
+    func test_actions_failedOutgoing_hasRetrySendingAndDeleteUnsent() {
+        let sut = MessageDisplayModel(outgoing: .stub(clientId: "a", createdAt: now, status: .failed), sender: nil, context: makeContext())
+
+        XCTAssertEqual(sut.actions, [.retrySending, .deleteUnsent])
     }
 
     // MARK: - Состояние доставки

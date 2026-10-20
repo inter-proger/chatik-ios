@@ -43,10 +43,10 @@ struct ChatInputPanel: View {
             guard isEditing else { return }
             isFocused.wrappedValue = true
         }
-        // Запрос правки закончился (успехом или ошибкой) — клавиатура прячется. Пока он шёл, поле было только
-        // для чтения, но в фокусе: клавиатура оставалась на месте.
+        // Начался запрос правки — фокус снимается, клавиатура прячется; поле до конца запроса не принимает касаний.
+        // После успеха фокус не возвращается, после ошибки его возвращает экран, когда ошибку закроют.
         .onChange(of: viewModel.isEditSubmitting) { _, isSubmitting in
-            guard !isSubmitting else { return }
+            guard isSubmitting else { return }
             isFocused.wrappedValue = false
         }
     }

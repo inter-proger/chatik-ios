@@ -630,17 +630,32 @@ final class ChatViewModelTests: XCTestCase {
     }
 
     /// Кейс: режим редактирования включён, затем выключен крестиком.
-    /// Ожидание: пока режим включён, «Редактировать» нет ни у одного сообщения ленты; после выключения — снова есть.
-    func test_editMode_hidesAndRestoresEditAction() async {
+    /// Ожидание: пока режим включён, действия с сообщениями недоступны; после выключения — снова доступны.
+    func test_editMode_disablesAndRestoresMessageActions() async {
         let sut = await makeEditingReadySUT()
 
         sut.didSelectAction(.edit, for: sut.messages[0])
-        sleeper.releaseAll()
-        await waitUntil { sut.messages.first?.actions == [] }
+        XCTAssertFalse(sut.areMessageActionsEnabled)
         sut.cancelEditing()
-        sleeper.releaseAll()
 
-        await waitUntil { sut.messages.first?.actions == [.edit] }
+        XCTAssertTrue(sut.areMessageActionsEnabled)
+    }
+
+    /// Кейс: лента показана, пауза между обновлениями прошла; режим редактирования включён и выключен.
+    /// Ожидание: смена режима не пересобирает ленту — новых пауз обновления нет, действия сообщений прежние.
+    func test_editModeToggle_doesNotRebuildFeed() async {
+        let sut = await makeEditingReadySUT()
+        await yieldUntil { [unowned self] in sleeper.isWaiting }
+        sleeper.releaseAll()
+        await yieldTimes()
+        let requestsBefore = sleeper.requested.count
+
+        sut.didSelectAction(.edit, for: sut.messages[0])
+        sut.cancelEditing()
+
+        await yieldTimes()
+        XCTAssertEqual(sleeper.requested.count, requestsBefore)
+        XCTAssertEqual(sut.messages.first?.actions, [.edit])
     }
 
     /// Кейс: в режиме редактирования меняется текст поля.
@@ -763,6 +778,53 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertEqual(sut.inputMode, .editing(messageId: 15, originalText: "Привет"))
         XCTAssertEqual(sut.messageText, "Привет всем")
         XCTAssertTrue(editService.failures.isEmpty)
+    }
+
+    /// Кейс: запрос правки упал, ошибку закрыли; затем ошибку закрыли ещё раз (без новой ошибки правки).
+    /// Ожидание: первое закрытие просит вернуть фокус в поле, второе — нет.
+    func test_didDismissError_afterEditFailure_requestsFocusOnce() async {
+        let sut = await makeEditingReadySUT()
+        await startObservingEdits(sut)
+        sut.didSelectAction(.edit, for: sut.messages[0])
+        sut.messageText = "Привет всем"
+        sut.didTapSend()
+        await editService.finish(conversationId: Conversation.singleStub.id, with: .failure(NetworkError.transport(URLError(.notConnectedToInternet))))
+        await waitUntil { sut.errorMessage != nil }
+
+        let first = sut.didDismissError()
+        let second = sut.didDismissError()
+
+        XCTAssertTrue(first)
+        XCTAssertFalse(second)
+    }
+
+    /// Кейс: в режиме редактирования пришла ошибка синхронизации ленты, а не запроса правки; её закрыли.
+    /// Ожидание: фокус в поле не возвращается.
+    func test_didDismissError_afterFeedFailure_doesNotRequestFocus() async {
+        let sut = await makeEditingReadySUT()
+        sut.didSelectAction(.edit, for: sut.messages[0])
+        list.publish(.make(messages: [.make(id: 15, senderId: 1, text: "Привет")], failure: NetworkError.transport(URLError(.notConnectedToInternet))))
+        await yieldUntil { sut.errorMessage != nil }
+
+        XCTAssertFalse(sut.didDismissError())
+    }
+
+    /// Кейс: экран показан и закрыт (`.task` отменён), затем показан снова, пока прежнее ожидание завершается.
+    /// Ожидание: после отмены прежнего ожидания экран ждёт исходов через новое; после отмены нового — не ждёт.
+    func test_observeEditSubmission_reappear_keepsNewObserver() async {
+        let sut = makeSUT()
+        let first = Task { await sut.observeEditSubmission() }
+        await yieldUntil { sut.isObservingEditSubmissions }
+        let second = Task { await sut.observeEditSubmission() }
+        await yieldTimes()
+
+        first.cancel()
+        await first.value
+        XCTAssertTrue(sut.isObservingEditSubmissions)
+        second.cancel()
+        await second.value
+
+        XCTAssertFalse(sut.isObservingEditSubmissions)
     }
 
     /// Кейс: правка отправлена, экран закрыт до ответа; сервер отвечает ошибкой; затем экран открыт заново.
@@ -899,8 +961,6 @@ final class ChatViewModelTests: XCTestCase {
     func test_typingInEditMode_doesNotRebuildFeed() async {
         let sut = await makeEditingReadySUT()
         sut.didSelectAction(.edit, for: sut.messages[0])
-        sleeper.releaseAll()
-        await waitUntil { sut.messages.first?.actions == [] }
         await yieldUntil { [unowned self] in sleeper.isWaiting }
         sleeper.releaseAll()
         await yieldTimes()
@@ -958,7 +1018,7 @@ final class ChatViewModelTests: XCTestCase {
     /// - Parameter sut: ViewModel экрана.
     private func startObservingEdits(_ sut: ChatViewModel) async {
         editObservation = Task { await sut.observeEditSubmission() }
-        await yieldUntil { sut.editSubmissionRequests != nil }
+        await yieldUntil { sut.isObservingEditSubmissions }
         await yieldTimes()
     }
 

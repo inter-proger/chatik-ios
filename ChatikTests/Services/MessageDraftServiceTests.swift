@@ -659,6 +659,43 @@ final class MessageDraftServiceTests: XCTestCase {
         XCTAssertTrue(storage.applied.isEmpty)
     }
 
+    /// Кейс: пользователь вышел с включённой правкой; после выхода режим выключен, затем экран сохраняет ту же правку.
+    /// Ожидание: выключение записано, а сохранение после него не воскрешает режим — записей правки больше нет.
+    func test_saveEdit_afterLogoutAndEndEditing_doesNotResurrectEdit() async {
+        await sut.load(userId: 1)
+        sut.beginEditing(messageId: 15, originalText: "Привет", conversationId: 7, userId: 1)
+        sut.prepareForLogout()
+        sut.endEditing(messageId: 15, conversationId: 7, userId: 1)
+        await waitForWrites()
+        let appliedBefore = storage.applied.count
+
+        sut.saveEdit(MessageEditDraft(messageId: 15, originalText: "Привет", text: "Привет всем"), conversationId: 7, userId: 1)
+
+        await waitForWrites()
+        XCTAssertEqual(storage.applied.count, appliedBefore)
+        XCTAssertNil(storage.edits[1]?[7])
+    }
+
+    /// Кейс: пользователь вышел с правкой сообщения 15; после выхода приходят сохранение и выключение правки
+    /// другого сообщения той же переписки и сохранение от другого пользователя.
+    /// Ожидание: ничего из этого не записывается — правка сообщения 15 в БД не тронута.
+    func test_editChanges_afterLogout_otherMessageOrUser_writeNothing() async {
+        await sut.load(userId: 1)
+        sut.beginEditing(messageId: 15, originalText: "Привет", conversationId: 7, userId: 1)
+        sut.prepareForLogout()
+        await waitForWrites()
+        let saved = storage.edits[1]?[7]
+        let appliedBefore = storage.applied.count
+
+        sut.saveEdit(MessageEditDraft(messageId: 16, originalText: "Пока", text: "Пока всем"), conversationId: 7, userId: 1)
+        sut.endEditing(messageId: 16, conversationId: 7, userId: 1)
+        sut.saveEdit(MessageEditDraft(messageId: 15, originalText: "Привет", text: "Чужой текст"), conversationId: 7, userId: 2)
+
+        await waitForWrites()
+        XCTAssertEqual(storage.applied.count, appliedBefore)
+        XCTAssertEqual(storage.edits[1]?[7], saved)
+    }
+
     /// Кейс: в БД черновик и правка, сохранённые давно; сервис загружает данные.
     /// Ожидание: просроченные записи удаляются одним вызовом с общей границей — срок у черновика и правки общий.
     func test_load_expiryIsSharedForDraftAndEdit() async {

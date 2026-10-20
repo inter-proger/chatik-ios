@@ -81,9 +81,10 @@ final class MessageDraftService: MessageDraftServiceProtocol, MessageDraftLogout
         /// Сессия пользователя закончилась: память пуста, его изменения пишутся только в БД.
         /// `deletableConversationIds` — переписки, черновики которых на момент выхода были в памяти или ждали
         /// записи: только у них пустой текст удаляет черновик. У остальных черновика в БД либо нет, либо он не
-        /// загрузился (`loadFailed`), и пустое поле означает не «стёр», а «не видел». `editConversationIds` —
-        /// то же для правок: только их можно записать или выключить.
-        case loggedOut(userId: Int, deletableConversationIds: Set<Int>, editConversationIds: Set<Int>)
+        /// загрузился (`loadFailed`), и пустое поле означает не «стёр», а «не видел». `editMessageIds` — правки,
+        /// включённые на момент выхода (`conversationId` → `messageId`): только их можно записать или выключить,
+        /// и только для того же сообщения. Выключенная после выхода правка из списка убирается и не воскрешается.
+        case loggedOut(userId: Int, deletableConversationIds: Set<Int>, editMessageIds: [Int: Int])
     }
 
     /// Черновики, которые видит интерфейс.
@@ -223,12 +224,12 @@ final class MessageDraftService: MessageDraftServiceProtocol, MessageDraftLogout
         if ownerUserId == userId {
             applyToMemory(text: text, conversationId: conversationId)
             flush(userId: userId)
-        } else if case .loggedOut(userId, var deletableConversationIds, let editConversationIds) = state {
+        } else if case .loggedOut(userId, var deletableConversationIds, let editMessageIds) = state {
             let draftText = Self.draftText(text)
             guard draftText != nil || deletableConversationIds.contains(conversationId) else { return }
             enqueueWrite([conversationId: .draft(draftText)], userId: userId)
             deletableConversationIds.insert(conversationId)
-            state = .loggedOut(userId: userId, deletableConversationIds: deletableConversationIds, editConversationIds: editConversationIds)
+            state = .loggedOut(userId: userId, deletableConversationIds: deletableConversationIds, editMessageIds: editMessageIds)
         }
     }
 
@@ -245,10 +246,11 @@ final class MessageDraftService: MessageDraftServiceProtocol, MessageDraftLogout
         guard let userId = ownerUserId else { return }
         flush(userId: userId)
         let deletableConversationIds = conversationIds(dirtyIn: .text).union(drafts.keys)
-        let editConversationIds = conversationIds(dirtyIn: .edit).union(edits.keys)
+        // Выключенные, но ещё не записанные правки уже стоят в очереди записи (`flush`) — в список не входят.
+        let editMessageIds = edits.mapValues(\.messageId)
         setMemory([:])
         dirtyFields = [:]
-        state = .loggedOut(userId: userId, deletableConversationIds: deletableConversationIds, editConversationIds: editConversationIds)
+        state = .loggedOut(userId: userId, deletableConversationIds: deletableConversationIds, editMessageIds: editMessageIds)
         generation += 1
     }
 
@@ -298,7 +300,7 @@ final class MessageDraftService: MessageDraftServiceProtocol, MessageDraftLogout
     func beginEditing(messageId: Int, originalText: String, conversationId: Int, userId: Int) {
         guard ownerUserId == userId else { return }
         guard edits[conversationId] == nil else {
-            Logger.storage.error("Режим редактирования уже включён: повторное включение пропущено")
+            Logger.storage.debug("Режим редактирования уже включён: повторное включение пропущено")
             return
         }
         edits[conversationId] = MessageEditDraft(messageId: messageId, originalText: originalText, text: originalText)
@@ -321,7 +323,7 @@ final class MessageDraftService: MessageDraftServiceProtocol, MessageDraftLogout
 
     /// Меняет текст правки в памяти и ставит в очередь записи все незаписанные изменения. Правка другого сообщения
     /// или выключенный режим не воскрешаются. Для вышедшего пользователя записывается только эта переписка и только
-    /// если её правка была в памяти к моменту выхода.
+    /// если правка того же сообщения была включена к моменту выхода и не выключена после него.
     /// - Parameters:
     ///   - edit: правка с текстом поля ввода.
     ///   - conversationId: переписка.
@@ -331,12 +333,13 @@ final class MessageDraftService: MessageDraftServiceProtocol, MessageDraftLogout
             guard edits[conversationId]?.messageId == edit.messageId else { return }
             updateEdit(text: edit.text, conversationId: conversationId, userId: userId)
             flush(userId: userId)
-        } else if case let .loggedOut(userId, _, editConversationIds) = state, editConversationIds.contains(conversationId) {
+        } else if case .loggedOut(userId, _, let editMessageIds) = state, editMessageIds[conversationId] == edit.messageId {
             enqueueWrite([conversationId: .edit(edit)], userId: userId)
         }
     }
 
-    /// Выключает режим редактирования и ставит запись в очередь. Черновик не меняется.
+    /// Выключает режим редактирования и ставит запись в очередь. Черновик не меняется. Для вышедшего пользователя
+    /// выключает только правку того же сообщения, включённую к моменту выхода: после этого она не воскрешается.
     /// - Parameters:
     ///   - messageId: сообщение, редактирование которого закончилось.
     ///   - conversationId: переписка.
@@ -348,8 +351,11 @@ final class MessageDraftService: MessageDraftServiceProtocol, MessageDraftLogout
             editingMessageIds[conversationId] = nil
             dirtyFields[conversationId, default: []].insert(.edit)
             flush(userId: userId)
-        } else if case let .loggedOut(userId, _, editConversationIds) = state, editConversationIds.contains(conversationId) {
+        } else if case .loggedOut(userId, let deletableConversationIds, var editMessageIds) = state,
+                  editMessageIds[conversationId] == messageId {
             enqueueWrite([conversationId: .edit(nil)], userId: userId)
+            editMessageIds[conversationId] = nil
+            state = .loggedOut(userId: userId, deletableConversationIds: deletableConversationIds, editMessageIds: editMessageIds)
         }
     }
 

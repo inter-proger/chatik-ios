@@ -11,6 +11,10 @@ import UIKit
 final class MessageMenuPresenterMock: MessageMenuPresenting {
     /// Показанные меню: сообщение и кадр пузыря.
     private(set) var presented: [(message: MessageDisplayModel, frame: CGRect)] = []
+    /// Сколько раз меню закрывали извне (`dismiss`).
+    private(set) var dismissCount = 0
+    /// `true` — показ отклоняется, как у окна, которое ещё не убрано.
+    var isRefusing = false
     private var onClose: ((MessageAction?) -> Void)?
 
     func present(
@@ -18,9 +22,16 @@ final class MessageMenuPresenterMock: MessageMenuPresenting {
         frame: CGRect,
         source: MessageMenuSource,
         onClose: @escaping (MessageAction?) -> Void
-    ) {
+    ) -> Bool {
+        guard !isRefusing else { return false }
         presented.append((message, frame))
         self.onClose = onClose
+        return true
+    }
+
+    func dismiss() {
+        dismissCount += 1
+        close(with: nil)
     }
 
     /// Закрывает показанное меню.

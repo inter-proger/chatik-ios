@@ -29,8 +29,12 @@ import os
 /// в точках сохранения — уход с экрана, уход приложения в неактивное состояние или в фон (их сообщает View),
 /// отправка. Черновик принадлежит пользователю, открывшему экран: экран может уйти уже после выхода из аккаунта.
 ///
-/// Своё доставленное сообщение можно отредактировать (`ChatViewModel+Editing`): в режиме редактирования текст поля —
+/// Своё доставленное сообщение можно отредактировать (раздел «Редактирование»): в режиме редактирования текст поля —
 /// текст правки, а черновик ждёт в сервисе черновиков нетронутым и возвращается в поле после выхода из режима.
+/// Правку хранит сервис черновиков рядом с черновиком, а запрос выполняет `MessageEditService` — он переживает уход
+/// с экрана. Исход запроса — своего или начатого на прошлом открытии экрана — ждёт только `observeEditSubmission`,
+/// задача которого живёт, пока экран показан. Ошибка, которую экран не успел показать, остаётся в сервисе до
+/// следующего открытия.
 ///
 /// Тексты и производные данные — в `ChatViewModel+Texts`.
 @MainActor
@@ -77,14 +81,17 @@ final class ChatViewModel {
     let messageSendQueue: MessageSendQueueProtocol
     let editService: MessageEditServiceProtocol
     let now: () -> Date
-    let draftService: MessageDraftServiceProtocol
+    private let draftService: MessageDraftServiceProtocol
     /// Пользователь, открывший экран, — владелец черновика; `nil` — сессии нет, черновик не меняется.
     /// Задаётся в конце `init`, после подстановки черновика: подстановка не возвращается в сервис через `didSet`.
-    @ObservationIgnored private(set) var draftUserId: Int?
+    @ObservationIgnored private var draftUserId: Int?
     /// Идёт замена текста поля при смене режима: `didSet` не записывает подставленный текст в черновик или правку.
     @ObservationIgnored private var isReplacingInput = false
-    /// Сигнал `observeEditSubmission` о начатом запросе правки; `nil` — экран ещё не показывался.
-    @ObservationIgnored var editSubmissionRequests: AsyncStream<Void>.Continuation?
+    /// Идущий `observeEditSubmission`: ему `submitEdit` сообщает о начатом запросе; `nil` — экран не показан.
+    @ObservationIgnored private var editSubmissionObserver: EditSubmissionObserver?
+    /// Показана ошибка запроса правки: после её закрытия фокус возвращается в поле, чтобы правку можно было
+    /// сразу исправить.
+    @ObservationIgnored private var isEditFailureShown = false
     /// Календарь, по которому лента делится на дни. Функция, а не значение: после смены часового пояса
     /// `Calendar.current` уже другой.
     private let calendar: () -> Calendar
@@ -95,7 +102,7 @@ final class ChatViewModel {
 
     /// Сообщения с сервера из последнего снимка ленты. Не наблюдается: об изменении `observeMessages()` узнаёт
     /// из снимка.
-    @ObservationIgnored private(set) var serverMessages: [Message] = []
+    @ObservationIgnored private var serverMessages: [Message] = []
     /// Позиции сообщений ленты в плоском порядке, от самого нового, — для подгрузки старых.
     @ObservationIgnored private var messagePositions: [MessageClientKey: Int] = [:]
     /// `isLoaded` из последнего снимка; на экран попадает вместе с собранными из него сообщениями.
@@ -320,8 +327,7 @@ final class ChatViewModel {
                 calendar: calendar,
                 now: now(),
                 strings: .current,
-                dateHeaderFormatter: dateHeaderFormatterProvider.formatter(locale: locale, calendar: calendar),
-                isEditing: inputMode != .compose
+                dateHeaderFormatter: dateHeaderFormatterProvider.formatter(locale: locale, calendar: calendar)
             )
         )
     }
@@ -392,7 +398,7 @@ final class ChatViewModel {
 
     /// Подставляет текст в поле ввода, не записывая его в черновик или правку.
     /// - Parameter text: новый текст поля.
-    func replaceInput(with text: String) {
+    private func replaceInput(with text: String) {
         isReplacingInput = true
         messageText = text
         isReplacingInput = false
@@ -400,7 +406,7 @@ final class ChatViewModel {
 
     /// Меняет режим поля ввода и текст плашки.
     /// - Parameter mode: новый режим.
-    func setInputMode(_ mode: ChatInputMode) {
+    private func setInputMode(_ mode: ChatInputMode) {
         guard mode != inputMode else { return }
         inputMode = mode
         refreshEditedMessageText()
@@ -418,6 +424,138 @@ final class ChatViewModel {
         }
         guard text != editedMessageText else { return }
         editedMessageText = text
+    }
+
+    // MARK: - Редактирование
+
+    /// Обработчик пункта меню по долгому нажатию на сообщение.
+    /// - Parameters:
+    ///   - action: выбранное действие.
+    ///   - message: сообщение, у которого открыто меню.
+    func didSelectAction(_ action: MessageAction, for message: MessageDisplayModel) {
+        switch action {
+        case .edit:
+            beginEditing(message)
+        }
+    }
+
+    /// Включает режим редактирования: черновик уходит в БД (точка сохранения) и остаётся нетронутым, в поле
+    /// подставляется текст сообщения. При уже включённом режиме ничего не делает — действия в это время скрыты.
+    /// - Parameter displayModel: редактируемое сообщение ленты.
+    private func beginEditing(_ displayModel: MessageDisplayModel) {
+        guard inputMode == .compose, let draftUserId,
+              let message = serverMessages.first(where: { $0.clientKey == displayModel.id }) else { return }
+        let conversationId = conversation.conversationId
+        draftService.save(text: messageText, conversationId: conversationId, userId: draftUserId)
+        draftService.beginEditing(messageId: message.messageId, originalText: message.text, conversationId: conversationId, userId: draftUserId)
+        guard let edit = draftService.edit(for: conversationId), edit.messageId == message.messageId else {
+            Logger.chat.error("Режим редактирования не включён: сервис черновиков отказал")
+            return
+        }
+        setInputMode(.editing(messageId: edit.messageId, originalText: edit.originalText))
+        replaceInput(with: edit.text)
+    }
+
+    /// Крестик на плашке: выключает режим редактирования и возвращает в поле черновик. Во время запроса крестик
+    /// скрыт, и вызов ничего не делает.
+    func cancelEditing() {
+        guard case let .editing(messageId, _) = inputMode, !isEditSubmitting, let draftUserId else { return }
+        draftService.endEditing(messageId: messageId, conversationId: conversation.conversationId, userId: draftUserId)
+        switchToCompose()
+    }
+
+    /// Подтверждение правки. Текст, совпадающий с текущим текстом сообщения после обрезки, закрывает режим без
+    /// запроса. Иначе текст правки уходит в БД и запускается запрос; кнопка и поле блокируются сразу, а результат
+    /// приходит через `observeEditSubmission`.
+    private func submitEdit() {
+        guard case let .editing(messageId, originalText) = inputMode, let draftUserId else { return }
+        let conversationId = conversation.conversationId
+        guard Self.trimmed(messageText) != Self.trimmed(editedMessageText ?? originalText) else {
+            draftService.endEditing(messageId: messageId, conversationId: conversationId, userId: draftUserId)
+            switchToCompose()
+            return
+        }
+        let edit = MessageEditDraft(messageId: messageId, originalText: originalText, text: messageText)
+        draftService.saveEdit(edit, conversationId: conversationId, userId: draftUserId)
+        guard editService.submit(conversationId: conversationId, userId: draftUserId) != nil else {
+            Logger.chat.error("Запрос правки не начат: сервис правок отказал")
+            return
+        }
+        editSubmissionObserver?.continuation.yield()
+    }
+
+    /// Ждёт исходов запросов правки, пока экран показан, — для `.task` экрана. Сначала — запроса, начатого
+    /// на прошлом открытии (или его непоказанной ошибки), затем — каждого запроса, начатого `submitEdit`.
+    /// Отмена задачи (уход с экрана) прекращает ожидание и закрывает стрим сигналов, а ошибка остаётся в сервисе
+    /// до следующего открытия.
+    func observeEditSubmission() async {
+        let (requests, continuation) = AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
+        let observer = EditSubmissionObserver(id: UUID(), continuation: continuation)
+        editSubmissionObserver = observer
+        defer {
+            continuation.finish()
+            // Новый `.task` повторно показанного экрана мог уже поставить своего наблюдателя — его не трогаем.
+            if editSubmissionObserver?.id == observer.id {
+                editSubmissionObserver = nil
+            }
+        }
+        continuation.yield()
+        for await _ in requests {
+            await awaitEditSubmission()
+        }
+    }
+
+    /// Ждёт ли экран исходов запросов правки (`observeEditSubmission` запущен).
+    var isObservingEditSubmissions: Bool {
+        editSubmissionObserver != nil
+    }
+
+    /// Ошибка закрыта пользователем.
+    /// - Returns: `true` — это была ошибка запроса правки: поле ввода нужно снова сфокусировать, чтобы исправить
+    ///   правку; клавиатура пряталась на время запроса.
+    func didDismissError() -> Bool {
+        defer { isEditFailureShown = false }
+        return isEditFailureShown && isEditing
+    }
+
+    /// Дожидается запроса правки и применяет исход, если экран ещё показан. Успех (или отсутствие запроса) сверяет
+    /// режим с сервисом: успешный запрос выключил режим, и в поле возвращается черновик. Ошибка забирается
+    /// из сервиса и показывается, режим остаётся. Отмена выходом из аккаунта не показывается и режим не трогает:
+    /// сервис черновиков к этому моменту уже очистил память.
+    private func awaitEditSubmission() async {
+        let conversationId = conversation.conversationId
+        do {
+            try await editService.waitForSubmission(conversationId: conversationId)
+        } catch is CancellationError {
+            return
+        } catch {
+            // Ошибка ждёт в сервисе и забирается ниже — только если экран ещё показан.
+        }
+        guard !Task.isCancelled else { return }
+        if let failure = editService.takeFailure(conversationId: conversationId) {
+            errorMessage = ErrorMessages.message(for: failure)
+            isEditFailureShown = true
+            return
+        }
+        syncInputModeWithService()
+    }
+
+    /// Выключает режим, если сервис черновиков уже выключил его, — после успешного запроса.
+    private func syncInputModeWithService() {
+        guard inputMode != .compose, draftService.editingMessageId(for: conversation.conversationId) == nil else { return }
+        switchToCompose()
+    }
+
+    /// Переключает поле в режим нового сообщения и возвращает в него черновик.
+    private func switchToCompose() {
+        setInputMode(.compose)
+        replaceInput(with: draftService.draft(for: conversation.conversationId) ?? "")
+    }
+
+    /// Текст без краевых пробелов и невидимых символов — так же сервер сравнивает правку с текущим текстом.
+    /// - Parameter text: текст.
+    private static func trimmed(_ text: String) -> String {
+        text.trimmingCharacters(in: MessageTextValidator.trimmedCharacters)
     }
 
     /// Обработчик тапа по сообщению: для неотправленного показывает выбор «повторить / удалить».
@@ -438,6 +576,19 @@ final class ChatViewModel {
     func deleteOutgoing(clientId: String) {
         messageSendQueue.delete(clientId: clientId)
     }
+}
+
+/// Наблюдатель исходов запросов правки — один на показ экрана.
+private struct EditSubmissionObserver {
+    /// Отличает наблюдателя повторного показа экрана от завершающегося прежнего.
+    let id: UUID
+    /// Сигналы о запросах, начатых `submitEdit`.
+    let continuation: AsyncStream<Void>.Continuation
+}
+
+extension Logger {
+    /// Лог экрана переписки: сбои, которые не показываются пользователю, но не должны теряться молча.
+    static let chat = Logger(subsystem: Bundle.main.bundleIdentifier ?? "Chatik", category: "Chat")
 }
 
 /// Всё, из чего собирается лента, — значениями, чтобы сборка шла вне main.

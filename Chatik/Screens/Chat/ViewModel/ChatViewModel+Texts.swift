@@ -67,6 +67,13 @@ extension ChatViewModel {
         inputMode != .compose
     }
 
+    /// Доступны ли действия с сообщениями (меню по долгому нажатию, действия VoiceOver). В режиме редактирования
+    /// скрыты у всех сообщений: чтобы отредактировать другое, текущее редактирование нужно сначала закрыть. Ленту
+    /// смена режима не пересобирает — действия скрывает View.
+    var areMessageActionsEnabled: Bool {
+        !isEditing
+    }
+
     /// Текст редактируемого сообщения для плашки в одну строку: переводы строк заменены пробелом.
     var editBannerText: String {
         (editedMessageText ?? "").split(whereSeparator: \.isNewline).joined(separator: " ")

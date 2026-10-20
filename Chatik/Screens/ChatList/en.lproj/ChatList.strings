@@ -36,4 +36,4 @@
 "chat_list.row.failed_prefix" = "Not sent:";
 
 /* Row preview while editing an own message is in progress; same color as "Draft:", no text after the phrase */
-"chat_list.row.editing" = "Editing";
+"chat_list.row.editing" = "Editing in progress";

@@ -16,7 +16,9 @@ import UIKit
 struct ChatView: View {
     @State private var viewModel: ChatViewModel
     @FocusState private var isInputFocused: Bool
-    @State private var menuController = MessageMenuController(presenter: MessageMenuWindowPresenter())
+    /// Создаётся при первом появлении экрана, а не значением по умолчанию `@State`: `init` экрана SwiftUI вызывает
+    /// при каждой перерисовке родителя, и значение по умолчанию создавалось бы каждый раз, чтобы быть отброшенным.
+    @State private var menuController: MessageMenuController?
     @Environment(\.scenePhase) private var scenePhase
 
     init(viewModel: ChatViewModel) {
@@ -27,13 +29,21 @@ struct ChatView: View {
         feed
         // Клавиатура: меню сообщения показывается только после того, как она спрячется.
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
-            menuController.keyboardWillShow()
+            menuController?.keyboardWillShow()
         }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
-            menuController.keyboardWillHide()
+            menuController?.keyboardWillHide()
         }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidHideNotification)) { _ in
-            menuController.keyboardDidHide()
+            menuController?.keyboardDidHide()
+        }
+        // Сообщение открытого меню изменилось или пропало — меню закрывается.
+        .onChange(of: viewModel.sections) { _, sections in
+            menuController?.feedDidChange(sections)
+        }
+        .onAppear {
+            guard menuController == nil else { return }
+            menuController = MessageMenuController(presenter: MessageMenuWindowPresenter())
         }
         // Лента перевёрнута (см. `MessagesListView`), поэтому индикатор обновления появляется внизу, у новых сообщений.
         .refreshable { await viewModel.refresh() }
@@ -55,7 +65,11 @@ struct ChatView: View {
             }
         }
         .alert(CommonStrings.errorTitle, isPresented: $viewModel.errorMessage.isPresent(), presenting: viewModel.errorMessage) { _ in
-            Button(CommonStrings.ok, role: .cancel) {}
+            Button(CommonStrings.ok, role: .cancel) {
+                // Правка не сохранилась: клавиатура пряталась на время запроса и возвращается, чтобы исправить текст.
+                guard viewModel.didDismissError() else { return }
+                isInputFocused = true
+            }
         } message: { message in
             Text(message)
         }
@@ -66,7 +80,8 @@ struct ChatView: View {
     ///   - message: сообщение.
     ///   - source: пузырь.
     private func showMenu(for message: MessageDisplayModel, source: MessageMenuSource) {
-        menuController.request(
+        guard viewModel.areMessageActionsEnabled else { return }
+        menuController?.request(
             message: message,
             source: source,
             hideKeyboard: { isInputFocused = false },
@@ -86,7 +101,8 @@ struct ChatView: View {
             onDelete: { viewModel.deleteOutgoing(clientId: $0.id.clientId) },
             onAction: viewModel.didSelectAction,
             onLongPress: showMenu,
-            menuMessageId: menuController.menuMessageId
+            menuMessageId: menuController?.menuMessageId,
+            areActionsEnabled: viewModel.areMessageActionsEnabled
         )
         .onTapGesture { isInputFocused = false }
         .overlay(alignment: .top) { navigationBarBackground }
@@ -96,7 +112,8 @@ struct ChatView: View {
             ChatInputPanel(viewModel: viewModel, isFocused: $isInputFocused)
         }
         // Плашка редактирования меняет высоту панели: лента сдвигается в той же анимации, что и плашка, а не скачком
-        // до её конца. Анимация здесь, а не в панели: иначе анимировалась бы только панель.
+        // до её конца. Анимация здесь, а не в панели: иначе анимировалась бы только панель. Секции ленты смена режима
+        // не меняет (действия скрывает `areActionsEnabled`), поэтому в анимацию попадают только отступ и плашка.
         .animation(.default, value: viewModel.isEditing)
     }
 

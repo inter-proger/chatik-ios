@@ -77,7 +77,7 @@ final class MessageDisplayModelTests: XCTestCase {
 
     // MARK: - Действия
 
-    /// Кейс: своё доставленное текстовое сообщение, режим редактирования выключен.
+    /// Кейс: своё доставленное текстовое сообщение.
     /// Ожидание: в меню есть «Редактировать».
     func test_actions_ownTextMessage_hasEdit() {
         let sut = MessageDisplayModel(message: .make(id: 1, senderId: 1), sender: nil, context: makeContext())
@@ -85,8 +85,7 @@ final class MessageDisplayModelTests: XCTestCase {
         XCTAssertEqual(sut.actions, [.edit])
     }
 
-    /// Кейс: чужое сообщение, своё сообщение неизвестного типа, неотправленное своё и своё сообщение при включённом
-    /// режиме редактирования.
+    /// Кейс: чужое сообщение, своё сообщение неизвестного типа, неотправленное и отправляющееся своё.
     /// Ожидание: ни у одного нет действий — меню по долгому нажатию нет.
     func test_actions_notEditable_areEmpty() {
         let unknown = Message(messageId: 3, clientId: "c", conversationId: 1, blockId: 1, senderId: 1, type: .unknown, text: "", isEdited: false, createdAt: .stub, updatedAt: .stub)
@@ -95,7 +94,6 @@ final class MessageDisplayModelTests: XCTestCase {
             MessageDisplayModel(message: unknown, sender: nil, context: makeContext()),
             MessageDisplayModel(outgoing: .stub(clientId: "a", createdAt: now, status: .failed), sender: nil, context: makeContext()),
             MessageDisplayModel(outgoing: .stub(clientId: "b", createdAt: now, status: .sending), sender: nil, context: makeContext()),
-            MessageDisplayModel(message: .make(id: 2, senderId: 1), sender: nil, context: makeContext(isEditing: true)),
         ]
 
         for model in models {
@@ -175,18 +173,15 @@ final class MessageDisplayModelTests: XCTestCase {
     // MARK: - Helpers
 
     /// Контекст отображения с русской локалью и часовым поясом UTC.
-    /// - Parameters:
-    ///   - currentUserId: текущий пользователь.
-    ///   - isEditing: включён ли режим редактирования.
-    private func makeContext(currentUserId: Int? = 1, isEditing: Bool = false) -> MessageDisplayContext {
+    /// - Parameter currentUserId: текущий пользователь.
+    private func makeContext(currentUserId: Int? = 1) -> MessageDisplayContext {
         MessageDisplayContext(
             currentUserId: currentUserId,
             locale: Locale(identifier: "ru"),
             calendar: calendar,
             now: now,
             strings: .current,
-            dateHeaderFormatter: RussianMessageDateHeaderFormatter(calendar: calendar),
-            isEditing: isEditing
+            dateHeaderFormatter: RussianMessageDateHeaderFormatter(calendar: calendar)
         )
     }
 }

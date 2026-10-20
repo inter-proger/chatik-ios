@@ -21,7 +21,8 @@ import SwiftUI
 ///
 /// Долгое нажатие на пузырь у сообщения с действиями (`MessageDisplayModel.actions`) сообщает экрану
 /// `onLongPress`: меню показывает экран (`MessageMenuController`). Пока меню открыто, пузырь скрыт — на его месте
-/// копия в меню. Те же действия доступны VoiceOver.
+/// копия в меню. Те же действия доступны VoiceOver. Пока экран выключил действия (`areActionsEnabled`, режим
+/// редактирования), нет ни меню, ни действий VoiceOver.
 struct MessageBubbleView: View {
     let message: MessageDisplayModel
     /// Показан выбор «повторить / удалить» у неотправленного сообщения.
@@ -35,6 +36,8 @@ struct MessageBubbleView: View {
     var onLongPress: (MessageMenuSource) -> Void = { _ in }
     /// Для сообщения открыто меню: пузырь скрыт, на его месте — копия в меню.
     var isHiddenForMenu = false
+    /// Экран принимает действия с сообщениями; `false` — режим редактирования, действия скрыты у всех сообщений.
+    var areActionsEnabled = true
 
     private static let avatarSize: CGFloat = 32
     /// Промежуток между аватаром и входящим пузырём.
@@ -85,7 +88,7 @@ struct MessageBubbleView: View {
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(isFailed ? .isButton : [])
         .accessibilityActions {
-            ForEach(message.actions, id: \.self) { action in
+            ForEach(actions, id: \.self) { action in
                 actionButton(action)
             }
         }
@@ -93,6 +96,11 @@ struct MessageBubbleView: View {
 
     private var isFailed: Bool {
         message.deliveryState == .failed
+    }
+
+    /// Действия, доступные сейчас: действия сообщения, если экран их принимает.
+    private var actions: [MessageAction] {
+        areActionsEnabled ? message.actions : []
     }
 
     /// Значок неотправленного сообщения слева от пузыря.
@@ -128,7 +136,7 @@ struct MessageBubbleView: View {
             // редактирования, которую включает выбранное «Редактировать», и на месте пузыря мелькала бы пустота.
             .transaction(value: isHiddenForMenu) { $0.animation = nil }
             .overlay {
-                if !message.actions.isEmpty {
+                if !actions.isEmpty {
                     MessageLongPressDetector(onLongPress: onLongPress)
                 }
             }

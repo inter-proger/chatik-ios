@@ -94,9 +94,6 @@ struct MessageDisplayContext: Sendable {
     let strings: MessageDisplayStrings
     /// Заголовки дней на языке `locale`.
     let dateHeaderFormatter: any MessageDateHeaderFormatting
-    /// Включён режим редактирования: действие «Редактировать» скрыто у всех сообщений — чтобы отредактировать
-    /// другое, текущее редактирование нужно сначала закрыть.
-    let isEditing: Bool
 }
 
 extension MessageDisplayModel {
@@ -121,13 +118,14 @@ extension MessageDisplayModel {
         )
     }
 
-    /// Действия с доставленным сообщением: редактировать можно своё текстовое сообщение, пока не редактируется
-    /// другое.
+    /// Действия с доставленным сообщением: редактировать можно своё текстовое сообщение. Режим редактирования
+    /// здесь не учитывается — действия в это время скрывает экран (`ChatViewModel.areMessageActionsEnabled`):
+    /// включение и выключение режима не пересобирают ленту.
     /// - Parameters:
     ///   - message: сообщение с сервера.
     ///   - context: общие параметры отображения.
     static func actions(for message: Message, context: MessageDisplayContext) -> [MessageAction] {
-        guard message.senderId == context.currentUserId, message.type == .text, !context.isEditing else { return [] }
+        guard message.senderId == context.currentUserId, message.type == .text else { return [] }
         return [.edit]
     }
 

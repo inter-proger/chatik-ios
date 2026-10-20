@@ -15,12 +15,16 @@ protocol MessageMenuPresenting: AnyObject {
     ///   - frame: кадр пузыря на экране — копия пузыря в меню встаёт на это место.
     ///   - source: пузырь — из него берётся сцена.
     ///   - onClose: меню начало закрываться; параметр — выбранное действие, `nil` — меню закрыто без выбора.
+    /// - Returns: `false` — меню не показано (прежнее ещё не убрано или нет окна сцены), `onClose` не будет вызван.
     func present(
         message: MessageDisplayModel,
         frame: CGRect,
         source: MessageMenuSource,
         onClose: @escaping (MessageAction?) -> Void
-    )
+    ) -> Bool
+    /// Закрывает показанное меню сразу, без анимации и без выбора: вызывает его `onClose(nil)`. Меню нет или оно
+    /// уже закрывается — ничего не делает.
+    func dismiss()
 }
 
 /// Меню сообщения по долгому нажатию: показывается, когда клавиатура уже спрятана.
@@ -31,7 +35,8 @@ protocol MessageMenuPresenting: AnyObject {
 /// за `keyboardWaitLimit`, меню всё равно показывается — с текущим кадром.
 ///
 /// Пока меню открыто, `menuMessageId` указывает на сообщение: лента скрывает его пузырь, на его месте копия. С началом
-/// закрытия пузырь возвращается, а выбранное действие передаётся экрану.
+/// закрытия пузырь возвращается, а выбранное действие передаётся экрану. Если сообщение в ленте изменилось (правка
+/// с другого устройства) или пропало, меню закрывается без выбора: копия показывала бы устаревший текст.
 @MainActor
 @Observable
 final class MessageMenuController {
@@ -45,6 +50,8 @@ final class MessageMenuController {
 
     /// Сообщение, для которого открыто меню; `nil` — меню нет.
     private(set) var menuMessageId: MessageClientKey?
+    /// Сообщение в том виде, в каком его показывает копия в открытом меню.
+    @ObservationIgnored private var shownMessage: MessageDisplayModel?
     @ObservationIgnored private var isKeyboardVisible = false
     @ObservationIgnored private var pending: PendingMenu?
     @ObservationIgnored private let presenter: MessageMenuPresenting
@@ -107,6 +114,16 @@ final class MessageMenuController {
         presentPending(id: pending.id)
     }
 
+    /// Лента пересобрана: если сообщение открытого меню пропало или изменился его текст или пометка «Изменено»,
+    /// меню закрывается без выбора.
+    /// - Parameter sections: новая лента.
+    func feedDidChange(_ sections: [MessageDaySectionDisplayModel]) {
+        guard let shownMessage else { return }
+        let current = sections.lazy.flatMap(\.messages).first { $0.id == shownMessage.id }
+        guard current?.text != shownMessage.text || current?.editedLabel != shownMessage.editedLabel else { return }
+        presenter.dismiss()
+    }
+
     /// Показывает ждущее меню, если оно ещё ждёт.
     /// - Parameter id: меню, которое должно быть показано.
     private func presentPending(id: UUID) {
@@ -115,18 +132,22 @@ final class MessageMenuController {
         present(message: pending.message, source: pending.source, onAction: pending.onAction)
     }
 
-    /// Показывает меню над пузырём, если он ещё на экране, и скрывает пузырь в ленте.
+    /// Показывает меню над пузырём, если он ещё на экране, и скрывает пузырь в ленте — только если меню показано:
+    /// иначе пузырь остался бы скрытым, а новые нажатия отбрасывались бы.
     /// - Parameters:
     ///   - message: сообщение.
     ///   - source: пузырь.
     ///   - onAction: выбрано действие меню.
     private func present(message: MessageDisplayModel, source: MessageMenuSource, onAction: @escaping (MessageAction) -> Void) {
         guard let frame = source.screenFrame else { return }
-        menuMessageId = message.id
-        presenter.present(message: message, frame: frame, source: source) { [weak self] action in
+        let isPresented = presenter.present(message: message, frame: frame, source: source) { [weak self] action in
             self?.menuMessageId = nil
+            self?.shownMessage = nil
             guard let action else { return }
             onAction(action)
         }
+        guard isPresented else { return }
+        menuMessageId = message.id
+        shownMessage = message
     }
 }

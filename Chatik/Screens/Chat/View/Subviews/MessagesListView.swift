@@ -36,6 +36,8 @@ struct MessagesListView: View {
     var onLongPress: (MessageDisplayModel, MessageMenuSource) -> Void = { _, _ in }
     /// Сообщение, для которого открыто меню: его пузырь скрыт. `nil` — меню нет.
     var menuMessageId: MessageClientKey?
+    /// Действия с сообщениями доступны; `false` — режим редактирования, действий нет ни у одного сообщения.
+    var areActionsEnabled = true
 
     @State private var tracker = FloatingDateTracker()
 
@@ -52,7 +54,8 @@ struct MessagesListView: View {
                             onDelete: { onDelete(message) },
                             onAction: { onAction($0, message) },
                             onLongPress: { onLongPress(message, $0) },
-                            isHiddenForMenu: menuMessageId == message.id
+                            isHiddenForMenu: menuMessageId == message.id,
+                            areActionsEnabled: areActionsEnabled
                         )
                             .flippedVertically()
                             .onAppear { onAppear(message) }

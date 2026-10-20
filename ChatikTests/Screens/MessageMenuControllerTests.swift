@@ -125,6 +125,43 @@ final class MessageMenuControllerTests: XCTestCase {
         XCTAssertNil(sut.menuMessageId)
     }
 
+    /// Кейс: презентер отказал в показе (окно прежнего меню ещё не убрано); затем долгое нажатие повторено.
+    /// Ожидание: пузырь не скрыт после отказа, а повторное нажатие показывает меню.
+    func test_request_presenterRefuses_keepsBubbleAndAcceptsNextRequest() {
+        let source = MessageMenuSourceMock(screenFrame: CGRect(x: 100, y: 300, width: 200, height: 50))
+        presenter.isRefusing = true
+        sut.request(message: message, source: source, hideKeyboard: {}, onAction: { _ in })
+        XCTAssertNil(sut.menuMessageId)
+        presenter.isRefusing = false
+
+        sut.request(message: message, source: source, hideKeyboard: {}, onAction: { _ in })
+
+        XCTAssertEqual(presenter.presented.count, 1)
+        XCTAssertEqual(sut.menuMessageId, message.id)
+    }
+
+    /// Кейс: меню открыто; лента пересобрана с тем же сообщением, с изменённым текстом, с изменённой пометкой
+    /// «Изменено» и без сообщения.
+    /// Ожидание: меню закрывается без выбора во всех случаях, кроме неизменного сообщения.
+    func test_feedDidChange_closesMenuOnlyWhenShownMessageChanged() {
+        let source = MessageMenuSourceMock(screenFrame: CGRect(x: 100, y: 300, width: 200, height: 50))
+        let cases: [(messages: [MessageDisplayModel], dismisses: Bool)] = [
+            ([message], false),
+            ([message.with(text: "Привет всем")], true),
+            ([message.with(editedLabel: "Изменено")], true),
+            ([], true),
+        ]
+
+        for testCase in cases {
+            let dismissesBefore = presenter.dismissCount
+            sut.request(message: message, source: source, hideKeyboard: {}, onAction: { _ in })
+            sut.feedDidChange([section(testCase.messages)])
+            XCTAssertEqual(presenter.dismissCount - dismissesBefore, testCase.dismisses ? 1 : 0, "\(testCase.messages)")
+            XCTAssertEqual(sut.menuMessageId == nil, testCase.dismisses)
+            presenter.close(with: nil)
+        }
+    }
+
     /// Кейс: меню закрыто выбором действия и, отдельно, без выбора.
     /// Ожидание: пузырь возвращается в обоих случаях; действие передаётся экрану только при выборе.
     func test_close_unhidesBubbleAndPassesAction() {
@@ -142,5 +179,34 @@ final class MessageMenuControllerTests: XCTestCase {
         }
 
         XCTAssertEqual(actions, [.edit])
+    }
+
+    // MARK: - Helpers
+
+    /// Секция ленты с переданными сообщениями.
+    /// - Parameter messages: сообщения секции.
+    private func section(_ messages: [MessageDisplayModel]) -> MessageDaySectionDisplayModel {
+        MessageDaySectionDisplayModel(id: MessageDaySectionID(day: .distantPast, occurrence: 0), title: "Сегодня", messages: messages)
+    }
+}
+
+private extension MessageDisplayModel {
+    /// Копия с другим текстом или пометкой «Изменено».
+    /// - Parameters:
+    ///   - text: новый текст; `nil` — прежний.
+    ///   - editedLabel: новая пометка; `nil` — прежняя.
+    func with(text: String? = nil, editedLabel: String? = nil) -> MessageDisplayModel {
+        MessageDisplayModel(
+            id: id,
+            text: text ?? self.text,
+            isUnsupported: isUnsupported,
+            isOutgoing: isOutgoing,
+            sender: sender,
+            time: time,
+            editedLabel: editedLabel ?? self.editedLabel,
+            deliveryState: deliveryState,
+            deliveryStateLabel: deliveryStateLabel,
+            actions: actions
+        )
     }
 }

@@ -15,6 +15,7 @@ final class ChatListViewModelTests: XCTestCase {
     private var draftService: MessageDraftServiceMock!
     private var unsentMessages: UnsentMessagePreviewProvidingMock!
     private var router: ChatListRouter!
+    private var notifications: InAppNotificationServiceMock!
     private var sleeper: RowsUpdateSleeper!
     private var sut: ChatListViewModel!
     /// Наблюдатель строк текущего `sut`; отменяется в `tearDown` и при замене `sut`.
@@ -30,6 +31,7 @@ final class ChatListViewModelTests: XCTestCase {
         draftService = MessageDraftServiceMock()
         unsentMessages = UnsentMessagePreviewProvidingMock()
         router = ChatListRouter()
+        notifications = InAppNotificationServiceMock()
         sleeper = RowsUpdateSleeper()
         sut = makeSUT(now: { ServerTime.stub.date })
     }
@@ -229,7 +231,7 @@ final class ChatListViewModelTests: XCTestCase {
         await sut.loadIfNeeded()
 
         XCTAssertEqual(conversationList.synchronizeIfNeededCallCount, 1)
-        XCTAssertNil(sut.errorMessage)
+        XCTAssertEqual(notifications.shownErrors, [])
     }
 
     /// Кейс: синхронизация при открытии экрана упала с ошибкой сети.
@@ -239,7 +241,7 @@ final class ChatListViewModelTests: XCTestCase {
 
         await sut.loadIfNeeded()
 
-        XCTAssertEqual(sut.errorMessage, CommonStrings.errorNoConnection)
+        XCTAssertEqual(notifications.shownErrors, [CommonStrings.errorNoConnection])
     }
 
     /// Кейс: синхронизацию при открытии экрана прервала новая синхронизация.
@@ -249,7 +251,7 @@ final class ChatListViewModelTests: XCTestCase {
 
         await sut.loadIfNeeded()
 
-        XCTAssertNil(sut.errorMessage)
+        XCTAssertEqual(notifications.shownErrors, [])
     }
 
     /// Кейс: переписка поднялась «сегодня»; экран открыт, затем наступил следующий день (`NSCalendarDayChanged`).
@@ -354,7 +356,7 @@ final class ChatListViewModelTests: XCTestCase {
         await sut.refresh()
 
         XCTAssertEqual(conversationList.refreshCallCount, 1)
-        XCTAssertNil(sut.errorMessage)
+        XCTAssertEqual(notifications.shownErrors, [])
     }
 
     /// Кейс: pull-to-refresh завершился ошибкой сети.
@@ -364,7 +366,7 @@ final class ChatListViewModelTests: XCTestCase {
 
         await sut.refresh()
 
-        XCTAssertEqual(sut.errorMessage, CommonStrings.errorNoConnection)
+        XCTAssertEqual(notifications.shownErrors, [CommonStrings.errorNoConnection])
     }
 
     /// Кейс: pull-to-refresh прервала новая синхронизация.
@@ -374,7 +376,7 @@ final class ChatListViewModelTests: XCTestCase {
 
         await sut.refresh()
 
-        XCTAssertNil(sut.errorMessage)
+        XCTAssertEqual(notifications.shownErrors, [])
     }
 
     /// Кейс: на экране появилась строка переписки.
@@ -644,6 +646,7 @@ final class ChatListViewModelTests: XCTestCase {
             draftService: draftService,
             unsentMessages: unsentMessages,
             localizationService: localizationService ?? LocalizationService(userDefaultsService: UserDefaultsServiceMock(), systemLanguage: .ru),
+            notifications: notifications,
             router: router,
             now: now,
             makeRow: makeRow ?? { ChatRowDisplayModel(conversation: $0, opponent: $1, localPreview: $2, timeFormatter: $3) },

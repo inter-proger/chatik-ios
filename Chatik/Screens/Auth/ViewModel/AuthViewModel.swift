@@ -23,8 +23,6 @@ final class AuthViewModel {
     var focusedField: AuthField?
     /// `true`, пока выполняется запрос регистрации / входа. Меняется только в `AuthViewModel+Authentication`.
     var isLoading = false
-    /// Текст ошибки для всплывающего сообщения. `nil` — сообщение скрыто.
-    var errorMessage: String?
 
     let authService: AuthServiceProtocol
     let sessionService: SessionServiceProtocol
@@ -32,6 +30,8 @@ final class AuthViewModel {
     let sessionWork: SessionWorkStarting
     let signupValidator: SignupValidatorProtocol
     let loginValidator: LoginValidatorProtocol
+    /// Показ ошибок; нужен `AuthViewModel+Authentication`, поэтому не `private`.
+    let notifications: InAppNotificationServiceProtocol
     private let localizationService: LocalizationServiceProtocol
     private let router: AuthRouter
 
@@ -43,6 +43,7 @@ final class AuthViewModel {
         localizationService: LocalizationServiceProtocol,
         signupValidator: SignupValidatorProtocol,
         loginValidator: LoginValidatorProtocol,
+        notifications: InAppNotificationServiceProtocol,
         router: AuthRouter
     ) {
         self.mode = mode
@@ -52,6 +53,7 @@ final class AuthViewModel {
         self.localizationService = localizationService
         self.signupValidator = signupValidator
         self.loginValidator = loginValidator
+        self.notifications = notifications
         self.router = router
     }
 

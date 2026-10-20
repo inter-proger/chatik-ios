@@ -7,11 +7,16 @@ import Foundation
 
 /// Авторизация: запрос регистрации / входа, открытие сессии и обработка её истечения.
 extension AuthViewModel {
-    /// Вызывается при появлении экрана. Если сессию завершил сервер, объясняет пользователю, почему он разлогинен.
-    func handleAppear() {
+    /// Уведомления сейчас показываются — активна хотя бы одна сцена приложения. Отслеживается Observation.
+    var canShowNotifications: Bool { notifications.isActive }
+
+    /// Если сессию завершил сервер, объясняет пользователю, почему он разлогинен. Вызывается при появлении экрана
+    /// и при каждом включении уведомлений (возврат в активное приложение): истечение отмечается просмотренным,
+    /// только когда сообщение действительно показано, — сессия, истёкшая в фоне, объясняется при возврате.
+    func showExpirationIfNeeded() {
         guard sessionService.isExpired else { return }
+        guard notifications.showError(CommonStrings.errorUnauthorized) else { return }
         sessionService.acknowledgeExpiration()
-        errorMessage = CommonStrings.errorUnauthorized
     }
 
     /// Обработчик кнопки «Регистрация» / «Вход»: запускает запрос, если он ещё не выполняется.
@@ -33,7 +38,7 @@ extension AuthViewModel {
             await sessionService.start(user: user)
             sessionWork.startSessionWork()
         } catch {
-            errorMessage = ErrorMessages.message(for: error)
+            notifications.showError(ErrorMessages.message(for: error))
         }
     }
 

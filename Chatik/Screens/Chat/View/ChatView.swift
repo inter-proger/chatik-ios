@@ -62,14 +62,9 @@ struct ChatView: View {
                 titleView
             }
         }
-        .alert(CommonStrings.errorTitle, isPresented: $viewModel.errorMessage.isPresent(), presenting: viewModel.errorMessage) { _ in
-            Button(CommonStrings.ok, role: .cancel) {
-                // Правка не сохранилась: клавиатура пряталась на время запроса и возвращается, чтобы исправить текст.
-                guard viewModel.didDismissError() else { return }
-                isInputFocused = true
-            }
-        } message: { message in
-            Text(message)
+        // Правка не сохранилась: клавиатура пряталась на время запроса и возвращается, чтобы исправить текст.
+        .onChange(of: viewModel.inputFocusRequest) {
+            isInputFocused = true
         }
     }
 

@@ -1,0 +1,8 @@
+/*
+  InAppNotification.strings
+  Chatik
+
+  In-app notifications: VoiceOver actions.
+*/
+
+"in_app_notification.dismiss" = "Dismiss";

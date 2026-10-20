@@ -25,6 +25,8 @@ enum PreviewDependencies {
         dataLoaders: [messageDraftService, messageSendQueue]
     )
     static let localizationService = LocalizationService(userDefaultsService: userDefaultsService, systemLanguage: .ru)
+    /// Уведомления превью: окна уведомлений в превью нет, ошибки не показываются.
+    static let notificationService = InAppNotificationService()
     static let userCache = UserCacheService(
         usersService: UsersServicePreviewMock(),
         userStorage: UserStorageService(container: storageContainer)
@@ -46,6 +48,7 @@ enum PreviewDependencies {
             localizationService: localizationService,
             signupValidator: SignupValidator(),
             loginValidator: LoginValidator(),
+            notifications: notificationService,
             router: AuthRouter()
         )
     }
@@ -67,6 +70,7 @@ enum PreviewDependencies {
             draftService: messageDraftService,
             unsentMessages: messageSendQueue,
             localizationService: localizationService,
+            notifications: notificationService,
             router: ChatListRouter()
         )
     }
@@ -117,7 +121,8 @@ enum PreviewDependencies {
             localizationService: localizationService,
             messageTextValidator: MessageTextValidator(),
             dateHeaderFormatterProvider: MessageDateHeaderFormatterProvider.default,
-            timeChangeService: SignificantTimeChangeService()
+            timeChangeService: SignificantTimeChangeService(),
+            notifications: notificationService
         )
     }
 
@@ -169,6 +174,7 @@ enum PreviewDependencies {
             usersService: UsersServicePreviewMock(),
             conversationService: ConversationServicePreviewMock(),
             sessionService: sessionService,
+            notifications: notificationService,
             router: CreateSingleConversationRouter(onFinish: { _ in })
         )
     }
@@ -190,6 +196,7 @@ enum PreviewDependencies {
             imageFileStore: ImageFileStore(),
             sessionService: sessionService,
             authService: makeAuthService(observers: [sessionService]),
+            notifications: notificationService,
             // Как в приложении: на симуляторе камеры нет, и «Сделать фото» предлагаться не должно —
             // `UIImagePickerController` с `.camera` без камеры падает.
             isCameraAvailable: UIImagePickerController.isSourceTypeAvailable(.camera)

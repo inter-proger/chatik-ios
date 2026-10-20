@@ -44,11 +44,12 @@ struct AuthView: View {
                 AuthLanguageMenu(selected: viewModel.language, onSelect: viewModel.selectLanguage)
             }
         }
-        .onAppear(perform: viewModel.handleAppear)
-        .alert(CommonStrings.errorTitle, isPresented: $viewModel.errorMessage.isPresent(), presenting: viewModel.errorMessage) { _ in
-            Button(CommonStrings.ok, role: .cancel) {}
-        } message: { message in
-            Text(message)
+        .onAppear(perform: viewModel.showExpirationIfNeeded)
+        // По активности сервиса уведомлений, а не по `scenePhase`: порядок `onChange` этого экрана и корня, который
+        // включает сервис, не гарантирован.
+        .onChange(of: viewModel.canShowNotifications) { _, canShow in
+            guard canShow else { return }
+            viewModel.showExpirationIfNeeded()
         }
     }
 

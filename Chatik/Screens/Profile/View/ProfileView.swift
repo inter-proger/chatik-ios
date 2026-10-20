@@ -40,11 +40,6 @@ struct ProfileView: View {
             onPick: viewModel.didPickImage,
             onFailure: viewModel.didFailToPickImage
         )
-        .alert(CommonStrings.errorTitle, isPresented: $viewModel.errorMessage.isPresent(), presenting: viewModel.errorMessage) { _ in
-            Button(CommonStrings.ok, role: .cancel) {}
-        } message: { message in
-            Text(message)
-        }
         .alert(ProfileStrings.logoutConfirmationTitle, isPresented: $viewModel.isLogoutConfirmationPresented) {
             Button(ProfileStrings.logoutCancel, role: .cancel) {}
             Button(ProfileStrings.logout, role: .destructive, action: viewModel.didTapConfirmLogout)

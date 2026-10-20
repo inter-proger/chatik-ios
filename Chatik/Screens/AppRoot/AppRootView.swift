@@ -36,6 +36,7 @@ struct AppRootView: View {
         }
         .animation(.default, value: router.root)
         .environment(\.locale, router.locale)
+        .inAppNotifications(DIContainer.shared.notificationService)
         .task { await router.restoreSession() }
         .onChange(of: scenePhase) { _, phase in
             guard phase != .inactive else { return }

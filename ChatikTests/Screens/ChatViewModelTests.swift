@@ -16,6 +16,7 @@ final class ChatViewModelTests: XCTestCase {
     private var userCache: UserCacheServiceMock!
     private var localizationService: LocalizationService!
     private var timeChanges: SignificantTimeChangeServiceMock!
+    private var notifications: InAppNotificationServiceMock!
     private var sleeper: ThrottleSleeper!
     private var observation: Task<Void, Never>?
     /// Ожидание исходов запросов правки (`observeEditSubmission`) — как `.task` показанного экрана.
@@ -35,6 +36,7 @@ final class ChatViewModelTests: XCTestCase {
         userCache = UserCacheServiceMock()
         localizationService = LocalizationService(userDefaultsService: UserDefaultsServiceMock(), systemLanguage: .ru)
         timeChanges = SignificantTimeChangeServiceMock()
+        notifications = InAppNotificationServiceMock()
         sleeper = ThrottleSleeper()
     }
 
@@ -181,7 +183,8 @@ final class ChatViewModelTests: XCTestCase {
 
         list.publish(.make(failure: NetworkError.transport(URLError(.notConnectedToInternet))))
 
-        await yieldUntil { sut.errorMessage != nil }
+        await yieldUntil { !self.notifications.shownErrors.isEmpty }
+        XCTAssertEqual(notifications.shownErrors, [CommonStrings.errorNoConnection])
     }
 
     /// Кейс: pull-to-refresh.
@@ -764,39 +767,48 @@ final class ChatViewModelTests: XCTestCase {
         sut.didTapSend()
         await editService.finish(conversationId: Conversation.singleStub.id, with: .failure(NetworkError.transport(URLError(.notConnectedToInternet))))
 
-        await waitUntil { sut.errorMessage != nil }
+        await waitUntil { !self.notifications.shownErrors.isEmpty }
         XCTAssertEqual(sut.inputMode, .editing(messageId: 15, originalText: "Привет"))
         XCTAssertEqual(sut.messageText, "Привет всем")
         XCTAssertTrue(editService.failures.isEmpty)
     }
 
-    /// Кейс: запрос правки упал, ошибку закрыли; затем ошибку закрыли ещё раз (без новой ошибки правки).
-    /// Ожидание: первое закрытие просит вернуть фокус в поле, второе — нет.
-    func test_didDismissError_afterEditFailure_requestsFocusOnce() async {
+    /// Кейс: запрос правки упал, пока экран в режиме редактирования.
+    /// Ожидание: экран сразу просит вернуть фокус в поле ввода — один раз.
+    func test_submit_failure_requestsInputFocus() async {
         let sut = await makeEditingReadySUT()
         await startObservingEdits(sut)
         sut.didSelectAction(.edit, for: sut.messages[0])
         sut.messageText = "Привет всем"
         sut.didTapSend()
+
         await editService.finish(conversationId: Conversation.singleStub.id, with: .failure(NetworkError.transport(URLError(.notConnectedToInternet))))
-        await waitUntil { sut.errorMessage != nil }
 
-        let first = sut.didDismissError()
-        let second = sut.didDismissError()
-
-        XCTAssertTrue(first)
-        XCTAssertFalse(second)
+        await waitUntil { !self.notifications.shownErrors.isEmpty }
+        XCTAssertEqual(sut.inputFocusRequest, 1)
     }
 
-    /// Кейс: в режиме редактирования пришла ошибка синхронизации ленты, а не запроса правки; её закрыли.
-    /// Ожидание: фокус в поле не возвращается.
-    func test_didDismissError_afterFeedFailure_doesNotRequestFocus() async {
+    /// Кейс: ошибка запроса правки ждала в сервисе; экран открыт заново уже не в режиме редактирования.
+    /// Ожидание: ошибка показана, фокус в поле не запрашивается.
+    func test_observeEditSubmission_failureWithoutEditing_doesNotRequestFocus() async {
+        editService.failures = [Conversation.singleStub.id: NetworkError.api(code: NetworkError.Code.messageNotFound)]
+        let sut = makeSUT()
+
+        await startObservingEdits(sut)
+
+        await waitUntil { !self.notifications.shownErrors.isEmpty }
+        XCTAssertEqual(sut.inputFocusRequest, 0)
+    }
+
+    /// Кейс: в режиме редактирования пришла ошибка синхронизации ленты, а не запроса правки.
+    /// Ожидание: фокус в поле не запрашивается.
+    func test_snapshotFailure_whileEditing_doesNotRequestFocus() async {
         let sut = await makeEditingReadySUT()
         sut.didSelectAction(.edit, for: sut.messages[0])
         list.publish(.make(messages: [.make(id: 15, senderId: 1, text: "Привет")], failure: NetworkError.transport(URLError(.notConnectedToInternet))))
-        await yieldUntil { sut.errorMessage != nil }
+        await yieldUntil { !self.notifications.shownErrors.isEmpty }
 
-        XCTAssertFalse(sut.didDismissError())
+        XCTAssertEqual(sut.inputFocusRequest, 0)
     }
 
     /// Кейс: экран показан и закрыт (`.task` отменён), затем показан снова, пока прежнее ожидание завершается.
@@ -831,12 +843,12 @@ final class ChatViewModelTests: XCTestCase {
         editObservation?.cancel()
         await editService.finish(conversationId: Conversation.singleStub.id, with: .failure(NetworkError.api(code: NetworkError.Code.messageNotFound)))
         await editObservation?.value
-        XCTAssertNil(sut.errorMessage)
+        XCTAssertEqual(notifications.shownErrors, [])
         draftService.edits = [Conversation.singleStub.id: edit]
         let reopened = makeSUT()
         await startObservingEdits(reopened)
 
-        await waitUntil { reopened.errorMessage != nil }
+        await waitUntil { !self.notifications.shownErrors.isEmpty }
         XCTAssertEqual(reopened.inputMode, .editing(messageId: 15, originalText: "Привет"))
         XCTAssertTrue(editService.failures.isEmpty)
     }
@@ -854,7 +866,7 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertEqual(editService.submits.count, 1)
         XCTAssertEqual(sut.inputMode, .editing(messageId: 15, originalText: "Привет"))
         XCTAssertEqual(sut.messageText, "Привет всем")
-        XCTAssertNil(sut.errorMessage)
+        XCTAssertEqual(notifications.shownErrors, [])
     }
 
     /// Кейс: запрос правки начат на прошлом открытии экрана; экран открыт заново и завершился успехом.
@@ -883,7 +895,7 @@ final class ChatViewModelTests: XCTestCase {
 
         await editService.finish(conversationId: Conversation.singleStub.id, with: .failure(NetworkError.api(code: NetworkError.Code.messageNotFound)))
 
-        await waitUntil { sut.errorMessage != nil }
+        await waitUntil { !self.notifications.shownErrors.isEmpty }
         XCTAssertEqual(sut.inputMode, .editing(messageId: 15, originalText: "Привет"))
     }
 
@@ -896,7 +908,7 @@ final class ChatViewModelTests: XCTestCase {
 
         await startObservingEdits(sut)
 
-        await waitUntil { sut.errorMessage != nil }
+        await waitUntil { !self.notifications.shownErrors.isEmpty }
         XCTAssertEqual(sut.inputMode, .editing(messageId: 15, originalText: "Привет"))
         XCTAssertTrue(editService.failures.isEmpty)
     }
@@ -913,7 +925,7 @@ final class ChatViewModelTests: XCTestCase {
         await editService.finish(conversationId: Conversation.singleStub.id, with: .failure(CancellationError()))
         await yieldTimes()
 
-        XCTAssertNil(sut.errorMessage)
+        XCTAssertEqual(notifications.shownErrors, [])
         XCTAssertEqual(sut.inputMode, .editing(messageId: 15, originalText: "Привет"))
         XCTAssertEqual(sut.messageText, "Привет всем")
     }
@@ -998,6 +1010,7 @@ final class ChatViewModelTests: XCTestCase {
             messageTextValidator: MessageTextValidator(),
             dateHeaderFormatterProvider: MessageDateHeaderFormatterProvider.default,
             timeChangeService: timeChanges,
+            notifications: notifications,
             now: now,
             calendar: { .stub() },
             sleep: { [sleeper] in try await sleeper!.sleep($0) }

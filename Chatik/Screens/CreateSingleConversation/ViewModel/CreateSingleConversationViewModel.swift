@@ -19,8 +19,6 @@ final class CreateSingleConversationViewModel {
     private(set) var isCreating = false
     /// Содержимое поля поиска.
     var searchText = ""
-    /// Текст ошибки для всплывающего сообщения. `nil` — сообщение скрыто.
-    var errorMessage: String?
 
     /// Размер страницы списка пользователей.
     static let pageSize = 30
@@ -34,24 +32,28 @@ final class CreateSingleConversationViewModel {
     private let usersService: UsersServiceProtocol
     private let conversationService: ConversationServiceProtocol
     private let sessionService: SessionServiceProtocol
+    private let notifications: InAppNotificationServiceProtocol
     private let router: CreateSingleConversationRouter
 
     /// - Parameters:
     ///   - usersService: сервис списка пользователей.
     ///   - conversationService: сервис переписок — для создания личного диалога.
     ///   - sessionService: сервис сессии; текущий пользователь исключается из списка.
+    ///   - notifications: показ ошибок загрузки и создания — поверх листа, в котором открыт экран.
     ///   - router: роутер экрана; через него экран завершается — отменой или созданной перепиской.
     ///   - searchDebounce: пауза после ввода в поле поиска перед запросом.
     init(
         usersService: UsersServiceProtocol,
         conversationService: ConversationServiceProtocol,
         sessionService: SessionServiceProtocol,
+        notifications: InAppNotificationServiceProtocol,
         router: CreateSingleConversationRouter,
         searchDebounce: Duration = .milliseconds(300)
     ) {
         self.usersService = usersService
         self.conversationService = conversationService
         self.sessionService = sessionService
+        self.notifications = notifications
         self.router = router
         self.searchDebounce = searchDebounce
     }
@@ -141,7 +143,7 @@ final class CreateSingleConversationViewModel {
     /// - Parameter outcome: итог загрузки страницы.
     private func show(_ outcome: PaginationOutcome) {
         guard case .failed(let error) = outcome else { return }
-        errorMessage = ErrorMessages.message(for: error)
+        notifications.showError(ErrorMessages.message(for: error))
     }
 
     /// Сбрасывает выбор, если выбранного пользователя нет в новом списке, — чтобы нельзя было создать
@@ -184,7 +186,7 @@ final class CreateSingleConversationViewModel {
             let conversation = try await conversationService.createSingle(userId: selectedUserId)
             router.finish(with: conversation)
         } catch {
-            errorMessage = ErrorMessages.message(for: error)
+            notifications.showError(ErrorMessages.message(for: error))
         }
     }
 }

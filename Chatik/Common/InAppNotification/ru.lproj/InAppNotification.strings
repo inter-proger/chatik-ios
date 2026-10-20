@@ -1,0 +1,8 @@
+/*
+  InAppNotification.strings
+  Chatik
+
+  Уведомления в приложении: действия VoiceOver.
+*/
+
+"in_app_notification.dismiss" = "Скрыть";

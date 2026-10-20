@@ -2,11 +2,8 @@
   Common.strings
   Chatik
 
-  Shared strings: error title, dialog buttons, network and API error texts.
+  Shared strings: network and API error texts.
 */
-
-"common.error.title" = "Error";
-"common.ok" = "OK";
 
 "common.error.unknown" = "Something went wrong. Please try again";
 "common.error.no_connection" = "No connection to the server. Check your internet connection";

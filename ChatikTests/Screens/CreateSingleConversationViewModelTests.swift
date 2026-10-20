@@ -11,6 +11,7 @@ final class CreateSingleConversationViewModelTests: XCTestCase {
     private var usersService: UsersServiceMock!
     private var conversationService: ConversationServiceMock!
     private var sessionService: SessionService!
+    private var notifications: InAppNotificationServiceMock!
     /// Результаты завершения экрана: `Conversation` — созданная переписка, `nil` — отмена.
     private var finishResults: [Conversation?]!
     private var sut: CreateSingleConversationViewModel!
@@ -21,6 +22,7 @@ final class CreateSingleConversationViewModelTests: XCTestCase {
         conversationService = ConversationServiceMock()
         sessionService = SessionService(userDefaultsService: UserDefaultsServiceMock(currentUser: .stub), localStorageCleaner: LocalStorageCleanerMock())
         await sessionService.restore()
+        notifications = InAppNotificationServiceMock()
         finishResults = []
         sut = makeSUT(searchDebounce: .zero)
     }
@@ -74,7 +76,7 @@ final class CreateSingleConversationViewModelTests: XCTestCase {
 
         await sut.loadFirstPage()
 
-        XCTAssertEqual(sut.errorMessage, CommonStrings.errorNoConnection)
+        XCTAssertEqual(notifications.shownErrors, [CommonStrings.errorNoConnection])
         XCTAssertFalse(sut.isLoadingFirstPage)
     }
 
@@ -303,7 +305,7 @@ final class CreateSingleConversationViewModelTests: XCTestCase {
         XCTAssertEqual(conversationService.createSingleUserIds, [2])
         XCTAssertEqual(finishResults, [.singleStub])
         XCTAssertFalse(sut.isCreating)
-        XCTAssertNil(sut.errorMessage)
+        XCTAssertEqual(notifications.shownErrors, [])
     }
 
     /// Кейс: переписка создаётся.
@@ -336,7 +338,7 @@ final class CreateSingleConversationViewModelTests: XCTestCase {
 
         await sut.createConversation()
 
-        XCTAssertEqual(sut.errorMessage, CommonStrings.errorUserNotFound)
+        XCTAssertEqual(notifications.shownErrors, [CommonStrings.errorUserNotFound])
         XCTAssertTrue(finishResults.isEmpty)
         XCTAssertEqual(sut.selectedUserId, 2)
     }
@@ -369,6 +371,7 @@ final class CreateSingleConversationViewModelTests: XCTestCase {
             usersService: usersService,
             conversationService: conversationService,
             sessionService: sessionService,
+            notifications: notifications,
             router: CreateSingleConversationRouter(onFinish: { [unowned self] in finishResults.append($0) }),
             searchDebounce: searchDebounce
         )

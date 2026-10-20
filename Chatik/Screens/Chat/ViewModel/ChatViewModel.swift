@@ -52,8 +52,10 @@ final class ChatViewModel {
     /// обновит плашку), иначе — на момент включения режима. `nil` — режим выключен. Хранится, а не вычисляется
     /// по `serverMessages`: тот не наблюдается, и View не узнала бы о правке.
     private(set) var editedMessageText: String?
-    /// Текст ошибки для всплывающего сообщения. `nil` — сообщение скрыто.
-    var errorMessage: String?
+    /// Растёт, когда полю ввода нужно вернуть фокус: после ошибки запроса правки клавиатура пряталась на время
+    /// запроса и возвращается, чтобы правку можно было сразу исправить. Счётчик, а не флаг: повторная ошибка тоже
+    /// возвращает фокус, а View не нужно его сбрасывать.
+    private(set) var inputFocusRequest = 0
     /// Лента по дням, сначала самые новые. Обновляется `observeMessages()` не чаще раза
     /// в `messagesUpdateInterval`.
     private(set) var sections: [MessageDaySectionDisplayModel] = []
@@ -87,15 +89,13 @@ final class ChatViewModel {
     @ObservationIgnored private var isReplacingInput = false
     /// Идущий `observeEditSubmission`: ему `submitEdit` сообщает о начатом запросе; `nil` — экран не показан.
     @ObservationIgnored private var editSubmissionObserver: EditSubmissionObserver?
-    /// Показана ошибка запроса правки: после её закрытия фокус возвращается в поле, чтобы правку можно было
-    /// сразу исправить.
-    @ObservationIgnored private var isEditFailureShown = false
     /// Календарь, по которому лента делится на дни. Функция, а не значение: после смены часового пояса
     /// `Calendar.current` уже другой.
     private let calendar: () -> Calendar
     private let messagesList: MessagesListServiceProtocol
     private let dateHeaderFormatterProvider: MessageDateHeaderFormatterProviding
     private let timeChangeService: SignificantTimeChangeServiceProtocol
+    private let notifications: InAppNotificationServiceProtocol
     private let sleep: Sleep
 
     /// Сообщения с сервера из последнего снимка ленты. Не наблюдается: об изменении `observeMessages()` узнаёт
@@ -132,6 +132,7 @@ final class ChatViewModel {
     ///   - messageTextValidator: проверка текста перед отправкой.
     ///   - dateHeaderFormatterProvider: форматтеры заголовков дней по языку.
     ///   - timeChangeService: полночь, смена часового пояса и перевод часов — пересобирают заголовки.
+    ///   - notifications: показ ошибок ленты и правки.
     ///   - now: текущее время; подменяется в тестах форматирования.
     ///   - calendar: календарь устройства; подменяется в тестах, чтобы деление на дни не зависело от устройства.
     ///   - sleep: ожидание между обновлениями ленты; подменяется в тестах.
@@ -147,6 +148,7 @@ final class ChatViewModel {
         messageTextValidator: MessageTextValidatorProtocol,
         dateHeaderFormatterProvider: MessageDateHeaderFormatterProviding,
         timeChangeService: SignificantTimeChangeServiceProtocol,
+        notifications: InAppNotificationServiceProtocol,
         now: @escaping () -> Date = { Date() },
         calendar: @escaping () -> Calendar = { .current },
         sleep: @escaping Sleep = { try await Task.sleep(for: $0) }
@@ -162,6 +164,7 @@ final class ChatViewModel {
         self.messageTextValidator = messageTextValidator
         self.dateHeaderFormatterProvider = dateHeaderFormatterProvider
         self.timeChangeService = timeChangeService
+        self.notifications = notifications
         self.now = now
         self.calendar = calendar
         self.sleep = sleep
@@ -275,7 +278,7 @@ final class ChatViewModel {
         isLoadingOlder = snapshot.isLoadingOlder
         hasOlder = snapshot.hasOlder
         if let failure = snapshot.failure {
-            errorMessage = ErrorMessages.message(for: failure)
+            notifications.showError(ErrorMessages.message(for: failure))
         }
         serverMessages = snapshot.messages
         refreshEditedMessageText()
@@ -513,14 +516,6 @@ final class ChatViewModel {
         editSubmissionObserver != nil
     }
 
-    /// Ошибка закрыта пользователем.
-    /// - Returns: `true` — это была ошибка запроса правки: поле ввода нужно снова сфокусировать, чтобы исправить
-    ///   правку; клавиатура пряталась на время запроса.
-    func didDismissError() -> Bool {
-        defer { isEditFailureShown = false }
-        return isEditFailureShown && isEditing
-    }
-
     /// Дожидается запроса правки и применяет исход, если экран ещё показан. Успех (или отсутствие запроса) сверяет
     /// режим с сервисом: успешный запрос выключил режим, и в поле возвращается черновик. Ошибка забирается
     /// из сервиса и показывается, режим остаётся. Отмена выходом из аккаунта не показывается и режим не трогает:
@@ -536,11 +531,17 @@ final class ChatViewModel {
         }
         guard !Task.isCancelled else { return }
         if let failure = editService.takeFailure(conversationId: conversationId) {
-            errorMessage = ErrorMessages.message(for: failure)
-            isEditFailureShown = true
+            notifications.showError(ErrorMessages.message(for: failure))
+            requestInputFocusIfEditing()
             return
         }
         syncInputModeWithService()
+    }
+
+    /// Возвращает фокус в поле ввода, если режим редактирования ещё включён: правку можно сразу исправить.
+    private func requestInputFocusIfEditing() {
+        guard isEditing else { return }
+        inputFocusRequest += 1
     }
 
     /// Выключает режим, если сервис черновиков уже выключил его, — после успешного запроса.

@@ -15,6 +15,7 @@ final class AuthViewModelTests: XCTestCase {
     private var realtimeService: RealtimeServiceMock!
     private var messageSendQueue: MessageSendQueueMock!
     private var conversationList: ConversationListServiceMock!
+    private var notifications: InAppNotificationServiceMock!
 
     override func setUp() {
         super.setUp()
@@ -25,6 +26,7 @@ final class AuthViewModelTests: XCTestCase {
         realtimeService = RealtimeServiceMock()
         messageSendQueue = MessageSendQueueMock()
         conversationList = ConversationListServiceMock()
+        notifications = InAppNotificationServiceMock()
     }
 
     private func makeSUT(mode: AuthMode = .signup, authService: AuthServiceProtocol? = nil) -> AuthViewModel {
@@ -40,6 +42,7 @@ final class AuthViewModelTests: XCTestCase {
             localizationService: localizationService,
             signupValidator: SignupValidator(),
             loginValidator: LoginValidator(),
+            notifications: notifications,
             router: AuthRouter()
         )
     }
@@ -220,7 +223,7 @@ final class AuthViewModelTests: XCTestCase {
         XCTAssertEqual(networkService.requestedEndpoints.first?.path, "/auth/signup")
         XCTAssertEqual(sessionService.currentUser, user)
         XCTAssertEqual(stored, user)
-        XCTAssertNil(sut.errorMessage)
+        XCTAssertEqual(notifications.shownErrors, [])
         XCTAssertFalse(sut.isLoading)
     }
 
@@ -308,7 +311,7 @@ final class AuthViewModelTests: XCTestCase {
 
         await sut.performAuthentication()
 
-        XCTAssertEqual(sut.errorMessage, CommonStrings.errorWrongCredentials)
+        XCTAssertEqual(notifications.shownErrors, [CommonStrings.errorWrongCredentials])
         XCTAssertFalse(sessionService.isLoggedIn)
         XCTAssertFalse(sut.isLoading)
     }
@@ -334,27 +337,47 @@ final class AuthViewModelTests: XCTestCase {
 
     // MARK: - Истечение сессии
 
-    /// Кейс: экран появился после того, как сервер завершил сессию (код 2003).
-    /// Ожидание: показано сообщение «сессия истекла», флаг в сессии сброшен.
-    func test_handleAppear_afterExpiration_showsMessageOnce() async {
+    /// Кейс: экран появился после того, как сервер завершил сессию (код 2003), приложение активно.
+    /// Ожидание: показано сообщение «сессия истекла», флаг в сессии сброшен — повторный вызов ничего не показывает.
+    func test_showExpirationIfNeeded_afterExpiration_showsMessageOnce() async {
         await sessionService.start(user: User(userId: 1, login: "ivan", name: "Иван", avatar: nil))
         await sessionService.expire()
         let sut = makeSUT(mode: .login)
 
-        sut.handleAppear()
+        sut.showExpirationIfNeeded()
+        sut.showExpirationIfNeeded()
 
-        XCTAssertEqual(sut.errorMessage, CommonStrings.errorUnauthorized)
+        XCTAssertEqual(notifications.shownErrors, [CommonStrings.errorUnauthorized])
+        XCTAssertFalse(sessionService.isExpired)
+    }
+
+    /// Кейс: сессия истекла, пока приложение неактивно; затем приложение снова активно.
+    /// Ожидание: в неактивном приложении сообщение отброшено и истечение не отмечено просмотренным; после
+    /// возврата сообщение показано и истечение отмечено.
+    func test_showExpirationIfNeeded_whileInactive_showsAfterActivation() async {
+        await sessionService.start(user: User(userId: 1, login: "ivan", name: "Иван", avatar: nil))
+        await sessionService.expire()
+        notifications.isActive = false
+        let sut = makeSUT(mode: .login)
+
+        sut.showExpirationIfNeeded()
+        XCTAssertEqual(notifications.shownErrors, [])
+        XCTAssertTrue(sessionService.isExpired)
+        notifications.isActive = true
+        sut.showExpirationIfNeeded()
+
+        XCTAssertEqual(notifications.shownErrors, [CommonStrings.errorUnauthorized])
         XCTAssertFalse(sessionService.isExpired)
     }
 
     /// Кейс: экран появился при обычном старте или после явного выхода.
     /// Ожидание: сообщений нет.
-    func test_handleAppear_withoutExpiration_showsNothing() {
+    func test_showExpirationIfNeeded_withoutExpiration_showsNothing() {
         let sut = makeSUT(mode: .login)
 
-        sut.handleAppear()
+        sut.showExpirationIfNeeded()
 
-        XCTAssertNil(sut.errorMessage)
+        XCTAssertEqual(notifications.shownErrors, [])
     }
 
     // MARK: - Язык

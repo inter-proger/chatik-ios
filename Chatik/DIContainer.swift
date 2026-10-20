@@ -51,6 +51,8 @@ final class DIContainer {
     let messageDraftService: MessageDraftServiceProtocol
     /// Отправка правок сообщений: запрос переживает уход с экрана.
     let messageEditService: MessageEditServiceProtocol
+    /// Уведомления поверх приложения: ошибки экранов.
+    let notificationService: InAppNotificationServiceProtocol
     /// Держит наблюдение за сетью, пока жив контейнер: при появлении сети WebSocket переподключается сразу.
     private let networkPathMonitor: NetworkPathMonitor
     /// Подписка кэша сообщений на очередь событий — живёт, пока жив контейнер.
@@ -140,6 +142,8 @@ final class DIContainer {
             draftService: messageDraftService
         )
         self.messageEditService = messageEditService
+        let notificationService = InAppNotificationService()
+        self.notificationService = notificationService
         let sessionService = SessionService(
             userDefaultsService: userDefaultsService,
             localStorageCleaner: LocalStorageCleaner(container: storageContainer),
@@ -179,8 +183,8 @@ final class DIContainer {
             )
         }
         #endif
-        // Соединение, очередь событий, список, очередь отправки, правки, кэш сообщений и черновики останавливаются
-        // в фазе `authServiceWillLogout`
+        // Соединение, очередь событий, список, очередь отправки, правки, кэш сообщений и черновики останавливаются,
+        // а уведомление прошлой сессии убирается в фазе `authServiceWillLogout`
         // (до запроса выхода), сессия завершается в `authServiceDidLogout` (после него) — от порядка подписки
         // это не зависит.
         authService.addObserver(realtimeService)
@@ -190,6 +194,7 @@ final class DIContainer {
         authService.addObserver(messageEditService)
         authService.addObserver(messageCacheLogoutObserver)
         authService.addObserver(messageDraftLogoutObserver)
+        authService.addObserver(notificationService)
         authService.addObserver(sessionService)
         self.networkPathMonitor = NetworkPathMonitor { [weak realtimeService] in
             realtimeService?.networkDidBecomeAvailable()

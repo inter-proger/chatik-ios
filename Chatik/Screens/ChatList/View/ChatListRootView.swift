@@ -22,6 +22,7 @@ struct ChatListRootView: View {
             draftService: DIContainer.shared.messageDraftService,
             unsentMessages: DIContainer.shared.messageSendQueue,
             localizationService: DIContainer.shared.localizationService,
+            notifications: DIContainer.shared.notificationService,
             router: router
         ))
     }
@@ -38,6 +39,7 @@ struct ChatListRootView: View {
                             imageFileStore: DIContainer.shared.imageFileStore,
                             sessionService: DIContainer.shared.sessionService,
                             authService: DIContainer.shared.authService,
+                            notifications: DIContainer.shared.notificationService,
                             isCameraAvailable: UIImagePickerController.isSourceTypeAvailable(.camera)
                         ))
                     case let .conversation(conversation):
@@ -52,7 +54,8 @@ struct ChatListRootView: View {
                             localizationService: DIContainer.shared.localizationService,
                             messageTextValidator: DIContainer.shared.messageTextValidator,
                             dateHeaderFormatterProvider: DIContainer.shared.messageDateHeaderFormatterProvider,
-                            timeChangeService: DIContainer.shared.significantTimeChangeService
+                            timeChangeService: DIContainer.shared.significantTimeChangeService,
+                            notifications: DIContainer.shared.notificationService
                         ))
                     }
                 }

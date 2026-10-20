@@ -21,6 +21,7 @@ struct CreateSingleConversationRootView: View {
                 usersService: DIContainer.shared.usersService,
                 conversationService: DIContainer.shared.conversationService,
                 sessionService: DIContainer.shared.sessionService,
+                notifications: DIContainer.shared.notificationService,
                 router: router
             ))
         }

@@ -41,11 +41,6 @@ struct ChatListView: View {
                 createMenu
             }
         }
-        .alert(CommonStrings.errorTitle, isPresented: $viewModel.errorMessage.isPresent(), presenting: viewModel.errorMessage) { _ in
-            Button(CommonStrings.ok, role: .cancel) {}
-        } message: { message in
-            Text(message)
-        }
     }
 
     /// Прелоадер первой загрузки или сообщение о пустом списке поверх списка. Пока идёт синхронизация поверх

@@ -10,9 +10,6 @@ import Foundation
 enum CommonStrings {
     private static let table = "Common"
 
-    static var errorTitle: String { localized("common.error.title") }
-    static var ok: String { localized("common.ok") }
-
     static var errorUnknown: String { localized("common.error.unknown") }
     static var errorNoConnection: String { localized("common.error.no_connection") }
 

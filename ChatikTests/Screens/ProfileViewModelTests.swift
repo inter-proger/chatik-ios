@@ -15,6 +15,7 @@ final class ProfileViewModelTests: XCTestCase {
     private var userDefaultsService: UserDefaultsServiceMock!
     private var sessionService: SessionService!
     private var authService: AuthServiceMock!
+    private var notifications: InAppNotificationServiceMock!
     private var sut: ProfileViewModel!
 
     override func setUp() async throws {
@@ -26,6 +27,7 @@ final class ProfileViewModelTests: XCTestCase {
         sessionService = SessionService(userDefaultsService: userDefaultsService, localStorageCleaner: LocalStorageCleanerMock())
         await sessionService.restore()
         authService = AuthServiceMock()
+        notifications = InAppNotificationServiceMock()
         sut = makeSUT(isCameraAvailable: true)
     }
 
@@ -36,6 +38,7 @@ final class ProfileViewModelTests: XCTestCase {
             imageFileStore: imageFileStore,
             sessionService: sessionService,
             authService: authService,
+            notifications: notifications,
             isCameraAvailable: isCameraAvailable
         )
     }
@@ -70,7 +73,7 @@ final class ProfileViewModelTests: XCTestCase {
         XCTAssertEqual(sut.profile?.name, "Ivan Petrov")
         XCTAssertEqual(sut.profile?.avatarURL, RemoteFile.stub.url)
         XCTAssertEqual(sut.profile?.avatarThumbnailURL, RemoteFile.stub.smallURL)
-        XCTAssertNil(sut.errorMessage)
+        XCTAssertEqual(notifications.shownErrors, [])
         XCTAssertFalse(sut.isLoading)
     }
 
@@ -81,7 +84,7 @@ final class ProfileViewModelTests: XCTestCase {
 
         await sut.loadProfile()
 
-        XCTAssertEqual(sut.errorMessage, CommonStrings.errorNoConnection)
+        XCTAssertEqual(notifications.shownErrors, [CommonStrings.errorNoConnection])
         XCTAssertEqual(sessionService.currentUser, storedUser)
         XCTAssertEqual(sut.profile?.login, "ivan")
     }
@@ -162,7 +165,7 @@ final class ProfileViewModelTests: XCTestCase {
         sut.didFailToPickImage()
 
         XCTAssertNil(sut.presentedAvatarSource)
-        XCTAssertEqual(sut.errorMessage, ProfileStrings.avatarLoadFailed)
+        XCTAssertEqual(notifications.shownErrors, [ProfileStrings.avatarLoadFailed])
     }
 
     /// Кейс: изображение выбрано, загрузка и назначение аватара прошли успешно.
@@ -183,7 +186,7 @@ final class ProfileViewModelTests: XCTestCase {
         XCTAssertEqual(imageFileStore.removedFiles, [.stub])
         XCTAssertEqual(sessionService.currentUser, updated)
         XCTAssertEqual(sut.profile?.avatarURL, RemoteFile.stub.url)
-        XCTAssertNil(sut.errorMessage)
+        XCTAssertEqual(notifications.shownErrors, [])
         XCTAssertFalse(sut.isUploadingAvatar)
     }
 
@@ -220,13 +223,13 @@ final class ProfileViewModelTests: XCTestCase {
 
         for error in errors {
             imageFileStore.stubbedResult = .failure(error)
-            sut.errorMessage = nil
 
             await sut.uploadAvatar(.image(.stub()))
 
             XCTAssertTrue(filesService.uploads.isEmpty, "\(error)")
-            XCTAssertEqual(sut.errorMessage, ProfileStrings.avatarLoadFailed, "\(error)")
+            XCTAssertEqual(notifications.shownErrors.last, ProfileStrings.avatarLoadFailed, "\(error)")
         }
+        XCTAssertEqual(notifications.shownErrors.count, errors.count)
     }
 
     /// Кейс: сервер отклонил файл как слишком большой.
@@ -238,7 +241,7 @@ final class ProfileViewModelTests: XCTestCase {
         await sut.uploadAvatar(.image(.stub()))
 
         XCTAssertTrue(profileService.setAvatarFileIds.isEmpty)
-        XCTAssertEqual(sut.errorMessage, CommonStrings.errorFileTooLarge)
+        XCTAssertEqual(notifications.shownErrors, [CommonStrings.errorFileTooLarge])
         XCTAssertEqual(sessionService.currentUser, storedUser)
         XCTAssertEqual(imageFileStore.removedFiles, [.stub])
     }
@@ -251,7 +254,7 @@ final class ProfileViewModelTests: XCTestCase {
 
         await sut.uploadAvatar(.image(.stub()))
 
-        XCTAssertEqual(sut.errorMessage, CommonStrings.errorNoConnection)
+        XCTAssertEqual(notifications.shownErrors, [CommonStrings.errorNoConnection])
         XCTAssertEqual(sessionService.currentUser, storedUser)
     }
 

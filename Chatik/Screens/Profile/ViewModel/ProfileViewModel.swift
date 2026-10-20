@@ -27,8 +27,6 @@ final class ProfileViewModel {
     var isLogoutConfirmationPresented = false
     /// `true`, пока выполняется запрос выхода.
     private(set) var isLoggingOut = false
-    /// Текст ошибки для всплывающего сообщения. `nil` — сообщение скрыто.
-    var errorMessage: String?
 
     /// Доступные источники аватара: камера предлагается только там, где она есть.
     let avatarSources: [AvatarSource]
@@ -39,6 +37,8 @@ final class ProfileViewModel {
     let imageFileStore: ImageFileStoreProtocol
     private let sessionService: SessionServiceProtocol
     private let authService: AuthServiceProtocol
+    /// Показ ошибок; нужен и `ProfileViewModel+AvatarPicking`, поэтому не `private`.
+    let notifications: InAppNotificationServiceProtocol
 
     /// - Parameters:
     ///   - profileService: сервис профиля.
@@ -46,6 +46,7 @@ final class ProfileViewModel {
     ///   - imageFileStore: временные файлы изображений для загрузки.
     ///   - sessionService: сервис сессии; отсюда берётся текущий пользователь, сюда пишется обновлённый.
     ///   - authService: сервис авторизации — для выхода из аккаунта.
+    ///   - notifications: показ ошибок загрузки профиля и аватара.
     ///   - isCameraAvailable: есть ли на устройстве камера; без неё вариант «Сделать фото» не предлагается.
     init(
         profileService: ProfileServiceProtocol,
@@ -53,6 +54,7 @@ final class ProfileViewModel {
         imageFileStore: ImageFileStoreProtocol,
         sessionService: SessionServiceProtocol,
         authService: AuthServiceProtocol,
+        notifications: InAppNotificationServiceProtocol,
         isCameraAvailable: Bool
     ) {
         self.profileService = profileService
@@ -60,6 +62,7 @@ final class ProfileViewModel {
         self.imageFileStore = imageFileStore
         self.sessionService = sessionService
         self.authService = authService
+        self.notifications = notifications
         avatarSources = isCameraAvailable ? [.gallery, .camera] : [.gallery]
     }
 
@@ -92,7 +95,7 @@ final class ProfileViewModel {
             let user = try await profileService.fetchProfile()
             await sessionService.update(user: user)
         } catch {
-            errorMessage = ErrorMessages.message(for: error)
+            notifications.showError(ErrorMessages.message(for: error))
         }
     }
 
@@ -117,9 +120,9 @@ final class ProfileViewModel {
             let user = try await profileService.setAvatar(fileId: remoteFile.fileId)
             await sessionService.update(user: user)
         } catch is ImageFileStoreError {
-            errorMessage = ProfileStrings.avatarLoadFailed
+            notifications.showError(ProfileStrings.avatarLoadFailed)
         } catch {
-            errorMessage = ErrorMessages.message(for: error)
+            notifications.showError(ErrorMessages.message(for: error))
         }
     }
 

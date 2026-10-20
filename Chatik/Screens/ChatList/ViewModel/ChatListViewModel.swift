@@ -18,8 +18,6 @@ import Foundation
 @MainActor
 @Observable
 final class ChatListViewModel {
-    /// Текст ошибки для всплывающего сообщения. `nil` — сообщение скрыто.
-    var errorMessage: String?
     /// Строки списка, сначала поднявшиеся последними. Обновляются `observeConversations()` не чаще раза
     /// в `rowsUpdateInterval`.
     private(set) var conversations: [ChatRowDisplayModel] = []
@@ -33,6 +31,7 @@ final class ChatListViewModel {
     private let draftService: MessageDraftServiceProtocol
     private let unsentMessages: UnsentMessagePreviewProviding
     private let localizationService: LocalizationServiceProtocol
+    private let notifications: InAppNotificationServiceProtocol
     private let router: ChatListRouter
     private let now: () -> Date
     private let makeRow: RowBuilder
@@ -61,6 +60,7 @@ final class ChatListViewModel {
     ///   - draftService: черновики — показываются в строке вместо последнего сообщения.
     ///   - unsentMessages: неотправленные сообщения — показываются в строке вместо черновика и последнего сообщения.
     ///   - localizationService: язык форматирования времени.
+    ///   - notifications: показ ошибок загрузки.
     ///   - router: переходы с экрана.
     ///   - now: текущее время; подменяется в тестах форматирования.
     ///   - makeRow: сборка строки; подменяется в тестах кэша строк.
@@ -72,6 +72,7 @@ final class ChatListViewModel {
         draftService: MessageDraftServiceProtocol,
         unsentMessages: UnsentMessagePreviewProviding,
         localizationService: LocalizationServiceProtocol,
+        notifications: InAppNotificationServiceProtocol,
         router: ChatListRouter,
         now: @escaping () -> Date = { Date() },
         makeRow: @escaping RowBuilder = { ChatRowDisplayModel(conversation: $0, opponent: $1, localPreview: $2, timeFormatter: $3) },
@@ -83,6 +84,7 @@ final class ChatListViewModel {
         self.draftService = draftService
         self.unsentMessages = unsentMessages
         self.localizationService = localizationService
+        self.notifications = notifications
         self.router = router
         self.now = now
         self.makeRow = makeRow
@@ -198,7 +200,7 @@ final class ChatListViewModel {
         } catch is CancellationError {
             return
         } catch {
-            errorMessage = ErrorMessages.message(for: error)
+            notifications.showError(ErrorMessages.message(for: error))
         }
     }
 
@@ -220,7 +222,7 @@ final class ChatListViewModel {
         } catch is CancellationError {
             return
         } catch {
-            errorMessage = ErrorMessages.message(for: error)
+            notifications.showError(ErrorMessages.message(for: error))
         }
     }
 

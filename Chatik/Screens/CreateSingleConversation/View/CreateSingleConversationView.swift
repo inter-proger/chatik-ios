@@ -35,11 +35,6 @@ struct CreateSingleConversationView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { toolbarContent }
         .interactiveDismissDisabled(viewModel.isCreating)
-        .alert(CommonStrings.errorTitle, isPresented: $viewModel.errorMessage.isPresent(), presenting: viewModel.errorMessage) { _ in
-            Button(CommonStrings.ok, role: .cancel) {}
-        } message: { message in
-            Text(message)
-        }
     }
 
     /// Прелоадер первой страницы или сообщение о пустом списке поверх списка.

@@ -42,6 +42,6 @@ extension ProfileViewModel {
     /// Обработчик ситуации, когда выбранный в галерее файл не удалось прочитать как изображение.
     func didFailToPickImage() {
         presentedAvatarSource = nil
-        errorMessage = ProfileStrings.avatarLoadFailed
+        notifications.showError(ProfileStrings.avatarLoadFailed)
     }
 }

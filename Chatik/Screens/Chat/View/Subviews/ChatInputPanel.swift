@@ -15,9 +15,6 @@ struct ChatInputPanel: View {
     @Bindable var viewModel: ChatViewModel
     /// Фокус поля ввода: экран снимает его по тапу по ленте, чтобы убрать клавиатуру.
     var isFocused: FocusState<Bool>.Binding
-    /// Поле было в фокусе, когда начался запрос правки: на время запроса поле недоступно и теряет фокус,
-    /// а после запроса фокус возвращается — правку можно продолжить набирать без лишнего тапа.
-    @State private var restoresFocusAfterSubmit = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -37,7 +34,7 @@ struct ChatInputPanel: View {
                 isSubmitting: viewModel.isEditSubmitting,
                 sendIcon: viewModel.sendButtonIcon,
                 sendLabel: viewModel.sendButtonLabel,
-                onSend: didTapSend
+                onSend: viewModel.didTapSend
             )
         }
         .background(.bar)
@@ -46,19 +43,11 @@ struct ChatInputPanel: View {
             guard isEditing else { return }
             isFocused.wrappedValue = true
         }
+        // Запрос правки закончился (успехом или ошибкой) — клавиатура прячется. Пока он шёл, поле было только
+        // для чтения, но в фокусе: клавиатура оставалась на месте.
         .onChange(of: viewModel.isEditSubmitting) { _, isSubmitting in
-            guard !isSubmitting, restoresFocusAfterSubmit else { return }
-            restoresFocusAfterSubmit = false
-            isFocused.wrappedValue = true
+            guard !isSubmitting else { return }
+            isFocused.wrappedValue = false
         }
-    }
-
-    /// Кнопка под полем ввода. Фокус запоминается до нажатия: в режиме редактирования запрос сделает поле
-    /// недоступным, и оно потеряет фокус.
-    private func didTapSend() {
-        restoresFocusAfterSubmit = viewModel.isEditing && isFocused.wrappedValue
-        viewModel.didTapSend()
-        guard !viewModel.isEditSubmitting else { return }
-        restoresFocusAfterSubmit = false
     }
 }

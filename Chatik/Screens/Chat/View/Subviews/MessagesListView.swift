@@ -30,10 +30,12 @@ struct MessagesListView: View {
     let onRetry: (MessageDisplayModel) -> Void
     /// Выбрано «удалить» у неотправленного сообщения.
     let onDelete: (MessageDisplayModel) -> Void
-    /// Выбран пункт меню по долгому нажатию на сообщение.
+    /// Выбрано действие с сообщением для VoiceOver.
     let onAction: (MessageAction, MessageDisplayModel) -> Void
-    /// Сменилось состояние меню по долгому нажатию на сообщение.
-    var onMenuPhaseChange: (MessageMenuPhase) -> Void = { _ in }
+    /// Долгое нажатие на сообщение; второй параметр — пузырь как источник меню.
+    var onLongPress: (MessageDisplayModel, MessageMenuSource) -> Void = { _, _ in }
+    /// Сообщение, для которого открыто меню: его пузырь скрыт. `nil` — меню нет.
+    var menuMessageId: MessageClientKey?
 
     @State private var tracker = FloatingDateTracker()
 
@@ -49,7 +51,8 @@ struct MessagesListView: View {
                             onRetry: { onRetry(message) },
                             onDelete: { onDelete(message) },
                             onAction: { onAction($0, message) },
-                            onMenuPhaseChange: onMenuPhaseChange
+                            onLongPress: { onLongPress(message, $0) },
+                            isHiddenForMenu: menuMessageId == message.id
                         )
                             .flippedVertically()
                             .onAppear { onAppear(message) }

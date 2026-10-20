@@ -19,8 +19,9 @@ import SwiftUI
 /// Выбор «повторить / удалить» привязан к пузырю, а не к экрану: на iOS 26 он всплывает от пузыря, до iOS 26 —
 /// обычным листом снизу.
 ///
-/// Долгое нажатие на пузырь открывает меню действий (`MessageDisplayModel.actions`) — `MessageContextMenu` на UIKit
-/// поверх пузыря, только у сообщений с действиями. Те же действия доступны VoiceOver.
+/// Долгое нажатие на пузырь у сообщения с действиями (`MessageDisplayModel.actions`) сообщает экрану
+/// `onLongPress`: меню показывает экран (`MessageMenuController`). Пока меню открыто, пузырь скрыт — на его месте
+/// копия в меню. Те же действия доступны VoiceOver.
 struct MessageBubbleView: View {
     let message: MessageDisplayModel
     /// Показан выбор «повторить / удалить» у неотправленного сообщения.
@@ -28,13 +29,12 @@ struct MessageBubbleView: View {
     var onTapFailed: () -> Void = {}
     var onRetry: () -> Void = {}
     var onDelete: () -> Void = {}
-    /// Выбран пункт меню по долгому нажатию.
+    /// Выбрано действие для VoiceOver.
     var onAction: (MessageAction) -> Void = { _ in }
-    /// Сменилось состояние меню по долгому нажатию — экран держит раскладку, пока меню нажато или открыто.
-    var onMenuPhaseChange: (MessageMenuPhase) -> Void = { _ in }
-
-    /// Состояние меню по долгому нажатию: пока оно открыто, пузырь скрыт, на его месте — превью меню.
-    @State private var menuPhase = MessageMenuPhase.closed
+    /// Долгое нажатие на пузырь; параметр — источник меню с текущим кадром пузыря на экране.
+    var onLongPress: (MessageMenuSource) -> Void = { _ in }
+    /// Для сообщения открыто меню: пузырь скрыт, на его месте — копия в меню.
+    var isHiddenForMenu = false
 
     private static let avatarSize: CGFloat = 32
     /// Промежуток между аватаром и входящим пузырём.
@@ -49,8 +49,6 @@ struct MessageBubbleView: View {
     private static let outgoingShift: CGFloat = 16
     /// Промежуток между значком неотправленного сообщения и пузырём.
     private static let failedMarkSpacing: CGFloat = 6
-    /// Радиус скругления пузыря.
-    private static let bubbleCornerRadius: CGFloat = 16
 
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
@@ -121,37 +119,19 @@ struct MessageBubbleView: View {
         }
     }
 
-    /// Пузырь с меню по долгому нажатию. Меню — только у сообщений с действиями: у остальных поверх пузыря нет
-    /// UIKit-View. Пока меню открыто или закрывается, View остаётся и без действий: в ней стоит превью закрытия,
-    /// а выбранное «Редактировать» убирает действия раньше, чем закончится анимация. Условие — в содержимом
-    /// `overlay`, а не вокруг пузыря, поэтому его идентичность не меняется.
+    /// Пузырь с распознаванием долгого нажатия — только у сообщений с действиями. Условие — в содержимом `overlay`,
+    /// а не вокруг пузыря, поэтому его идентичность не меняется.
     private var bubbleWithMenu: some View {
-        bubble
-            .opacity(menuPhase == .open ? 0 : 1)
-            // Без анимации: пузырь сменяет снимок меню сразу. Иначе он проявлялся бы вместе с анимацией режима
+        MessageBubble(message: message)
+            .opacity(isHiddenForMenu ? 0 : 1)
+            // Без анимации: пузырь сменяет копию в меню сразу. Иначе он проявлялся бы вместе с анимацией режима
             // редактирования, которую включает выбранное «Редактировать», и на месте пузыря мелькала бы пустота.
-            .transaction(value: menuPhase) { $0.animation = nil }
+            .transaction(value: isHiddenForMenu) { $0.animation = nil }
             .overlay {
-                if !message.actions.isEmpty || menuPhase != .closed {
-                    MessageContextMenu(
-                        actions: message.actions,
-                        cornerRadius: Self.bubbleCornerRadius,
-                        phase: menuPhaseBinding,
-                        onAction: onAction
-                    )
+                if !message.actions.isEmpty {
+                    MessageLongPressDetector(onLongPress: onLongPress)
                 }
             }
-    }
-
-    /// Состояние меню: хранится в пузыре и сообщается экрану.
-    private var menuPhaseBinding: Binding<MessageMenuPhase> {
-        Binding(
-            get: { menuPhase },
-            set: { phase in
-                menuPhase = phase
-                onMenuPhaseChange(phase)
-            }
-        )
     }
 
     /// Действие с сообщением для VoiceOver.
@@ -162,9 +142,17 @@ struct MessageBubbleView: View {
             Button(ChatStrings.messageActionEdit, systemImage: "pencil") { onAction(.edit) }
         }
     }
+}
 
-    /// Пузырь сообщения: имя отправителя (только у входящих), текст, время и пометка о редактировании.
-    private var bubble: some View {
+/// Пузырь сообщения без окружения: имя отправителя (только у входящих), текст, время и пометка о редактировании.
+/// Его же копию показывает меню сообщения.
+struct MessageBubble: View {
+    let message: MessageDisplayModel
+
+    /// Радиус скругления пузыря.
+    static let cornerRadius: CGFloat = 16
+
+    var body: some View {
         MessageBubbleLayout(spacing: 4) {
             // У своих сообщений `sender` нужен только для отступа между сериями: своё имя не показывается.
             if !message.isOutgoing, let sender = message.sender {
@@ -183,7 +171,7 @@ struct MessageBubbleView: View {
         .padding(.vertical, 8)
         .foregroundStyle(message.isOutgoing ? Color.white : Color.primary)
         .background(message.isOutgoing ? Color.outgoingBubble : Color(.secondarySystemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: Self.bubbleCornerRadius))
+        .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
     }
 
     /// Подвал пузыря: время или состояние доставки. Выводится всегда и последним элементом раскладки — к правому

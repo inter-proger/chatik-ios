@@ -43,6 +43,10 @@ final class DIContainer {
     let conversationListService: ConversationListServiceProtocol
     /// Начало работы с сервером после открытия сессии — общее для старта приложения и входа.
     let sessionWorkLauncher: SessionWorkStarting
+    #if DEBUG
+    /// Запуск по debug-сценарию из аргументов `-debugLogin` / `-debugPassword`; `nil` — обычный старт.
+    let debugLoginLaunch: DebugLoginLaunch?
+    #endif
     /// Черновики сообщений — единственный, кто пишет их в БД.
     let messageDraftService: MessageDraftServiceProtocol
     /// Отправка правок сообщений: запрос переживает уход с экрана.
@@ -154,11 +158,27 @@ final class DIContainer {
         )
         self.globalService = globalService
         self.realtimeService = realtimeService
-        self.sessionWorkLauncher = SessionWorkLauncher(
+        let sessionWorkLauncher = SessionWorkLauncher(
             conversationList: conversationListService,
             messageDelivery: messageSendQueue,
             realtimeService: realtimeService
         )
+        self.sessionWorkLauncher = sessionWorkLauncher
+        #if DEBUG
+        self.debugLoginLaunch = DebugLaunchArguments.parse(
+            ProcessInfo.processInfo.arguments,
+            environment: ProcessInfo.processInfo.environment
+        ).map { arguments in
+            DebugLoginLaunch(
+                arguments: arguments,
+                service: DebugLoginService(
+                    authService: authService,
+                    sessionService: sessionService,
+                    sessionWork: sessionWorkLauncher
+                )
+            )
+        }
+        #endif
         // Соединение, очередь событий, список, очередь отправки, правки, кэш сообщений и черновики останавливаются
         // в фазе `authServiceWillLogout`
         // (до запроса выхода), сессия завершается в `authServiceDidLogout` (после него) — от порядка подписки

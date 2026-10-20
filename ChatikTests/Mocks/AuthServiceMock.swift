@@ -14,6 +14,8 @@ final class AuthServiceMock: AuthServiceProtocol {
     var stubbedUser: Result<User, Error> = .failure(NetworkError.missingResponse)
     private(set) var logoutCallCount = 0
     private(set) var expireSessionCallCount = 0
+    /// Вызовы регистрации, входа и выхода по порядку: `"signup"`, `"login(<логин>/<пароль>)"`, `"logout"`.
+    private(set) var calls: [String] = []
     /// Подписанные наблюдатели (сильные ссылки — чтобы тест мог проверить подписку).
     private(set) var observers: [AuthServiceObserver] = []
     /// Вызывается внутри каждого метода и ожидается до возврата результата — пока ViewModel гарантированно
@@ -22,12 +24,14 @@ final class AuthServiceMock: AuthServiceProtocol {
 
     /// Возвращает `stubbedUser` после хука `onRequest`.
     func signup(login: String, password: String, name: String) async throws -> User {
+        calls.append("signup")
         await onRequest?()
         return try stubbedUser.get()
     }
 
     /// Возвращает `stubbedUser` после хука `onRequest`.
     func login(login: String, password: String) async throws -> User {
+        calls.append("login(\(login)/\(password))")
         await onRequest?()
         return try stubbedUser.get()
     }
@@ -35,6 +39,7 @@ final class AuthServiceMock: AuthServiceProtocol {
     /// Считает вызов и ждёт хук `onRequest`; наблюдателей не оповещает.
     func logout() async {
         logoutCallCount += 1
+        calls.append("logout")
         await onRequest?()
     }
 

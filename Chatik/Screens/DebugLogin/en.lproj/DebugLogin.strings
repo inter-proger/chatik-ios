@@ -1,0 +1,12 @@
+/*
+  DebugLogin.strings
+  Chatik
+
+  Debug login start screen strings (Debug build only).
+*/
+
+"debugLogin.title" = "Debug login";
+"debugLogin.progress" = "Debug login: %@";
+"debugLogin.skip" = "Continue without debug login";
+"debugLogin.error.missingLogin" = "The -debugLogin argument is missing";
+"debugLogin.error.missingPassword" = "The -debugPassword argument is missing";

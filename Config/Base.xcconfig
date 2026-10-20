@@ -14,4 +14,7 @@ DEVELOPMENT_TEAM =
 // `/$()/` — экранирование: `//` в xcconfig начинает комментарий.
 API_BASE_URL = http:/$()/localhost:8080
 
+// Debug-вход по аргументам запуска (docs/debug-auto-login.md): код под `#if DEBUG`, строки экрана — исключаются здесь.
+EXCLUDED_SOURCE_FILE_NAMES[config=Release] = DebugLogin.strings
+
 #include? "Local.xcconfig"

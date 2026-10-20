@@ -174,4 +174,162 @@ final class AppRouterTests: XCTestCase {
 
         XCTAssertEqual(realtimeService.calls, ["start"])
     }
+
+    // MARK: - Debug-вход
+
+    /// Создаёт роутер с debug-входом над сессией с заданным сохранённым пользователем.
+    /// - Parameters:
+    ///   - arguments: разобранные аргументы запуска.
+    ///   - service: мок debug-входа.
+    ///   - storedUser: пользователь, залогиненный до запуска.
+    private func makeDebugSUT(
+        arguments: Result<DebugLoginCredentials, DebugLaunchArgumentsError>,
+        service: DebugLoginServiceMock,
+        storedUser: User? = nil
+    ) -> AppRouter {
+        let defaults = UserDefaultsServiceMock(currentUser: storedUser)
+        return AppRouter(
+            sessionService: SessionService(userDefaultsService: defaults, localStorageCleaner: LocalStorageCleanerMock()),
+            localizationService: LocalizationService(userDefaultsService: defaults, systemLanguage: .ru),
+            realtimeService: realtimeService,
+            sessionWork: makeSessionWork(),
+            debugLoginLaunch: DebugLoginLaunch(arguments: arguments, service: service),
+            minimumSplashDuration: .zero
+        )
+    }
+
+    /// Кейс: роутер с debug-входом создан, `restoreSession()` ещё не вызван.
+    /// Ожидание: корень — стартовый экран debug-входа с логином, а не splash.
+    func test_debugLogin_beforeRestore_isDebugLoginRoot() {
+        let sut = makeDebugSUT(arguments: .success(DebugLoginCredentials(login: "anna", password: "p")), service: DebugLoginServiceMock())
+
+        XCTAssertEqual(sut.root, .debugLogin)
+        XCTAssertEqual(sut.debugLoginState, .inProgress(login: "anna"))
+    }
+
+    /// Кейс: debug-вход выполняется, затем завершается успешно.
+    /// Ожидание: во время входа корень — `.debugLogin`, сервис получил данные из аргументов; после — корень выводится
+    /// из сессии, работу с сервером роутер сам не начинает (её начинает сервис).
+    func test_debugLogin_success_finishesDebugScenario() async {
+        let credentials = DebugLoginCredentials(login: "anna", password: "p")
+        let service = DebugLoginServiceMock()
+        let sut = makeDebugSUT(arguments: .success(credentials), service: service, storedUser: user)
+        var rootDuringLogin: AppRoot?
+        service.onLogin = { rootDuringLogin = sut.root }
+
+        await sut.restoreSession()
+
+        XCTAssertEqual(rootDuringLogin, .debugLogin)
+        XCTAssertEqual(service.receivedCredentials, [credentials])
+        XCTAssertNil(sut.debugLoginState)
+        XCTAssertEqual(sut.root, .chats)
+        XCTAssertEqual(realtimeService.calls, [])
+        XCTAssertEqual(messageSendQueue.resumeCallCount, 0)
+    }
+
+    /// Кейс: debug-вход вернул ошибку неверного пароля; затем нажата «Продолжить без debug-входа».
+    /// Ожидание: корень `.debugLogin` с текстом ошибки; после нажатия — экран авторизации, работа с сервером не начата.
+    func test_debugLogin_failure_showsErrorThenSkipOpensAuth() async {
+        let service = DebugLoginServiceMock()
+        service.stubbedResult = .failure(NetworkError.api(code: NetworkError.Code.invalidPassword))
+        let sut = makeDebugSUT(arguments: .success(DebugLoginCredentials(login: "anna", password: "p")), service: service)
+
+        await sut.restoreSession()
+
+        XCTAssertEqual(sut.root, .debugLogin)
+        XCTAssertEqual(sut.debugLoginState, .failed(message: CommonStrings.errorInvalidPassword))
+
+        sut.didTapSkipDebugLogin()
+
+        XCTAssertEqual(sut.root, .auth)
+        XCTAssertEqual(realtimeService.calls, [])
+    }
+
+    /// Кейс: передан только `-debugPassword`, на устройстве сохранена сессия; затем нажата «Продолжить без debug-входа».
+    /// Ожидание: сервис не вызван, показана ошибка разбора; после нажатия — список чатов и работа с сервером, как при
+    /// обычном старте.
+    func test_debugLogin_argumentsError_showsErrorThenSkipStartsRegularSession() async {
+        let service = DebugLoginServiceMock()
+        let sut = makeDebugSUT(arguments: .failure(.missingLogin), service: service, storedUser: user)
+        XCTAssertEqual(sut.debugLoginState, .inProgress(login: nil))
+
+        await sut.restoreSession()
+
+        XCTAssertEqual(service.receivedCredentials, [])
+        XCTAssertEqual(sut.debugLoginState, .failed(message: DebugLoginStrings.errorMissingLogin))
+        XCTAssertEqual(realtimeService.calls, [])
+
+        sut.didTapSkipDebugLogin()
+
+        XCTAssertEqual(sut.root, .chats)
+        XCTAssertEqual(realtimeService.calls, ["start"])
+        XCTAssertEqual(messageSendQueue.resumeCallCount, 1)
+    }
+
+    /// Кейс: «Продолжить без debug-входа» нажата, пока вход ещё идёт.
+    /// Ожидание: нажатие игнорируется — корень остаётся `.debugLogin`.
+    func test_debugLogin_skipDuringLogin_isIgnored() async {
+        let service = DebugLoginServiceMock()
+        let sut = makeDebugSUT(arguments: .success(DebugLoginCredentials(login: "anna", password: "p")), service: service)
+        var rootAfterSkip: AppRoot?
+        service.onLogin = {
+            sut.didTapSkipDebugLogin()
+            rootAfterSkip = sut.root
+        }
+
+        await sut.restoreSession()
+
+        XCTAssertEqual(rootAfterSkip, .debugLogin)
+    }
+
+    /// Кейс: во время debug-входа приложение уходит в фон и возвращается.
+    /// Ожидание: соединение не трогается — ни остановки, ни запуска; после входа приложение активно, закрывать нечего.
+    func test_debugLogin_scenePhaseDuringLogin_isIgnored() async {
+        let service = DebugLoginServiceMock()
+        let sut = makeDebugSUT(arguments: .success(DebugLoginCredentials(login: "anna", password: "p")), service: service)
+        service.onLogin = {
+            await sut.didChangeScenePhase(isActive: false)
+            await sut.didChangeScenePhase(isActive: true)
+        }
+
+        await sut.restoreSession()
+
+        XCTAssertEqual(realtimeService.calls, [])
+    }
+
+    /// Кейс: приложение ушло в фон во время debug-входа, вход завершился в фоне, затем приложение вернулось.
+    /// Ожидание: после входа соединение закрывается, как при уходе в фон; возврат открывает его заново.
+    func test_debugLogin_finishedInBackground_stopsRealtimeUntilForeground() async {
+        let service = DebugLoginServiceMock()
+        let sut = makeDebugSUT(arguments: .success(DebugLoginCredentials(login: "anna", password: "p")), service: service)
+        service.onLogin = { await sut.didChangeScenePhase(isActive: false) }
+
+        await sut.restoreSession()
+        XCTAssertEqual(realtimeService.calls, ["stop"])
+
+        await sut.didChangeScenePhase(isActive: true)
+
+        XCTAssertEqual(realtimeService.calls, ["stop", "start"])
+    }
+
+    /// Кейс: экран ошибки разбора аргументов при сохранённой сессии; приложение уходит в фон и возвращается, затем
+    /// нажата «Продолжить без debug-входа».
+    /// Ожидание: пока показан экран ошибки, соединение не трогается; после нажатия работа с сервером начинается в обычном
+    /// порядке — список, очередь, соединение.
+    func test_debugLogin_scenePhaseOnFailureScreen_isIgnoredUntilSkip() async {
+        let sut = makeDebugSUT(arguments: .failure(.missingLogin), service: DebugLoginServiceMock(), storedUser: user)
+        var calls: [String] = []
+        conversationList.onStart = { calls.append("list") }
+        messageSendQueue.onResume = { calls.append("sendQueue") }
+        realtimeService.onStart = { calls.append("realtime") }
+        await sut.restoreSession()
+
+        await sut.didChangeScenePhase(isActive: false)
+        await sut.didChangeScenePhase(isActive: true)
+        XCTAssertEqual(realtimeService.calls, [])
+
+        sut.didTapSkipDebugLogin()
+
+        XCTAssertEqual(calls, ["list", "sendQueue", "realtime"])
+    }
 }

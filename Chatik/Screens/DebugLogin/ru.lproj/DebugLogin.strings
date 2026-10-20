@@ -1,0 +1,12 @@
+/*
+  DebugLogin.strings
+  Chatik
+
+  Строки стартового экрана debug-входа (только Debug-сборка).
+*/
+
+"debugLogin.title" = "Debug-вход";
+"debugLogin.progress" = "Debug-вход: %@";
+"debugLogin.skip" = "Продолжить без debug-входа";
+"debugLogin.error.missingLogin" = "Не передан аргумент -debugLogin";
+"debugLogin.error.missingPassword" = "Не передан аргумент -debugPassword";

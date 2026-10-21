@@ -26,7 +26,7 @@ final class ChatRowDisplayModelTests: XCTestCase {
     func test_init_singleWithLoadedOpponent_usesOpponentNameAndAvatar() {
         let opponent = User(userId: 2, login: "petr", name: "Petr Sidorov", avatar: .stub)
 
-        let model = ChatRowDisplayModel(conversation: .singleStub, opponent: .loaded(opponent), localPreview: nil, timeFormatter: timeFormatter)
+        let model = ChatRowDisplayModel(conversation: .singleStub, opponent: .loaded(opponent), localPreview: nil, unreadCount: 0, timeFormatter: timeFormatter)
 
         XCTAssertEqual(model.id, Conversation.singleStub.id)
         XCTAssertEqual(model.title, "Petr Sidorov")
@@ -37,7 +37,7 @@ final class ChatRowDisplayModelTests: XCTestCase {
     /// Кейс: личная переписка, собеседник ещё загружается.
     /// Ожидание: заголовок — заглушка, аватара нет.
     func test_init_singleWithPendingOpponent_showsPlaceholder() {
-        let model = ChatRowDisplayModel(conversation: .singleStub, opponent: .pending, localPreview: nil, timeFormatter: timeFormatter)
+        let model = ChatRowDisplayModel(conversation: .singleStub, opponent: .pending, localPreview: nil, unreadCount: 0, timeFormatter: timeFormatter)
 
         XCTAssertEqual(model.title, ChatListStrings.rowLoading)
         XCTAssertTrue(model.isTitlePlaceholder)
@@ -47,7 +47,7 @@ final class ChatRowDisplayModelTests: XCTestCase {
     /// Кейс: личная переписка, собеседника нет на сервере.
     /// Ожидание: заголовок — текст об удалённом пользователе, не заглушка.
     func test_init_singleWithMissingOpponent_showsDeletedUser() {
-        let model = ChatRowDisplayModel(conversation: .singleStub, opponent: .notFound, localPreview: nil, timeFormatter: timeFormatter)
+        let model = ChatRowDisplayModel(conversation: .singleStub, opponent: .notFound, localPreview: nil, unreadCount: 0, timeFormatter: timeFormatter)
 
         XCTAssertEqual(model.title, ChatListStrings.rowDeletedUser)
         XCTAssertFalse(model.isTitlePlaceholder)
@@ -56,7 +56,7 @@ final class ChatRowDisplayModelTests: XCTestCase {
     /// Кейс: групповая переписка — с названием и аватаром, без собеседника.
     /// Ожидание: заголовок строки — название группы, аватар — её аватар (уменьшенная копия).
     func test_init_group_usesNameAndAvatar() {
-        let model = ChatRowDisplayModel(conversation: .groupStub, opponent: nil, localPreview: nil, timeFormatter: timeFormatter)
+        let model = ChatRowDisplayModel(conversation: .groupStub, opponent: nil, localPreview: nil, unreadCount: 0, timeFormatter: timeFormatter)
 
         XCTAssertEqual(model.id, Conversation.groupStub.id)
         XCTAssertEqual(model.title, Conversation.groupStub.name)
@@ -69,10 +69,10 @@ final class ChatRowDisplayModelTests: XCTestCase {
     func test_init_withoutNameAndOpponent_usesUntitledTitle() {
         let conversation = Conversation(
             conversationId: 1, type: .unknown, memberIds: [1, 2], name: nil, avatar: nil, opponentUserId: nil,
-            lastMessage: nil, positionUpdatedAt: .stub, updatedInfoAt: .stub
+            lastMessage: nil, positionUpdatedAt: .stub, updatedInfoAt: .stub, readState: .stub
         )
 
-        XCTAssertEqual(ChatRowDisplayModel(conversation: conversation, opponent: nil, localPreview: nil, timeFormatter: timeFormatter).title, ChatListStrings.rowUntitled)
+        XCTAssertEqual(ChatRowDisplayModel(conversation: conversation, opponent: nil, localPreview: nil, unreadCount: 0, timeFormatter: timeFormatter).title, ChatListStrings.rowUntitled)
     }
 
     /// Кейс: у аватара нет уменьшенной копии.
@@ -81,10 +81,10 @@ final class ChatRowDisplayModelTests: XCTestCase {
         let avatar = RemoteFile(fileId: 1, type: .image, url: RemoteFile.stub.url, size: 1, filename: "a.jpg", fileExtension: "jpg", smallURL: nil)
         let conversation = Conversation(
             conversationId: 1, type: .group, memberIds: [1, 2], name: "Группа", avatar: avatar, opponentUserId: nil,
-            lastMessage: nil, positionUpdatedAt: .stub, updatedInfoAt: .stub
+            lastMessage: nil, positionUpdatedAt: .stub, updatedInfoAt: .stub, readState: .stub
         )
 
-        XCTAssertEqual(ChatRowDisplayModel(conversation: conversation, opponent: nil, localPreview: nil, timeFormatter: timeFormatter).avatarURL, RemoteFile.stub.url)
+        XCTAssertEqual(ChatRowDisplayModel(conversation: conversation, opponent: nil, localPreview: nil, unreadCount: 0, timeFormatter: timeFormatter).avatarURL, RemoteFile.stub.url)
     }
 
     // MARK: - Превью и время
@@ -92,7 +92,7 @@ final class ChatRowDisplayModelTests: XCTestCase {
     /// Кейс: последнее сообщение — текст.
     /// Ожидание: превью — текст сообщения.
     func test_init_textLastMessage_previewIsText() {
-        let model = ChatRowDisplayModel(conversation: .groupStub, opponent: nil, localPreview: nil, timeFormatter: timeFormatter)
+        let model = ChatRowDisplayModel(conversation: .groupStub, opponent: nil, localPreview: nil, unreadCount: 0, timeFormatter: timeFormatter)
 
         XCTAssertEqual(model.preview, .message("Привет!"))
     }
@@ -100,7 +100,7 @@ final class ChatRowDisplayModelTests: XCTestCase {
     /// Кейс: в переписке нет сообщений и нет черновика.
     /// Ожидание: превью — «Новый чат».
     func test_init_withoutLastMessage_previewIsNewChat() {
-        let model = ChatRowDisplayModel(conversation: .singleStub, opponent: nil, localPreview: nil, timeFormatter: timeFormatter)
+        let model = ChatRowDisplayModel(conversation: .singleStub, opponent: nil, localPreview: nil, unreadCount: 0, timeFormatter: timeFormatter)
 
         XCTAssertEqual(model.preview, .message(ChatListStrings.rowNoMessages))
     }
@@ -115,7 +115,7 @@ final class ChatRowDisplayModelTests: XCTestCase {
 
         for lastMessage in lastMessages {
             let conversation = Conversation.singleStub.with(position: .stub, lastMessage: lastMessage)
-            let model = ChatRowDisplayModel(conversation: conversation, opponent: nil, localPreview: nil, timeFormatter: timeFormatter)
+            let model = ChatRowDisplayModel(conversation: conversation, opponent: nil, localPreview: nil, unreadCount: 0, timeFormatter: timeFormatter)
             XCTAssertEqual(model.preview, .message(ChatListStrings.rowMessage), "\(lastMessage)")
         }
     }
@@ -126,8 +126,8 @@ final class ChatRowDisplayModelTests: XCTestCase {
         let today = Conversation.singleStub.with(position: .stub, lastMessage: nil)
         let lastYear = Conversation.singleStub.with(position: .stub(-400 * 86_400_000), lastMessage: nil)
 
-        let todayTime = ChatRowDisplayModel(conversation: today, opponent: nil, localPreview: nil, timeFormatter: timeFormatter).time
-        let lastYearTime = ChatRowDisplayModel(conversation: lastYear, opponent: nil, localPreview: nil, timeFormatter: timeFormatter).time
+        let todayTime = ChatRowDisplayModel(conversation: today, opponent: nil, localPreview: nil, unreadCount: 0, timeFormatter: timeFormatter).time
+        let lastYearTime = ChatRowDisplayModel(conversation: lastYear, opponent: nil, localPreview: nil, unreadCount: 0, timeFormatter: timeFormatter).time
 
         XCTAssertEqual(todayTime, timeFormatter.string(from: ServerTime.stub.date))
         XCTAssertEqual(todayTime, "09:20")
@@ -139,9 +139,9 @@ final class ChatRowDisplayModelTests: XCTestCase {
     /// Кейс: у переписки с последним сообщением есть черновик.
     /// Ожидание: превью — черновик «<префикс> <текст>», а не последнее сообщение; время строки не меняется.
     func test_init_draft_replacesLastMessage() {
-        let withoutDraft = ChatRowDisplayModel(conversation: .groupStub, opponent: nil, localPreview: nil, timeFormatter: timeFormatter)
+        let withoutDraft = ChatRowDisplayModel(conversation: .groupStub, opponent: nil, localPreview: nil, unreadCount: 0, timeFormatter: timeFormatter)
 
-        let model = ChatRowDisplayModel(conversation: .groupStub, opponent: nil, localPreview: .draft("Завтра в 15:00"), timeFormatter: timeFormatter)
+        let model = ChatRowDisplayModel(conversation: .groupStub, opponent: nil, localPreview: .draft("Завтра в 15:00"), unreadCount: 0, timeFormatter: timeFormatter)
 
         XCTAssertEqual(labeledText(model), "\(ChatListStrings.rowDraftPrefix) Завтра в 15:00")
         XCTAssertEqual(model.time, withoutDraft.time)
@@ -150,7 +150,7 @@ final class ChatRowDisplayModelTests: XCTestCase {
     /// Кейс: в переписке нет сообщений, но есть черновик.
     /// Ожидание: превью — черновик, а не «Новый чат».
     func test_init_draftWithoutMessages_showsDraft() {
-        let model = ChatRowDisplayModel(conversation: .singleStub, opponent: nil, localPreview: .draft("Привет"), timeFormatter: timeFormatter)
+        let model = ChatRowDisplayModel(conversation: .singleStub, opponent: nil, localPreview: .draft("Привет"), unreadCount: 0, timeFormatter: timeFormatter)
 
         XCTAssertEqual(labeledText(model), "\(ChatListStrings.rowDraftPrefix) Привет")
     }
@@ -158,7 +158,7 @@ final class ChatRowDisplayModelTests: XCTestCase {
     /// Кейс: черновик из нескольких абзацев с повторяющимися пробелами, табуляцией и пробелами по краям.
     /// Ожидание: в превью одна строка — пробельные символы схлопнуты в один пробел, края обрезаны.
     func test_init_draftWithLineBreaks_isCollapsedToOneLine() {
-        let model = ChatRowDisplayModel(conversation: .singleStub, opponent: nil, localPreview: .draft("  Первый абзац\n\n\tВторой   абзац \n"), timeFormatter: timeFormatter)
+        let model = ChatRowDisplayModel(conversation: .singleStub, opponent: nil, localPreview: .draft("  Первый абзац\n\n\tВторой   абзац \n"), unreadCount: 0, timeFormatter: timeFormatter)
 
         XCTAssertEqual(labeledText(model), "\(ChatListStrings.rowDraftPrefix) Первый абзац Второй абзац")
     }
@@ -166,7 +166,7 @@ final class ChatRowDisplayModelTests: XCTestCase {
     /// Кейс: черновик с невидимыми символами нулевой ширины и пробелами по краям.
     /// Ожидание: края обрезаны так же, как при проверке на пустоту, — невидимых символов в превью нет.
     func test_init_draftWithZeroWidthEdges_isTrimmed() {
-        let model = ChatRowDisplayModel(conversation: .singleStub, opponent: nil, localPreview: .draft("\u{200B}\u{FEFF} Привет \u{200D}"), timeFormatter: timeFormatter)
+        let model = ChatRowDisplayModel(conversation: .singleStub, opponent: nil, localPreview: .draft("\u{200B}\u{FEFF} Привет \u{200D}"), unreadCount: 0, timeFormatter: timeFormatter)
 
         XCTAssertEqual(labeledText(model), "\(ChatListStrings.rowDraftPrefix) Привет")
     }
@@ -176,7 +176,7 @@ final class ChatRowDisplayModelTests: XCTestCase {
     func test_init_longDraft_isTruncated() {
         let draft = String(repeating: "а", count: ChatRowDisplayModel.localPreviewLength + 100)
 
-        let model = ChatRowDisplayModel(conversation: .singleStub, opponent: nil, localPreview: .draft(draft), timeFormatter: timeFormatter)
+        let model = ChatRowDisplayModel(conversation: .singleStub, opponent: nil, localPreview: .draft(draft), unreadCount: 0, timeFormatter: timeFormatter)
 
         let expected = String(repeating: "а", count: ChatRowDisplayModel.localPreviewLength)
         XCTAssertEqual(labeledText(model), "\(ChatListStrings.rowDraftPrefix) \(expected)")
@@ -185,7 +185,7 @@ final class ChatRowDisplayModelTests: XCTestCase {
     /// Кейс: у переписки есть черновик.
     /// Ожидание: префикс окрашен цветом `DraftLabel`, пробел и текст — без цвета (наследуют стиль строки).
     func test_init_draft_colorsOnlyPrefix() {
-        let model = ChatRowDisplayModel(conversation: .singleStub, opponent: nil, localPreview: .draft("Привет"), timeFormatter: timeFormatter)
+        let model = ChatRowDisplayModel(conversation: .singleStub, opponent: nil, localPreview: .draft("Привет"), unreadCount: 0, timeFormatter: timeFormatter)
         guard case let .labeled(attributed) = model.preview else { return XCTFail("Превью не черновик") }
 
         let runs = attributed.runs.map { (String(attributed[$0.range].characters), $0.swiftUI.foregroundColor) }
@@ -199,7 +199,7 @@ final class ChatRowDisplayModelTests: XCTestCase {
     /// Кейс: в переписке незавершённое редактирование.
     /// Ожидание: превью — фраза «Редактирование активно» целиком цветом `DraftLabel`, без текста после неё.
     func test_init_editing_showsPhraseInDraftColor() {
-        let model = ChatRowDisplayModel(conversation: .groupStub, opponent: nil, localPreview: .editing, timeFormatter: timeFormatter)
+        let model = ChatRowDisplayModel(conversation: .groupStub, opponent: nil, localPreview: .editing, unreadCount: 0, timeFormatter: timeFormatter)
         guard case let .labeled(attributed) = model.preview else { return XCTFail("Превью не редактирование") }
 
         let runs = attributed.runs.map { (String(attributed[$0.range].characters), $0.swiftUI.foregroundColor) }
@@ -214,9 +214,9 @@ final class ChatRowDisplayModelTests: XCTestCase {
     /// Ожидание: превью — «Не отправлено: <текст>» вместо последнего сообщения, даже если последнее сообщение
     /// новее неотправленного; время строки не меняется.
     func test_init_failed_replacesLastMessage() {
-        let withoutFailed = ChatRowDisplayModel(conversation: .groupStub, opponent: nil, localPreview: nil, timeFormatter: timeFormatter)
+        let withoutFailed = ChatRowDisplayModel(conversation: .groupStub, opponent: nil, localPreview: nil, unreadCount: 0, timeFormatter: timeFormatter)
 
-        let model = ChatRowDisplayModel(conversation: .groupStub, opponent: nil, localPreview: .failed("Не ушло"), timeFormatter: timeFormatter)
+        let model = ChatRowDisplayModel(conversation: .groupStub, opponent: nil, localPreview: .failed("Не ушло"), unreadCount: 0, timeFormatter: timeFormatter)
 
         XCTAssertEqual(labeledText(model), "\(ChatListStrings.rowFailedPrefix) Не ушло")
         XCTAssertEqual(model.time, withoutFailed.time)
@@ -225,7 +225,7 @@ final class ChatRowDisplayModelTests: XCTestCase {
     /// Кейс: в переписке нет сообщений, но есть неотправленное.
     /// Ожидание: превью — неотправленное, а не «Новый чат».
     func test_init_failedWithoutMessages_showsFailed() {
-        let model = ChatRowDisplayModel(conversation: .singleStub, opponent: nil, localPreview: .failed("Привет"), timeFormatter: timeFormatter)
+        let model = ChatRowDisplayModel(conversation: .singleStub, opponent: nil, localPreview: .failed("Привет"), unreadCount: 0, timeFormatter: timeFormatter)
 
         XCTAssertEqual(labeledText(model), "\(ChatListStrings.rowFailedPrefix) Привет")
     }
@@ -233,7 +233,7 @@ final class ChatRowDisplayModelTests: XCTestCase {
     /// Кейс: неотправленное сообщение из нескольких абзацев с пробелами по краям.
     /// Ожидание: в превью одна строка — пробельные символы схлопнуты в один пробел, края обрезаны.
     func test_init_failedWithLineBreaks_isCollapsedToOneLine() {
-        let model = ChatRowDisplayModel(conversation: .singleStub, opponent: nil, localPreview: .failed(" Первый\n\nВторой  абзац "), timeFormatter: timeFormatter)
+        let model = ChatRowDisplayModel(conversation: .singleStub, opponent: nil, localPreview: .failed(" Первый\n\nВторой  абзац "), unreadCount: 0, timeFormatter: timeFormatter)
 
         XCTAssertEqual(labeledText(model), "\(ChatListStrings.rowFailedPrefix) Первый Второй абзац")
     }
@@ -241,7 +241,7 @@ final class ChatRowDisplayModelTests: XCTestCase {
     /// Кейс: у переписки есть неотправленное сообщение.
     /// Ожидание: префикс окрашен цветом `ChatListFailedLabel`, пробел и текст — без цвета.
     func test_init_failed_colorsOnlyPrefix() {
-        let model = ChatRowDisplayModel(conversation: .singleStub, opponent: nil, localPreview: .failed("Привет"), timeFormatter: timeFormatter)
+        let model = ChatRowDisplayModel(conversation: .singleStub, opponent: nil, localPreview: .failed("Привет"), unreadCount: 0, timeFormatter: timeFormatter)
         guard case let .labeled(attributed) = model.preview else { return XCTFail("Превью не неотправленное") }
 
         let runs = attributed.runs.map { (String(attributed[$0.range].characters), $0.swiftUI.foregroundColor) }

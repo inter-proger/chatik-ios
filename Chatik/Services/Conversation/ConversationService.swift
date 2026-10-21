@@ -14,6 +14,8 @@ protocol ConversationServiceProtocol {
     func fetchConversations(filter: ConversationListFilter, count: Int?) async throws -> ConversationsPage
     /// Возвращает переписки по списку id.
     func fetchConversations(ids: [Int]) async throws -> ConversationsBatch
+    /// Отмечает прочитанными сообщения переписки до `messageId` включительно.
+    func markRead(conversationId: Int, messageId: Int) async throws -> ReadInfo
 }
 
 final class ConversationService: ConversationServiceProtocol {
@@ -56,5 +58,18 @@ final class ConversationService: ConversationServiceProtocol {
             notFoundIds += batch.notFoundIds
         }
         return ConversationsBatch(conversations: conversations, notFoundIds: notFoundIds)
+    }
+
+    /// Отмечает прочтение через `POST /conversations/markRead`. Идемпотентен: повтор или более старый `messageId`
+    /// возвращает текущее прочтение без изменений и без события.
+    /// - Parameters:
+    ///   - conversationId: переписка; чужая или несуществующая — ошибка 5002.
+    ///   - messageId: последнее прочитанное сообщение этой переписки; из другой переписки — ошибка 6001.
+    /// - Returns: прочтение переписки и общий счётчик на версии ответа.
+    func markRead(conversationId: Int, messageId: Int) async throws -> ReadInfo {
+        let response: ReadInfoResponse = try await networkService.request(
+            ConversationEndpoint.markRead(conversationId: conversationId, messageId: messageId)
+        )
+        return response.readInfo
     }
 }

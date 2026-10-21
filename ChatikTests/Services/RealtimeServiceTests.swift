@@ -115,11 +115,11 @@ final class RealtimeServiceTests: XCTestCase {
     func test_messageReceived_enqueuesLoadsUsersAndAcknowledges() async throws {
         let connection = try await startAndConnect()
 
-        connection.deliver(WebSocketServerMessage(uid: "e1", group: "messages", event: .messageReceived(.stub, .make(id: 15)), userIds: [1]))
+        connection.deliver(WebSocketServerMessage(uid: "e1", group: "messages", event: .messageReceived(.stub, .make(id: 15), nil), userIds: [1]))
 
         await waitUntil { connection.sent.count == 2 }
         await waitUntil { [unowned self] in !userCache.loadRequests.isEmpty }
-        XCTAssertEqual(eventQueue.enqueued, [.connected, .messageReceived(.stub, .make(id: 15))])
+        XCTAssertEqual(eventQueue.enqueued, [.connected, .messageReceived(.stub, .make(id: 15), nil)])
         XCTAssertEqual(userCache.loadRequests, [[1]])
         XCTAssertEqual(connection.sent.last, .acknowledge(receivedUid: "e1"))
     }
@@ -129,11 +129,11 @@ final class RealtimeServiceTests: XCTestCase {
     func test_editedAndConversationCreated_areEnqueuedInOrder() async throws {
         let connection = try await startAndConnect()
 
-        connection.deliver(WebSocketServerMessage(uid: "e1", group: "messages", event: .messageEdited(.editedStub, nil), userIds: []))
+        connection.deliver(WebSocketServerMessage(uid: "e1", group: "messages", event: .messageEdited(.editedStub, nil, changeVersion: nil), userIds: []))
         connection.deliver(WebSocketServerMessage(uid: "e2", group: "conversations", event: .conversationCreated(.singleStub), userIds: []))
 
         await waitUntil { connection.sent.count == 3 }
-        XCTAssertEqual(eventQueue.enqueued, [.connected, .messageEdited(.editedStub, nil), .conversationCreated(.singleStub)])
+        XCTAssertEqual(eventQueue.enqueued, [.connected, .messageEdited(.editedStub, nil, changeVersion: nil), .conversationCreated(.singleStub)])
     }
 
     /// Кейс: после `connected` пришло событие неизвестной группы.
@@ -156,7 +156,7 @@ final class RealtimeServiceTests: XCTestCase {
         await waitUntil { [unowned self] in factory.made.first?.sent.count == 1 }
         let connection = factory.made[0]
 
-        connection.deliver(WebSocketServerMessage(uid: "e1", group: "messages", event: .messageReceived(.stub, .make(id: 15)), userIds: [1]))
+        connection.deliver(WebSocketServerMessage(uid: "e1", group: "messages", event: .messageReceived(.stub, .make(id: 15), nil), userIds: [1]))
         connection.deliverConnected()
         connection.deliver(WebSocketServerMessage(uid: "e2", group: "typing", event: .unknown, userIds: []))
         await waitUntil { connection.sent.count == 2 }
@@ -171,7 +171,7 @@ final class RealtimeServiceTests: XCTestCase {
         let connection = try await startAndConnect()
         await sessionService.end()
 
-        connection.deliver(WebSocketServerMessage(uid: "e1", group: "messages", event: .messageReceived(.stub, .make(id: 15)), userIds: [1]))
+        connection.deliver(WebSocketServerMessage(uid: "e1", group: "messages", event: .messageReceived(.stub, .make(id: 15), nil), userIds: [1]))
 
         await waitUntil { connection.closeCodes == [WebSocketCloseCode.normal] }
         XCTAssertEqual(eventQueue.enqueued, [.connected])

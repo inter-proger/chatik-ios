@@ -28,7 +28,8 @@ extension Conversation {
         opponentUserId: 2,
         lastMessage: nil,
         positionUpdatedAt: .stub,
-        updatedInfoAt: .stub
+        updatedInfoAt: .stub,
+        readState: .stub
     )
 
     /// Групповая переписка с названием, аватаром и последним сообщением — типовой элемент списка переписок.
@@ -41,7 +42,8 @@ extension Conversation {
         opponentUserId: nil,
         lastMessage: LastMessage(messageId: 15, type: .text, text: "Привет!", updatedAt: .stub),
         positionUpdatedAt: .stub,
-        updatedInfoAt: .stub
+        updatedInfoAt: .stub,
+        readState: .stub
     )
 
     /// Групповая переписка с заданными id и позицией; остальные поля — как у `groupStub`, без последнего сообщения.
@@ -49,7 +51,13 @@ extension Conversation {
     ///   - id: `conversationId`.
     ///   - position: `positionUpdatedAt`; по умолчанию — `ServerTime.stub`.
     ///   - updatedInfoAt: `updatedInfoAt`; по умолчанию — `ServerTime.stub`.
-    static func make(id: Int, position: ServerTime = .stub, updatedInfoAt: ServerTime = .stub) -> Conversation {
+    ///   - readState: прочтение; по умолчанию — всё прочитано на версии 1.
+    static func make(
+        id: Int,
+        position: ServerTime = .stub,
+        updatedInfoAt: ServerTime = .stub,
+        readState: ConversationReadState = .stub
+    ) -> Conversation {
         Conversation(
             conversationId: id,
             type: .group,
@@ -59,7 +67,8 @@ extension Conversation {
             opponentUserId: nil,
             lastMessage: nil,
             positionUpdatedAt: position,
-            updatedInfoAt: updatedInfoAt
+            updatedInfoAt: updatedInfoAt,
+            readState: readState
         )
     }
 }
@@ -72,7 +81,8 @@ extension Conversation {
     func with(position: ServerTime, lastMessage: LastMessage?) -> Conversation {
         Conversation(
             conversationId: conversationId, type: type, memberIds: memberIds, name: name, avatar: avatar,
-            opponentUserId: opponentUserId, lastMessage: lastMessage, positionUpdatedAt: position, updatedInfoAt: updatedInfoAt
+            opponentUserId: opponentUserId, lastMessage: lastMessage, positionUpdatedAt: position, updatedInfoAt: updatedInfoAt,
+            readState: readState
         )
     }
 
@@ -83,8 +93,46 @@ extension Conversation {
     func with(name: String?, updatedInfoAt: ServerTime) -> Conversation {
         Conversation(
             conversationId: conversationId, type: type, memberIds: memberIds, name: name, avatar: avatar,
-            opponentUserId: opponentUserId, lastMessage: lastMessage, positionUpdatedAt: positionUpdatedAt, updatedInfoAt: updatedInfoAt
+            opponentUserId: opponentUserId, lastMessage: lastMessage, positionUpdatedAt: positionUpdatedAt, updatedInfoAt: updatedInfoAt,
+            readState: readState
         )
+    }
+
+    /// Копия переписки с другим прочтением.
+    /// - Parameter readState: прочтение.
+    func with(readState: ConversationReadState) -> Conversation {
+        Conversation(
+            conversationId: conversationId, type: type, memberIds: memberIds, name: name, avatar: avatar,
+            opponentUserId: opponentUserId, lastMessage: lastMessage, positionUpdatedAt: positionUpdatedAt, updatedInfoAt: updatedInfoAt,
+            readState: readState
+        )
+    }
+}
+
+extension ConversationReadState {
+    /// Всё прочитано на версии 1.
+    static let stub = ConversationReadState(unreadCount: 0, lastReadMessageId: 0, changeVersion: 1)
+
+    /// Прочтение с заданными полями.
+    /// - Parameters:
+    ///   - unread: `unreadCount`.
+    ///   - lastRead: `lastReadMessageId`.
+    ///   - version: `changeVersion`.
+    static func make(unread: Int = 0, lastRead: Int = 0, version: Int) -> ConversationReadState {
+        ConversationReadState(unreadCount: unread, lastReadMessageId: lastRead, changeVersion: version)
+    }
+}
+
+extension ReadInfo {
+    /// Прочтение переписки с заданными полями.
+    /// - Parameters:
+    ///   - conversationId: переписка.
+    ///   - lastRead: `lastReadMessageId`.
+    ///   - unread: `unreadCount`.
+    ///   - total: `totalUnreadCount`.
+    ///   - version: `changeVersion`.
+    static func make(conversationId: Int, lastRead: Int = 0, unread: Int = 0, total: Int = 0, version: Int) -> ReadInfo {
+        ReadInfo(conversationId: conversationId, lastReadMessageId: lastRead, unreadCount: unread, totalUnreadCount: total, changeVersion: version)
     }
 }
 

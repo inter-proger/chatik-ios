@@ -304,6 +304,41 @@ final class ChatListViewModelTests: XCTestCase {
         XCTAssertEqual(recorder.ids, [2])
     }
 
+    /// Кейс: строки показаны; затем у одной переписки изменился счётчик непрочитанных для показа (отметка прочтения).
+    /// Ожидание: заново собрана только её строка — со счётчиком; у остальных счётчика нет.
+    func test_conversations_unreadCountChanged_rebuildsRowWithBadge() async {
+        let recorder = RowBuildRecorder()
+        await replaceSUT(makeSUT(now: { ServerTime.stub.date }, makeRow: recorder.build))
+        conversationList.conversations = [.make(id: 1), .make(id: 2)]
+        await observeRows()
+        recorder.ids = []
+        recorder.unreadCounts = []
+
+        conversationList.unreadCounts[2] = 150
+        await yieldUntil { [unowned self] in sut.conversations.last?.unreadCountText != nil }
+        await yieldTimes()
+
+        XCTAssertEqual(recorder.ids, [2])
+        XCTAssertEqual(recorder.unreadCounts, [150])
+        XCTAssertEqual(sut.conversations.map(\.unreadCountText), [nil, "99+"])
+        XCTAssertEqual(sut.conversations.last?.unreadAccessibilityLabel?.hasPrefix("150"), true)
+    }
+
+    /// Кейс: общий счётчик непрочитанных 0, 7 и 120.
+    /// Ожидание: у заголовка «Чаты» счётчика нет, затем «7», затем «99+».
+    func test_totalUnreadText_formatsCount() {
+        let cases: [(count: Int, text: String?)] = [
+            (0, nil),
+            (7, "7"),
+            (120, "99+"),
+        ]
+
+        for testCase in cases {
+            conversationList.totalUnreadCount = testCase.count
+            XCTAssertEqual(sut.totalUnreadText, testCase.text, "\(testCase.count)")
+        }
+    }
+
     /// Кейс: строка личной переписки показана, пока собеседник грузится; затем собеседник загрузился.
     /// Ожидание: строка собрана заново — с именем собеседника.
     func test_conversations_opponentLoaded_rebuildsRow() async {
@@ -691,7 +726,9 @@ final class ChatListViewModelTests: XCTestCase {
             messageNotifications: messageNotifications,
             router: router,
             now: now,
-            makeRow: makeRow ?? { ChatRowDisplayModel(conversation: $0, opponent: $1, localPreview: $2, timeFormatter: $3) },
+            makeRow: makeRow ?? {
+                ChatRowDisplayModel(conversation: $0, opponent: $1, localPreview: $2, unreadCount: $3, timeFormatter: $4)
+            },
             sleep: { [sleeper] in try await sleeper!.sleep($0) }
         )
     }
@@ -746,22 +783,29 @@ private final class RowBuildRecorder {
     var ids: [Int] = []
     /// Локальные состояния, с которыми собраны строки, по порядку.
     var localPreviews: [ChatRowLocalPreview?] = []
+    /// Счётчики непрочитанных, с которыми собраны строки, по порядку.
+    var unreadCounts: [Int] = []
 
     /// Собирает строку настоящей сборкой и запоминает её id и локальное состояние.
     /// - Parameters:
     ///   - conversation: переписка.
     ///   - opponent: собеседник из кэша.
     ///   - localPreview: неотправленное сообщение или черновик переписки.
+    ///   - unreadCount: непрочитанные для показа.
     ///   - timeFormatter: формат времени.
     func build(
         _ conversation: Conversation,
         _ opponent: CachedUser?,
         _ localPreview: ChatRowLocalPreview?,
+        _ unreadCount: Int,
         _ timeFormatter: MessageTimeFormatter
     ) -> ChatRowDisplayModel {
         ids.append(conversation.id)
         localPreviews.append(localPreview)
-        return ChatRowDisplayModel(conversation: conversation, opponent: opponent, localPreview: localPreview, timeFormatter: timeFormatter)
+        unreadCounts.append(unreadCount)
+        return ChatRowDisplayModel(
+            conversation: conversation, opponent: opponent, localPreview: localPreview, unreadCount: unreadCount, timeFormatter: timeFormatter
+        )
     }
 }
 

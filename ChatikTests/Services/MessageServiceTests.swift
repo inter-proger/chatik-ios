@@ -81,13 +81,15 @@ final class MessageServiceTests: XCTestCase {
     }
 
     /// Кейс: отправка текстового сообщения в переписку.
-    /// Ожидание: POST /messages/send с `conversationId`, `text` и `clientId`, наружу отдано сообщение из поля `message`.
-    func test_send_requestsEndpointAndUnwrapsMessage() async throws {
-        networkService.stubbedResult = .success(MessageResponse(message: .stub))
+    /// Ожидание: POST /messages/send с `conversationId`, `text` и `clientId`, наружу отдан ответ целиком —
+    /// сообщение и прочтение для отправителя.
+    func test_send_requestsEndpointAndReturnsResponse() async throws {
+        let expected = MessageResponse(message: .stub, readInfo: .make(conversationId: 1, lastRead: 15, total: 2, version: 9))
+        networkService.stubbedResult = .success(expected)
 
-        let message = try await sut.send(conversationId: 1, text: "Привет!", clientId: "abc-1")
+        let response = try await sut.send(conversationId: 1, text: "Привет!", clientId: "abc-1")
 
-        XCTAssertEqual(message, .stub)
+        XCTAssertEqual(response, expected)
         let endpoint = try XCTUnwrap(networkService.requestedEndpoints.first)
         XCTAssertEqual(endpoint.path, "/messages/send")
         XCTAssertEqual(endpoint.method, .post)

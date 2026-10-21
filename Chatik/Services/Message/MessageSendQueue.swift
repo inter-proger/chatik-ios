@@ -341,9 +341,9 @@ final class MessageSendQueue: MessageSendQueueProtocol {
         guard let message = outgoingMessages.first(where: { $0.clientId == clientId }),
               message.status == .sending else { return }
         do {
-            let sent = try await messageService.send(conversationId: message.conversationId, text: message.text, clientId: clientId)
+            let response = try await messageService.send(conversationId: message.conversationId, text: message.text, clientId: clientId)
             guard !Task.isCancelled else { return }
-            confirm(sent)
+            confirm(response.message, readInfo: response.readInfo)
         } catch {
             guard !Task.isCancelled else { return }
             handleFailure(clientId: clientId, error: error)
@@ -355,9 +355,11 @@ final class MessageSendQueue: MessageSendQueueProtocol {
     /// копию удаляет из БД кэш в той же записи; если кэш запись отбросил (он уже в выходе), копию удаляет очередь —
     /// иначе её не удалил бы никто. При ошибке записи копия остаётся в статусе «отправляется»: при следующей загрузке
     /// очередь отправит её повторно с тем же `clientId`, и серверное сообщение попадёт в кэш.
-    /// - Parameter message: созданное сервером сообщение.
-    private func confirm(_ message: Message) {
-        positionUpdater.applySentMessage(message)
+    /// - Parameters:
+    ///   - message: созданное сервером сообщение.
+    ///   - readInfo: прочтение переписки для отправителя из того же ответа.
+    private func confirm(_ message: Message, readInfo: ReadInfo?) {
+        positionUpdater.applySentMessage(message, readInfo: readInfo)
         subscribers.values.forEach { $0.yield(message) }
         removeConfirmed(by: [message])
         write("сохранить отправленное сообщение") { [messageCache, outgoingMessageStorage] in
@@ -405,9 +407,9 @@ final class MessageSendQueue: MessageSendQueueProtocol {
     /// - Parameter event: событие реального времени.
     private func handle(_ event: RealtimeEvent) {
         switch event {
-        case let .messageReceived(message, _), let .messageEdited(message, _):
+        case let .messageReceived(message, _, _), let .messageEdited(message, _, _):
             removeConfirmed(by: [message])
-        case .connected, .conversationCreated:
+        case .connected, .conversationCreated, .conversationRead:
             break
         }
     }

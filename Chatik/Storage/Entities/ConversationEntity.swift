@@ -26,6 +26,10 @@ final class ConversationEntity: NSManagedObject, StorageEntity {
     @NSManaged var positionUpdatedAt: Int64
     /// `updatedInfoAt` в миллисекундах.
     @NSManaged var updatedInfoAt: Int64
+    /// Поля `ConversationReadState`; до миграции записи их не было — после неё они 0 до полной загрузки списка.
+    @NSManaged var unreadCount: Int64
+    @NSManaged var lastReadMessageId: Int64
+    @NSManaged var changeVersion: Int64
 
     static let idKey = "conversationId"
     static let positionKey = "positionUpdatedAt"
@@ -49,6 +53,9 @@ final class ConversationEntity: NSManagedObject, StorageEntity {
         lastMessageUpdatedAt = conversation.lastMessage.map { NSNumber(value: $0.updatedAt.milliseconds) }
         positionUpdatedAt = conversation.positionUpdatedAt.milliseconds
         updatedInfoAt = conversation.updatedInfoAt.milliseconds
+        unreadCount = Int64(conversation.readState.unreadCount)
+        lastReadMessageId = Int64(conversation.readState.lastReadMessageId)
+        changeVersion = Int64(conversation.readState.changeVersion)
     }
 
     /// Сохраняет переписки вместе с аватарами в контексте (upsert по `conversationId`), не вызывая `save()`.
@@ -97,7 +104,12 @@ extension Conversation {
             opponentUserId: entity.opponentUserId?.intValue,
             lastMessage: lastMessage,
             positionUpdatedAt: ServerTime(milliseconds: entity.positionUpdatedAt),
-            updatedInfoAt: ServerTime(milliseconds: entity.updatedInfoAt)
+            updatedInfoAt: ServerTime(milliseconds: entity.updatedInfoAt),
+            readState: ConversationReadState(
+                unreadCount: Int(entity.unreadCount),
+                lastReadMessageId: Int(entity.lastReadMessageId),
+                changeVersion: Int(entity.changeVersion)
+            )
         )
     }
 }

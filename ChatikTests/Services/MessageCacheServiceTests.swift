@@ -31,7 +31,7 @@ final class MessageCacheServiceTests: XCTestCase {
         var changes = await sut.changes(conversationId: 1).makeAsyncIterator()
         let message = Message.make(id: 2, createdAt: .stub(5000))
 
-        await sut.handle(.messageReceived(message, LastMessage(message: message)))
+        await sut.handle(.messageReceived(message, LastMessage(message: message), nil))
 
         let change = await changes.next()
         guard case let .upserted(published) = change else { return XCTFail("Ожидалось upserted, получено \(String(describing: change))") }
@@ -51,7 +51,7 @@ final class MessageCacheServiceTests: XCTestCase {
         try await outgoingStorage.save(message: .stub(clientId: "c1", senderId: 1))
         let message = Message.make(id: 2, senderId: 1, clientId: "c1", createdAt: .stub(5000))
 
-        await sut.handle(.messageReceived(message, LastMessage(message: message)))
+        await sut.handle(.messageReceived(message, LastMessage(message: message), nil))
         await sut.waitForWrites()
 
         let stored = try await storage.fetchLatestBlocks(conversationId: 1, minCount: 10)
@@ -68,7 +68,7 @@ final class MessageCacheServiceTests: XCTestCase {
         try await makeSynced(page: [.make(id: 5)])
         let edited = Message.make(id: 1, updatedAt: .stub(9000))
 
-        await sut.handle(.messageEdited(edited, nil))
+        await sut.handle(.messageEdited(edited, nil, changeVersion: nil))
         await sut.waitForWrites()
 
         let stored = try await storage.fetchLatestBlocks(conversationId: 1, minCount: 10)
@@ -86,11 +86,11 @@ final class MessageCacheServiceTests: XCTestCase {
         gated.gate = gate
         let messages = (1...3).map { Message.make(id: $0) }
 
-        await sut.handle(.messageReceived(messages[0], LastMessage(message: messages[0])))
+        await sut.handle(.messageReceived(messages[0], LastMessage(message: messages[0]), nil))
         await waitUntil { gate.isWaiting }
         gated.gate = nil
-        await sut.handle(.messageReceived(messages[1], LastMessage(message: messages[1])))
-        await sut.handle(.messageReceived(messages[2], LastMessage(message: messages[2])))
+        await sut.handle(.messageReceived(messages[1], LastMessage(message: messages[1]), nil))
+        await sut.handle(.messageReceived(messages[2], LastMessage(message: messages[2]), nil))
         gate.open()
 
         let first = await changes.next()
@@ -152,7 +152,7 @@ final class MessageCacheServiceTests: XCTestCase {
         monitor.connect()
         let token = await sut.beginSync(conversationId: 1)
         let missed = Message.make(id: 2)
-        await sut.handle(.messageReceived(missed, LastMessage(message: missed)))
+        await sut.handle(.messageReceived(missed, LastMessage(message: missed), nil))
 
         try await sut.applySync(.reset(firstPage: page([.make(id: 1)])), token: token)
 
@@ -166,7 +166,7 @@ final class MessageCacheServiceTests: XCTestCase {
         monitor.connect()
         let token = await sut.beginSync(conversationId: 1)
         let other = Message.make(id: 9, conversationId: 2)
-        await sut.handle(.messageReceived(other, LastMessage(message: other)))
+        await sut.handle(.messageReceived(other, LastMessage(message: other), nil))
 
         try await sut.applySync(.reset(firstPage: page([])), token: token)
 
@@ -444,7 +444,7 @@ final class MessageCacheServiceTests: XCTestCase {
 
         await sut.prepareForLogout()
         let message = Message.make(id: 2)
-        await sut.handle(.messageReceived(message, LastMessage(message: message)))
+        await sut.handle(.messageReceived(message, LastMessage(message: message), nil))
         await sut.waitForWrites()
 
         let isSynced = await sut.isSynced(conversationId: 1)

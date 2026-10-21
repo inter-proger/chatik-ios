@@ -18,18 +18,22 @@ enum ConversationEndpoint: Endpoint {
     case getList(filter: ConversationListFilter, count: Int?)
     /// GET /conversations/getBatch — переписки по списку id (от 1 до `maxBatchCount`). Ответ: `ConversationsBatch`.
     case getBatch(ids: [Int])
+    /// POST /conversations/markRead — отметка прочтения сообщений переписки до `messageId` включительно.
+    /// Идемпотентен: повтор или более старый `messageId` возвращает текущее прочтение. Ответ: `ReadInfoResponse`.
+    case markRead(conversationId: Int, messageId: Int)
 
     var path: String {
         switch self {
         case .createSingle: return "/conversations/createSingle"
         case .getList: return "/conversations/getList"
         case .getBatch: return "/conversations/getBatch"
+        case .markRead: return "/conversations/markRead"
         }
     }
 
     var method: HTTPMethod {
         switch self {
-        case .createSingle: return .post
+        case .createSingle, .markRead: return .post
         case .getList, .getBatch: return .get
         }
     }
@@ -44,6 +48,8 @@ enum ConversationEndpoint: Endpoint {
             return parameters
         case let .getBatch(ids):
             return ["conversationIds": ids.map(String.init).joined(separator: ",")]
+        case let .markRead(conversationId, messageId):
+            return ["conversationId": String(conversationId), "messageId": String(messageId)]
         }
     }
 
@@ -60,9 +66,8 @@ enum ConversationEndpoint: Endpoint {
         case let .positionUpdatedAfter(time, offset):
             parameters["positionUpdatedAfter"] = String(max(0, time.milliseconds))
             parameters["offset"] = offset.map(String.init)
-        case let .updatedInfoAfter(time, afterId):
-            parameters["updatedInfoAfter"] = String(max(0, time.milliseconds))
-            parameters["updatedInfoAfterId"] = afterId.map(String.init)
+        case let .changedAfter(version):
+            parameters["changedAfter"] = String(max(0, version))
         }
         return parameters
     }

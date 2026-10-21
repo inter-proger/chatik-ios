@@ -14,6 +14,8 @@ final class MessageServiceMock: MessageServiceProtocol, @unchecked Sendable {
     /// Ответы на последовательные запросы блоков; когда очередь пуста — ошибка.
     var stubbedBatches: [Result<MessageBlocksBatch, Error>] = []
     var stubbedSentMessage: Result<Message, Error> = .failure(NetworkError.missingResponse)
+    /// Прочтение в каждом успешном ответе на отправку.
+    var stubbedSentReadInfo: ReadInfo?
     private(set) var pageRequests: [(conversationId: Int, filter: MessageListFilter)] = []
     private(set) var blockRequests: [[Int]] = []
     private(set) var sentRequests: [(conversationId: Int, text: String, clientId: String)] = []
@@ -42,11 +44,11 @@ final class MessageServiceMock: MessageServiceProtocol, @unchecked Sendable {
         return try result.get()
     }
 
-    func send(conversationId: Int, text: String, clientId: String) async throws -> Message {
+    func send(conversationId: Int, text: String, clientId: String) async throws -> MessageResponse {
         sentRequests.append((conversationId, text, clientId))
         let result = stubbedSentMessages.isEmpty ? stubbedSentMessage : stubbedSentMessages.removeFirst()
         await onSend?()
-        return try result.get()
+        return MessageResponse(message: try result.get(), readInfo: stubbedSentReadInfo)
     }
 
     func edit(messageId: Int, newText: String) async throws -> MessageEditResult {

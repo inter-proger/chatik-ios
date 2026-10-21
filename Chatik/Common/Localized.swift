@@ -21,4 +21,28 @@ enum Localized {
     static func string(_ key: String, table: String) -> String {
         DIContainer.shared.localizationService.bundle.localizedString(forKey: key, value: nil, table: table)
     }
+
+    /// Возвращает строку текущего языка с числом в нужной форме множественного числа (`.stringsdict` той же таблицы).
+    /// Число подставляется с локалью языка приложения: иначе форма выбиралась бы по системному языку.
+    /// - Parameters:
+    ///   - key: ключ в `.stringsdict`.
+    ///   - table: имя таблицы.
+    ///   - count: число.
+    @MainActor
+    static func plural(_ key: String, table: String, count: Int) -> String {
+        let localization = DIContainer.shared.localizationService
+        return plural(key, table: table, count: count, bundle: localization.bundle, locale: localization.language.locale)
+    }
+
+    /// Строка с числом в нужной форме множественного числа из `.stringsdict` указанного бандла языка.
+    /// - Parameters:
+    ///   - key: ключ в `.stringsdict`.
+    ///   - table: имя таблицы.
+    ///   - count: число.
+    ///   - bundle: бандл языка (`<lang>.lproj`).
+    ///   - locale: локаль того же языка — по ней выбирается форма.
+    static func plural(_ key: String, table: String, count: Int, bundle: Bundle, locale: Locale) -> String {
+        let format = bundle.localizedString(forKey: key, value: nil, table: table)
+        return String(format: format, locale: locale, count)
+    }
 }

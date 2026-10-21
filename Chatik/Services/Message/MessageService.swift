@@ -11,7 +11,7 @@ protocol MessageServiceProtocol: Sendable {
     /// Возвращает блоки сообщений целиком.
     func fetchBlocks(ids: [Int]) async throws -> MessageBlocksBatch
     /// Отправляет текстовое сообщение в переписку; повтор с тем же `clientId` не создаёт дубль.
-    func send(conversationId: Int, text: String, clientId: String) async throws -> Message
+    func send(conversationId: Int, text: String, clientId: String) async throws -> MessageResponse
     /// Заменяет текст своего сообщения.
     func edit(messageId: Int, newText: String) async throws -> MessageEditResult
 }
@@ -48,11 +48,9 @@ final class MessageService: MessageServiceProtocol {
     ///     длиной 1–4096 символов, иначе ошибка 1005.
     ///   - clientId: идентификатор, сгенерированный клиентом до отправки (UUID). Повтор запроса с тем же `clientId`
     ///     в этой переписке возвращает уже созданное сообщение; использованный в другой переписке — ошибка 6004.
-    /// - Returns: созданное сообщение (или созданное раньше с тем же `clientId`).
-    func send(conversationId: Int, text: String, clientId: String) async throws -> Message {
-        let endpoint = MessageEndpoint.send(conversationId: conversationId, text: text, clientId: clientId)
-        let response: MessageResponse = try await networkService.request(endpoint)
-        return response.message
+    /// - Returns: созданное сообщение (или созданное раньше с тем же `clientId`) и прочтение переписки для отправителя.
+    func send(conversationId: Int, text: String, clientId: String) async throws -> MessageResponse {
+        try await networkService.request(MessageEndpoint.send(conversationId: conversationId, text: text, clientId: clientId))
     }
 
     /// Редактирует сообщение через `POST /messages/edit`.

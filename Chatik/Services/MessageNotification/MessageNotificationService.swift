@@ -101,7 +101,7 @@ final class MessageNotificationService: MessageNotificationServiceProtocol {
     /// Отсекает всё, кроме нового чужого сообщения в неоткрытой переписке, и запускает подготовку. Не ждёт.
     /// - Parameter event: событие реального времени.
     private func handle(_ event: RealtimeEvent) {
-        guard case let .messageReceived(message, _) = event else { return }
+        guard case let .messageReceived(message, _, _) = event else { return }
         guard let userId = sessionService.currentUser?.userId, message.senderId != userId else { return }
         guard !navigator.isConversationOpen(message.conversationId) else { return }
         cancelPreparation()

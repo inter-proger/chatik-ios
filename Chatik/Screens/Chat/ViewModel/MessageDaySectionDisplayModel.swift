@@ -21,4 +21,7 @@ struct MessageDaySectionDisplayModel: Identifiable, Equatable, Sendable {
     let title: String
     /// Сообщения, сначала самые новые.
     let messages: [MessageDisplayModel]
+    /// Первое непрочитанное сообщение секции: над ним стоит заголовок «Непрочитанные сообщения». `nil` — заголовка
+    /// в секции нет.
+    var unreadHeaderBefore: MessageClientKey?
 }

@@ -59,7 +59,7 @@ final class ConversationServiceTests: XCTestCase {
     /// Кейс: запрос первой страницы списка без фильтра и без размера.
     /// Ожидание: GET /conversations/getList без параметров — сервер применит значения по умолчанию; страница возвращена.
     func test_fetchConversations_withoutParameters_requestsGetListWithoutQueryItems() async throws {
-        let expected = ConversationsPage(conversations: [.singleStub], hasNext: false)
+        let expected = ConversationsPage(conversations: [.singleStub], hasNext: false, totalUnreadCount: 2, changeVersion: 5)
         networkService.stubbedResult = .success(expected)
 
         let page = try await sut.fetchConversations(filter: .none(offset: nil), count: nil)
@@ -78,10 +78,10 @@ final class ConversationServiceTests: XCTestCase {
             (.none(offset: 30), ["offset": "30", "count": "30"]),
             (.positionUpdatedAfter(ServerTime(milliseconds: 1_790_846_400_123), offset: nil), ["positionUpdatedAfter": "1790846400123", "count": "30"]),
             (.positionUpdatedAfter(ServerTime(milliseconds: 5), offset: 30), ["positionUpdatedAfter": "5", "offset": "30", "count": "30"]),
-            (.updatedInfoAfter(ServerTime(milliseconds: 7), afterId: nil), ["updatedInfoAfter": "7", "count": "30"]),
-            (.updatedInfoAfter(ServerTime(milliseconds: 7), afterId: 12), ["updatedInfoAfter": "7", "updatedInfoAfterId": "12", "count": "30"]),
+            (.changedAfter(0), ["changedAfter": "0", "count": "30"]),
+            (.changedAfter(118), ["changedAfter": "118", "count": "30"]),
         ]
-        networkService.stubbedResult = .success(ConversationsPage(conversations: [], hasNext: false))
+        networkService.stubbedResult = .success(ConversationsPage(conversations: [], hasNext: false, totalUnreadCount: 0, changeVersion: 0))
 
         for testCase in cases {
             _ = try await sut.fetchConversations(filter: testCase.filter, count: 30)
@@ -90,10 +90,25 @@ final class ConversationServiceTests: XCTestCase {
         XCTAssertEqual(networkService.requestedEndpoints.map(\.parameters), cases.map(\.parameters))
     }
 
+    /// Кейс: отметка прочтения переписки до сообщения.
+    /// Ожидание: POST /conversations/markRead с `conversationId` и `messageId`; наружу — `readInfo` из ответа.
+    func test_markRead_postsAndUnwrapsReadInfo() async throws {
+        let expected = ReadInfo.make(conversationId: 1, lastRead: 15, unread: 0, total: 3, version: 118)
+        networkService.stubbedResult = .success(ReadInfoResponse(readInfo: expected))
+
+        let readInfo = try await sut.markRead(conversationId: 1, messageId: 15)
+
+        XCTAssertEqual(readInfo, expected)
+        let endpoint = try XCTUnwrap(networkService.requestedEndpoints.first)
+        XCTAssertEqual(endpoint.path, "/conversations/markRead")
+        XCTAssertEqual(endpoint.method, .post)
+        XCTAssertEqual(endpoint.parameters, ["conversationId": "1", "messageId": "15"])
+    }
+
     /// Кейс: метка фильтра после вычета запаса синхронизации стала отрицательной.
     /// Ожидание: в запрос уходит 0 — отрицательное значение сервер отклонил бы ошибкой 1004.
     func test_fetchConversations_negativeTime_isClampedToZero() async throws {
-        networkService.stubbedResult = .success(ConversationsPage(conversations: [], hasNext: false))
+        networkService.stubbedResult = .success(ConversationsPage(conversations: [], hasNext: false, totalUnreadCount: 0, changeVersion: 0))
 
         _ = try await sut.fetchConversations(filter: .positionUpdatedAfter(ServerTime(milliseconds: -5000), offset: nil), count: nil)
 

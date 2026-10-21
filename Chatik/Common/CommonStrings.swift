@@ -34,6 +34,12 @@ enum CommonStrings {
     static var errorMessageEditForbidden: String { localized("common.error.api.message_edit_forbidden") }
     static var errorInternalServer: String { localized("common.error.api.internal_server") }
 
+    /// Подпись VoiceOver для счётчика непрочитанных — с точным числом, без «99+».
+    /// - Parameter count: непрочитанные сообщения.
+    static func unreadCount(_ count: Int) -> String {
+        Localized.plural("common.unread_count", table: table, count: count)
+    }
+
     /// Возвращает локализованную строку по ключу из таблицы `Common`.
     /// - Parameter key: ключ в `Common.strings`.
     private static func localized(_ key: String) -> String {

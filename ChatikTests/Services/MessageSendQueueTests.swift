@@ -86,6 +86,22 @@ final class MessageSendQueueTests: XCTestCase {
         subscription.cancel()
     }
 
+    /// Кейс: сервер принял сообщение, в ответе — прочтение переписки для отправителя.
+    /// Ожидание: прочтение передано списку чатов вместе с сообщением.
+    func test_enqueue_success_passesReadInfo() async {
+        let sut = await makeActiveSUT()
+        let sent = Message.make(id: 2, clientId: "c1")
+        let readInfo = ReadInfo.make(conversationId: 1, lastRead: 2, total: 4, version: 30)
+        messageService.stubbedSentMessage = .success(sent)
+        messageService.stubbedSentReadInfo = readInfo
+
+        sut.enqueue(text: "Привет", conversationId: 1)
+        await yieldUntil { [unowned self] in !positionUpdater.sentMessages.isEmpty }
+
+        XCTAssertEqual(positionUpdater.sentMessages, [sent])
+        XCTAssertEqual(positionUpdater.sentReadInfos, [readInfo])
+    }
+
     /// Кейс: сервер отклонил отправку.
     /// Ожидание: переписка в списке чатов не поднимается.
     func test_enqueue_failure_doesNotLiftConversation() async {
@@ -278,7 +294,7 @@ final class MessageSendQueueTests: XCTestCase {
         sut.enqueue(text: "Привет", conversationId: 1)
         await yieldUntil { gate.isWaiting }
 
-        await eventQueue.send(.messageReceived(sent, LastMessage(message: sent)))
+        await eventQueue.send(.messageReceived(sent, LastMessage(message: sent), nil))
 
         await yieldUntil { sut.outgoingMessages.isEmpty }
         gate.open()
@@ -295,7 +311,7 @@ final class MessageSendQueueTests: XCTestCase {
         sut.enqueue(text: "Привет", conversationId: 1)
         await yieldUntil { gate.isWaiting }
 
-        await eventQueue.send(.messageReceived(.make(id: 2, senderId: 2, clientId: "c1"), .make(id: 2)))
+        await eventQueue.send(.messageReceived(.make(id: 2, senderId: 2, clientId: "c1"), .make(id: 2), nil))
         sut.removeConfirmed(by: [.make(id: 3, senderId: 2, clientId: "c1")])
 
         await Task.yield()

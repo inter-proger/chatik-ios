@@ -14,22 +14,13 @@ final class ConversationListServiceTests: XCTestCase {
     private var userCache: UserCacheServiceMock!
     private var sut: ConversationListService!
 
-    /// Состояние загруженного списка: водяные знаки позиции и информации — `ServerTime.stub`.
+    /// Состояние загруженного списка: водяной знак позиции — `ServerTime.stub`, курсор изменений — 10.
     private let loadedState = ConversationListState(
         isLoaded: true,
         hasMorePages: true,
         positionWatermark: .stub,
         positionWatermarkCeiling: nil,
-        infoWatermark: .stub
-    )
-
-    /// Состояние загруженного списка без водяного знака информации: после дельты сверка информации не запускается.
-    private let noInfoState = ConversationListState(
-        isLoaded: true,
-        hasMorePages: true,
-        positionWatermark: .stub,
-        positionWatermarkCeiling: nil,
-        infoWatermark: nil
+        syncedChangeVersion: 10
     )
 
     override func setUp() async throws {
@@ -85,13 +76,13 @@ final class ConversationListServiceTests: XCTestCase {
     // MARK: - Полная загрузка
 
     /// Кейс: первый запуск — кэш пуст, список не загружен; пришёл `connected`.
-    /// Ожидание: первая страница без фильтра заменила список и БД; водяные знаки — максимумы страницы;
-    /// индикатор и аренда сняты.
+    /// Ожидание: первая страница без фильтра заменила список и БД; водяной знак позиции — максимум страницы, курсор
+    /// изменений и общий счётчик — из ответа; индикатор и аренда сняты.
     func test_connected_notLoaded_loadsFirstPage() async {
         await start()
         let newest = Conversation.make(id: 1, position: .stub(50), updatedInfoAt: .stub(5))
         let older = Conversation.make(id: 2, position: .stub(10), updatedInfoAt: .stub(70))
-        conversationService.stubbedPages = [.success(page([newest, older], hasNext: true))]
+        conversationService.stubbedPages = [.success(page([newest, older], hasNext: true, totalUnread: 3))]
 
         await connect()
 
@@ -101,7 +92,8 @@ final class ConversationListServiceTests: XCTestCase {
         XCTAssertTrue(sut.hasMorePages)
         await yieldUntil { [unowned self] in storage.replacements.count == 1 }
         XCTAssertEqual(storage.replacements.first?.state, ConversationListState(
-            isLoaded: true, hasMorePages: true, positionWatermark: .stub(50), positionWatermarkCeiling: nil, infoWatermark: .stub(70)
+            isLoaded: true, hasMorePages: true, positionWatermark: .stub(50), positionWatermarkCeiling: nil,
+            syncedChangeVersion: 10, totalUnreadCount: 3, totalUnreadVersion: 10
         ))
     }
 
@@ -141,7 +133,7 @@ final class ConversationListServiceTests: XCTestCase {
     /// Ожидание: запрос ушёл только после чтения кэша и это дельта позиций; повторный вызов ничего не запрашивает.
     func test_synchronizeIfNeeded_withoutConnected_waitsForCacheAndSyncsOnce() async throws {
         let gate = Gate()
-        storage.stubbedList = .success(([.make(id: 1)], noInfoState))
+        storage.stubbedList = .success(([.make(id: 1)], loadedState))
         storage.onFetchList = { await gate.wait() }
         conversationService.stubbedPages = [.success(page([]))]
         sut.start()
@@ -162,7 +154,7 @@ final class ConversationListServiceTests: XCTestCase {
     /// Кейс: синхронизация в сессии уже была — по `connected`.
     /// Ожидание: `synchronizeIfNeeded()` ничего не запрашивает.
     func test_synchronizeIfNeeded_afterConnectedSync_doesNothing() async throws {
-        await start(cache: [.make(id: 1)], state: noInfoState)
+        await start(cache: [.make(id: 1)], state: loadedState)
         conversationService.stubbedPages = [.success(page([]))]
         await connect()
 
@@ -242,7 +234,7 @@ final class ConversationListServiceTests: XCTestCase {
         sut.apply(.make(id: 2, position: .stub(10)))
         await yieldUntil { [unowned self] in storage.saves.count == 1 }
         gate.open()
-        await eventQueue.send(.messageEdited(.stub, nil))
+        await eventQueue.send(.messageEdited(.stub, nil, changeVersion: nil))
         sut.apply(.make(id: 3, position: .stub(20)))
         await yieldUntil { [unowned self] in storage.saves.count == 2 }
 
@@ -255,24 +247,22 @@ final class ConversationListServiceTests: XCTestCase {
 
     /// Кейс: список загружен; дельта вернула новую переписку и поднявшуюся известную, `hasNext: false`.
     /// Ожидание: запрос — `positionUpdatedAfter` с запасом 5 с; обе переписки встали по позиции, хвост сохранён;
-    /// водяной знак позиции поднят до максимума дельты; запущена сверка информации от сохранённого водяного знака.
-    func test_delta_withoutNext_mergesAndStartsInfoSync() async {
+    /// водяной знак позиции поднят до максимума дельты; запущена сверка изменений от сохранённого курсора.
+    func test_delta_withoutNext_mergesAndStartsChangeSync() async {
         await start(cache: [.make(id: 1, position: .stub(-10)), .make(id: 2, position: .stub(-20))], state: loadedState)
         let lifted = Conversation.make(id: 2, position: .stub(30)).with(position: .stub(30), lastMessage: .make(id: 9, updatedAt: .stub(30)))
-        conversationService.stubbedPages = [
-            .success(page([.make(id: 3, position: .stub(40)), lifted])),
-            .success(page([])),
-        ]
+        conversationService.stubbedPages = [.success(page([.make(id: 3, position: .stub(40)), lifted]))]
+        conversationService.stubbedChangePages = [.success(page([]))]
 
         await connect()
-        await yieldUntil { [unowned self] in conversationService.requests.count == 2 }
+        await yieldUntil { [unowned self] in conversationService.changeRequests.count == 1 }
 
         XCTAssertEqual(sut.conversations.map(\.id), [3, 2, 1])
         XCTAssertEqual(conversationService.requests.map(\.filter), [
             .positionUpdatedAfter(ServerTime.stub.adding(milliseconds: -5000), offset: nil),
-            .updatedInfoAfter(ServerTime.stub.adding(milliseconds: -5000), afterId: nil),
         ])
-        XCTAssertEqual(conversationService.requests.last?.count, ConversationListService.infoPageSize)
+        XCTAssertEqual(conversationService.changeRequests.map(\.filter), [.changedAfter(10)])
+        XCTAssertEqual(conversationService.changeRequests.last?.count, ConversationListService.changesPageSize)
         await yieldUntil { [unowned self] in storage.lastState?.positionWatermark == .stub(40) }
         XCTAssertTrue(storage.replacements.isEmpty)
     }
@@ -298,56 +288,73 @@ final class ConversationListServiceTests: XCTestCase {
         XCTAssertEqual(storage.replacements.first?.state.positionWatermark, .stub(40))
     }
 
-    // MARK: - Сверка информации
+    // MARK: - Сверка изменений
 
     /// Кейс: сверка вернула две страницы: на первой известная переписка с новым названием и неизвестная,
-    /// на второй — ещё одна известная.
-    /// Ожидание: страницы запрошены курсором последней переписки; известные слиты, неизвестная отброшена;
-    /// водяной знак информации — `updatedInfoAt` последней переписки последней страницы.
-    func test_infoSync_pagesWithCursorAndDropsUnknown() async {
+    /// на второй — ещё одна известная; `changeVersion` ответа последней страницы — 16.
+    /// Ожидание: вторая страница запрошена с версией последней переписки первой; известные слиты, неизвестная
+    /// отброшена; курсор — максимум версий последней страницы.
+    func test_changeSync_pagesWithCursorAndDropsUnknown() async {
         await start(cache: [.make(id: 1, position: .stub(-10)), .make(id: 2, position: .stub(-20))], state: loadedState)
-        let renamed = Conversation.make(id: 1, position: .stub(-10)).with(name: "Новое", updatedInfoAt: .stub(10))
-        let unknown = Conversation.make(id: 9, position: .stub(-500), updatedInfoAt: .stub(20))
-        let second = Conversation.make(id: 2, position: .stub(-20)).with(name: "Второе", updatedInfoAt: .stub(30))
-        conversationService.stubbedPages = [
-            .success(page([])),
-            .success(page([renamed, unknown], hasNext: true)),
-            .success(page([second])),
+        let renamed = Conversation.make(id: 1, position: .stub(-10), readState: .make(version: 12)).with(name: "Новое", updatedInfoAt: .stub(10))
+        let unknown = Conversation.make(id: 9, position: .stub(-500), readState: .make(version: 13))
+        let second = Conversation.make(id: 2, position: .stub(-20), readState: .make(version: 15)).with(name: "Второе", updatedInfoAt: .stub(30))
+        conversationService.stubbedPages = [.success(page([]))]
+        conversationService.stubbedChangePages = [
+            .success(page([renamed, unknown], hasNext: true, version: 13)),
+            .success(page([second], version: 16)),
         ]
 
         await connect()
-        await yieldUntil { [unowned self] in storage.lastState?.infoWatermark == .stub(30) }
+        await yieldUntil { [unowned self] in storage.lastState?.syncedChangeVersion == 16 }
 
-        XCTAssertEqual(conversationService.requests.dropFirst().map(\.filter), [
-            .updatedInfoAfter(ServerTime.stub.adding(milliseconds: -5000), afterId: nil),
-            .updatedInfoAfter(.stub(20), afterId: 9),
-        ])
+        XCTAssertEqual(conversationService.changeRequests.map(\.filter), [.changedAfter(10), .changedAfter(13)])
         XCTAssertEqual(sut.conversations.map(\.id), [1, 2])
         XCTAssertEqual(sut.conversations.map(\.name), ["Новое", "Второе"])
     }
 
-    /// Кейс: идёт сверка информации (ждёт ответа второй страницы), пришёл новый `connected`.
+    /// Кейс: первая страница сверки — `hasNext: true`, а вторая не пришла (ошибка сети).
+    /// Ожидание: страница слита, а курсор не сдвинулся — следующая синхронизация повторит сверку с него.
+    func test_changeSync_failedPage_keepsCursor() async {
+        await start(cache: [.make(id: 1)], state: loadedState)
+        conversationService.stubbedPages = [.success(page([]))]
+        conversationService.stubbedChangePages = [
+            .success(page([Conversation.make(id: 1, readState: .make(unread: 2, version: 12))], hasNext: true, version: 14)),
+        ]
+
+        await connect()
+        await yieldUntil { [unowned self] in conversationService.changeRequests.count == 2 }
+        await yieldTimes()
+
+        XCTAssertEqual(sut.conversations.first?.readState.unreadCount, 2)
+        XCTAssertEqual(storage.lastState?.syncedChangeVersion, 10)
+    }
+
+    /// Кейс: идёт сверка изменений (ждёт ответа второй страницы), пришёл новый `connected`.
     /// Ожидание: новая синхронизация прерывает сверку — ответ второй страницы не применяется.
-    func test_infoSync_interruptedByNewSync() async {
+    func test_changeSync_interruptedByNewSync() async {
         await start(cache: [.make(id: 1)], state: loadedState)
         let gate = Gate()
-        let late = Conversation.make(id: 1).with(name: "Опоздавшее", updatedInfoAt: .stub(99))
-        conversationService.stubbedPages = [
-            .success(page([])),
-            .success(page([.make(id: 9, updatedInfoAt: .stub(5))], hasNext: true)),
-            .success(page([late])),
-            .success(page([])),
-            .success(page([])),
+        let late = Conversation.make(id: 1, readState: .make(version: 20)).with(name: "Опоздавшее", updatedInfoAt: .stub(99))
+        conversationService.stubbedPages = [.success(page([])), .success(page([]))]
+        conversationService.stubbedChangePages = [
+            .success(page([.make(id: 9, readState: .make(version: 12))], hasNext: true, version: 12)),
+            .success(page([late], version: 20)),
+            .success(page([], version: 10)),
         ]
+        var isGated = false
         conversationService.onRequest = { [unowned self] in
-            if conversationService.requests.count == 3 { await gate.wait() }
+            // Только вторая страница первой сверки: запрос дельты второй синхронизации не задерживается.
+            guard conversationService.changeRequests.count == 2, !isGated else { return }
+            isGated = true
+            await gate.wait()
         }
         await connect()
         await yieldUntil { gate.isWaiting }
 
         await connect()
         gate.open()
-        await yieldUntil { [unowned self] in conversationService.requests.count == 5 }
+        await yieldUntil { [unowned self] in conversationService.changeRequests.count == 3 }
         await yieldTimes()
 
         XCTAssertEqual(sut.conversations.first?.name, Conversation.make(id: 1).name)
@@ -399,7 +406,7 @@ final class ConversationListServiceTests: XCTestCase {
     /// выше; запланирована синхронизация; потолок записан в БД.
     func test_received_batchFailure_capsWatermarkAndSchedulesSync() async {
         await start(cache: [.make(id: 1, position: .stub(-10))], state: ConversationListState(
-            isLoaded: true, hasMorePages: false, positionWatermark: .stub(200), positionWatermarkCeiling: nil, infoWatermark: .stub
+            isLoaded: true, hasMorePages: false, positionWatermark: .stub(200), positionWatermarkCeiling: nil, syncedChangeVersion: 10
         ))
         conversationService.stubbedBatches = [.failure(NetworkError.transport(URLError(.notConnectedToInternet)))]
 
@@ -415,7 +422,7 @@ final class ConversationListServiceTests: XCTestCase {
     /// Ожидание: дельта запрошена от водяного знака не выше потолка; успешная дельта снимает потолок.
     func test_ceiling_survivesRestartAndIsClearedBySuccessfulDelta() async {
         await start(cache: [.make(id: 1)], state: ConversationListState(
-            isLoaded: true, hasMorePages: false, positionWatermark: .stub(100), positionWatermarkCeiling: .stub(100), infoWatermark: nil
+            isLoaded: true, hasMorePages: false, positionWatermark: .stub(100), positionWatermarkCeiling: .stub(100), syncedChangeVersion: 10
         ))
         conversationService.stubbedPages = [.success(page([.make(id: 5, position: .stub(150))]))]
 
@@ -427,17 +434,16 @@ final class ConversationListServiceTests: XCTestCase {
         XCTAssertNil(storage.lastState?.positionWatermarkCeiling)
     }
 
-    /// Кейс: `singleCreated` с информацией новее водяного знака.
-    /// Ожидание: переписка вставлена; водяной знак позиции поднят, информации — нет: правки, которые находит
-    /// только сверка, не должны пропасть.
-    func test_conversationCreated_raisesOnlyPositionWatermark() async {
+    /// Кейс: `singleCreated` с версией на 1 больше курсора.
+    /// Ожидание: переписка вставлена; водяной знак позиции поднят, курсор изменений — до версии события.
+    func test_conversationCreated_raisesWatermarkAndCursor() async {
         await start(cache: [.make(id: 1, position: .stub(-10))], state: loadedState)
 
-        await eventQueue.send(.conversationCreated(.make(id: 7, position: .stub(60), updatedInfoAt: .stub(60))))
+        await eventQueue.send(.conversationCreated(.make(id: 7, position: .stub(60), readState: .make(version: 11))))
 
         XCTAssertEqual(sut.conversations.map(\.id), [7, 1])
         await yieldUntil { [unowned self] in storage.lastState?.positionWatermark == .stub(60) }
-        XCTAssertEqual(storage.lastState?.infoWatermark, .stub)
+        XCTAssertEqual(storage.lastState?.syncedChangeVersion, 11)
     }
 
     /// Кейс: `edited` с превью по известной переписке; `edited` с превью по неизвестной; `edited` без превью.
@@ -449,7 +455,7 @@ final class ConversationListServiceTests: XCTestCase {
 
         await eventQueue.send(.edited(edited))
         await eventQueue.send(.edited(.make(id: 40, conversationId: 9)))
-        await eventQueue.send(.messageEdited(.make(id: 15, conversationId: 1, text: "Ещё правка"), nil))
+        await eventQueue.send(.messageEdited(.make(id: 15, conversationId: 1, text: "Ещё правка"), nil, changeVersion: nil))
 
         XCTAssertEqual(sut.conversations.map(\.lastMessage?.text), ["Правка"])
         XCTAssertTrue(conversationService.batchRequests.isEmpty)
@@ -462,7 +468,7 @@ final class ConversationListServiceTests: XCTestCase {
     func test_applySentMessage_liftsWithoutWatermark() async {
         await start(cache: [.make(id: 1, position: .stub(-10)), .make(id: 2, position: .stub(-20))], state: loadedState)
 
-        sut.applySentMessage(.make(id: 50, conversationId: 2, createdAt: .stub(500)))
+        sut.applySentMessage(.make(id: 50, conversationId: 2, createdAt: .stub(500)), readInfo: nil)
 
         XCTAssertEqual(sut.conversations.map(\.id), [2, 1])
         await yieldUntil { [unowned self] in storage.saves.contains { $0.conversations.map(\.id) == [2] } }
@@ -481,7 +487,7 @@ final class ConversationListServiceTests: XCTestCase {
         ]
         await start(cache: cache, state: loadedState)
 
-        sut.applySentMessage(.make(id: 50, conversationId: 3, createdAt: .stub(500)))
+        sut.applySentMessage(.make(id: 50, conversationId: 3, createdAt: .stub(500)), readInfo: nil)
         await eventQueue.send(.edited(Message.make(id: 15, conversationId: 1, text: "Правка").withUpdatedAt(.stub(600))))
 
         XCTAssertEqual(sut.conversations.map(\.id), [3, 1, 2])
@@ -494,7 +500,7 @@ final class ConversationListServiceTests: XCTestCase {
         await start(cache: [.make(id: 1, position: .stub(-10))], state: loadedState)
         conversationService.stubbedBatches = [.success(ConversationsBatch(conversations: [.make(id: 5, position: .stub(-900))], notFoundIds: []))]
 
-        sut.applySentMessage(.make(id: 50, conversationId: 5, createdAt: .stub(500)))
+        sut.applySentMessage(.make(id: 50, conversationId: 5, createdAt: .stub(500)), readInfo: nil)
 
         await yieldUntil { [unowned self] in sut.conversations.map(\.id) == [5, 1] }
         XCTAssertEqual(sut.conversations.first?.lastMessage?.messageId, 50)
@@ -510,7 +516,7 @@ final class ConversationListServiceTests: XCTestCase {
         await eventQueue.send(.connected)
         await yieldUntil { gate.isWaiting }
 
-        sut.applySentMessage(.make(id: 50, conversationId: 2, createdAt: .stub(500)))
+        sut.applySentMessage(.make(id: 50, conversationId: 2, createdAt: .stub(500)), readInfo: nil)
         gate.open()
         await yieldUntil { [unowned self] in !sut.isSyncing }
 
@@ -644,7 +650,7 @@ final class ConversationListServiceTests: XCTestCase {
     /// Кейс: страниц больше нет, либо идёт стартовая синхронизация.
     /// Ожидание: следующая страница не запрашивается.
     func test_nextPage_withoutMorePagesOrWhileSyncing_doesNotLoad() async {
-        await start(cache: [.make(id: 1)], state: ConversationListState(isLoaded: true, hasMorePages: false, positionWatermark: .stub, positionWatermarkCeiling: nil, infoWatermark: nil))
+        await start(cache: [.make(id: 1)], state: ConversationListState(isLoaded: true, hasMorePages: false, positionWatermark: .stub, positionWatermarkCeiling: nil, syncedChangeVersion: 10))
         sut.loadNextPageIfNeeded(currentConversationId: 1)
 
         let gate = Gate()
@@ -660,7 +666,7 @@ final class ConversationListServiceTests: XCTestCase {
     /// Кейс: последняя строка показана, пока идёт стартовая синхронизация; дельта список не изменила.
     /// Ожидание: во время синхронизации страница не запрашивается, а после неё — запрашивается без новой прокрутки.
     func test_nextPage_requestedDuringSync_loadsAfterSync() async {
-        await start(cache: [.make(id: 1)], state: noInfoState)
+        await start(cache: [.make(id: 1)], state: loadedState)
         let gate = Gate()
         conversationService.stubbedPages = [.success(page([])), .success(page([.make(id: 2, position: .stub(-10))]))]
         conversationService.onRequest = { [unowned self] in
@@ -688,7 +694,7 @@ final class ConversationListServiceTests: XCTestCase {
             Conversation.make(id: 2, position: .stub(20)),
             Conversation.make(id: 1, position: .stub(10)),
         ]
-        await start(cache: cache, state: noInfoState)
+        await start(cache: cache, state: loadedState)
         let lifted = Conversation.make(id: 1, position: .stub(50)).with(position: .stub(50), lastMessage: .make(id: 7, updatedAt: .stub(50)))
         let newer = Conversation.make(id: 5, position: .stub(-5)).with(position: .stub(-5), lastMessage: .make(id: 8, updatedAt: .stub(-5)))
         let nextPage = [
@@ -715,7 +721,7 @@ final class ConversationListServiceTests: XCTestCase {
             Conversation.make(id: 2, position: .stub(-20)),
             Conversation.make(id: 3, position: .stub(-30)),
         ]
-        await start(cache: cache, state: noInfoState)
+        await start(cache: cache, state: loadedState)
         conversationService.stubbedPages = [.success(page([
             Conversation.make(id: 3, position: .stub(40)).with(position: .stub(40), lastMessage: .make(id: 30, updatedAt: .stub(40))),
             Conversation.make(id: 4, position: .stub(35)),
@@ -729,6 +735,201 @@ final class ConversationListServiceTests: XCTestCase {
         XCTAssertEqual(sut.conversations.map(\.id), [1, 3, 4, 2])
         XCTAssertEqual(sut.conversations.first?.lastMessage?.messageId, 31)
         XCTAssertTrue(conversationService.batchRequests.isEmpty)
+    }
+
+    // MARK: - Курсор изменений и общий счётчик
+
+    /// Кейс: курсор 10; `received` с версией 12 (пропуск 11), затем `read` с версией 11.
+    /// Ожидание: после пропуска курсор стоит на 10, а общий счётчик уже из события; когда пришла 11 — курсор
+    /// растёт сразу до 12.
+    func test_events_advanceCursorByContinuity() async {
+        await start(cache: [.make(id: 1)], state: loadedState)
+
+        await eventQueue.send(.received(.make(id: 30, conversationId: 1, createdAt: .stub(100)), readInfo: .make(conversationId: 1, unread: 1, total: 4, version: 12)))
+        await yieldUntil { [unowned self] in storage.lastState?.totalUnreadCount == 4 }
+        XCTAssertEqual(storage.lastState?.syncedChangeVersion, 10)
+
+        await eventQueue.send(.conversationRead(.make(conversationId: 2, total: 4, version: 11)))
+
+        await yieldUntil { [unowned self] in storage.lastState?.syncedChangeVersion == 12 }
+        XCTAssertEqual(sut.totalUnreadCount, 4)
+    }
+
+    /// Кейс: `read` с версией 15 и общим счётчиком 3, затем запоздавшее `received` с версией 14 и счётчиком 9.
+    /// Ожидание: общий счётчик сливается по своей версии — остаётся 3.
+    func test_totalUnread_olderVersionIgnored() async {
+        await start(cache: [.make(id: 1)], state: loadedState)
+
+        await eventQueue.send(.conversationRead(.make(conversationId: 1, total: 3, version: 15)))
+        await eventQueue.send(.received(.make(id: 30, conversationId: 1, createdAt: .stub(100)), readInfo: .make(conversationId: 1, unread: 1, total: 9, version: 14)))
+
+        XCTAssertEqual(sut.totalUnreadCount, 3)
+    }
+
+    /// Кейс: `read` по переписке, которой нет в списке.
+    /// Ожидание: общий счётчик применён; переписка не загружается и в список не попадает.
+    func test_conversationRead_unknownConversation_updatesTotalOnly() async {
+        await start(cache: [.make(id: 1)], state: loadedState)
+
+        await eventQueue.send(.conversationRead(.make(conversationId: 99, total: 7, version: 11)))
+
+        XCTAssertEqual(sut.totalUnreadCount, 7)
+        XCTAssertEqual(sut.conversations.map(\.id), [1])
+        XCTAssertTrue(conversationService.batchRequests.isEmpty)
+    }
+
+    /// Кейс: ответ на отправку несёт прочтение с версией 11 (на 1 больше курсора).
+    /// Ожидание: прочтение переписки и общий счётчик применены, курсор не двигается — то же придёт событием.
+    func test_applySentMessage_readInfo_appliesWithoutCursor() async {
+        await start(cache: [.make(id: 1, readState: .make(unread: 2, lastRead: 10, version: 10))], state: loadedState)
+
+        sut.applySentMessage(.make(id: 50, conversationId: 1, createdAt: .stub(500)), readInfo: .make(conversationId: 1, lastRead: 50, total: 1, version: 11))
+
+        XCTAssertEqual(sut.readState(conversationId: 1), .make(unread: 0, lastRead: 50, version: 11))
+        XCTAssertEqual(sut.totalUnreadCount, 1)
+        await yieldUntil { [unowned self] in storage.lastState?.totalUnreadCount == 1 }
+        XCTAssertEqual(storage.lastState?.syncedChangeVersion, 10)
+    }
+
+    /// Кейс: список загружен (есть водяной знак позиции), но курсора изменений нет — данные до миграции.
+    /// Ожидание: синхронизация — полная загрузка, а не дельта; курсор — из ответа.
+    func test_missingCursor_loadsFirstPage() async {
+        await start(cache: [.make(id: 1)], state: ConversationListState(isLoaded: true, hasMorePages: false, positionWatermark: .stub))
+        conversationService.stubbedPages = [.success(page([.make(id: 1)], version: 42))]
+
+        await connect()
+
+        XCTAssertEqual(conversationService.requests.map(\.filter), [.none(offset: nil)])
+        await yieldUntil { [unowned self] in storage.replacements.count == 1 }
+        XCTAssertEqual(storage.replacements.first?.state.syncedChangeVersion, 42)
+    }
+
+    // MARK: - Отметка прочтения
+
+    /// Кейс: переписка с 2 непрочитанными, общий счётчик 5; `markRead` до id 20, ответ задержан, затем пришёл.
+    /// Ожидание: сразу — переписка прочитана для показа, общий счётчик без её непрочитанных, подтверждённое прочтение
+    /// прежнее; после ответа — подтверждённое прочтение из ответа, отметка снята; запрос один.
+    func test_markRead_optimisticThenConfirmed() async {
+        await startWithUnread()
+        let gate = Gate()
+        conversationService.onMarkRead = { await gate.wait() }
+        conversationService.stubbedReadInfos = [.success(.make(conversationId: 1, lastRead: 20, total: 3, version: 11))]
+
+        sut.markRead(conversationId: 1, messageId: 20)
+        await yieldUntil { gate.isWaiting }
+
+        XCTAssertEqual(sut.unreadCount(conversationId: 1), 0)
+        XCTAssertEqual(sut.totalUnreadCount, 3)
+        XCTAssertEqual(sut.readState(conversationId: 1)?.unreadCount, 2)
+        gate.open()
+        await yieldUntil { [unowned self] in sut.readState(conversationId: 1)?.lastReadMessageId == 20 }
+        XCTAssertEqual(sut.unreadCount(conversationId: 1), 0)
+        XCTAssertEqual(sut.totalUnreadCount, 3)
+        XCTAssertEqual(conversationService.markReadRequests.map(\.messageId), [20])
+    }
+
+    /// Кейс: `markRead` до 20 в полёте; за это время — отметки до 21 и 22.
+    /// Ожидание: пока первый запрос в полёте, второго нет; после ответа уходит только последняя отметка — до 22.
+    func test_markRead_whileInFlight_sendsLatestAfterResponse() async {
+        await startWithUnread()
+        let gate = Gate()
+        conversationService.onMarkRead = { [unowned self] in
+            if conversationService.markReadRequests.count == 1 { await gate.wait() }
+        }
+        conversationService.stubbedReadInfos = [
+            .success(.make(conversationId: 1, lastRead: 20, total: 3, version: 11)),
+            .success(.make(conversationId: 1, lastRead: 22, total: 3, version: 12)),
+        ]
+
+        sut.markRead(conversationId: 1, messageId: 20)
+        await yieldUntil { gate.isWaiting }
+        sut.markRead(conversationId: 1, messageId: 21)
+        sut.markRead(conversationId: 1, messageId: 22)
+        XCTAssertEqual(conversationService.markReadRequests.map(\.messageId), [20])
+        gate.open()
+
+        await yieldUntil { [unowned self] in sut.readState(conversationId: 1)?.lastReadMessageId == 22 }
+        XCTAssertEqual(conversationService.markReadRequests.map(\.messageId), [20, 22])
+    }
+
+    /// Кейс: `markRead` упал с ошибкой сети; затем экран снова отмечает то же сообщение.
+    /// Ожидание: после ошибки переписка снова непрочитана для показа, общий счётчик прежний; повторная отметка
+    /// уходит на сервер.
+    func test_markRead_failure_restoresUnreadAndAllowsRetry() async {
+        await startWithUnread()
+        conversationService.stubbedReadInfos = [.failure(NetworkError.transport(URLError(.notConnectedToInternet)))]
+
+        sut.markRead(conversationId: 1, messageId: 20)
+        await yieldUntil { [unowned self] in sut.unreadCount(conversationId: 1) == 2 && conversationService.markReadRequests.count == 1 }
+        XCTAssertEqual(sut.totalUnreadCount, 5)
+
+        sut.markRead(conversationId: 1, messageId: 20)
+
+        await yieldUntil { [unowned self] in conversationService.markReadRequests.count == 2 }
+        XCTAssertEqual(conversationService.markReadRequests.map(\.messageId), [20, 20])
+    }
+
+    /// Кейс: `markRead` до сообщения не новее подтверждённого указателя (10).
+    /// Ожидание: запроса нет, счётчики не меняются.
+    func test_markRead_notAboveConfirmed_skipped() async {
+        await startWithUnread()
+
+        sut.markRead(conversationId: 1, messageId: 10)
+
+        XCTAssertTrue(conversationService.markReadRequests.isEmpty)
+        XCTAssertEqual(sut.unreadCount(conversationId: 1), 2)
+    }
+
+    /// Кейс: отметка до 20 в полёте; пришло `received`, созданное сервером раньше неё: указатель 10, 3 непрочитанных.
+    /// Ожидание: подтверждённое прочтение обновлено, но для показа переписка прочитана — отметка не снята, счётчик
+    /// не «мигает».
+    func test_markRead_lowerPointerEvent_keepsOptimistic() async {
+        await startWithUnread()
+        let gate = Gate()
+        conversationService.onMarkRead = { await gate.wait() }
+
+        sut.markRead(conversationId: 1, messageId: 20)
+        await yieldUntil { gate.isWaiting }
+        await eventQueue.send(.received(.make(id: 19, conversationId: 1, createdAt: .stub(100)), readInfo: .make(conversationId: 1, lastRead: 10, unread: 3, total: 6, version: 11)))
+
+        XCTAssertEqual(sut.readState(conversationId: 1)?.unreadCount, 3)
+        XCTAssertEqual(sut.unreadCount(conversationId: 1), 0)
+        gate.open()
+    }
+
+    /// Кейс: переписки 99 нет в списке; `markRead` до id 40, ответ задержан, затем пришёл; затем та же отметка снова.
+    /// Ожидание: пока запрос в полёте — переписка прочитана для показа; после ответа — подтверждённое прочтение
+    /// из ответа, переписка в список не попала; повторная отметка на сервер не уходит.
+    func test_markRead_unlistedConversation_showsReadAndSkipsRepeat() async {
+        await start(cache: [.make(id: 1)], state: loadedState)
+        let gate = Gate()
+        conversationService.onMarkRead = { await gate.wait() }
+        conversationService.stubbedReadInfos = [.success(.make(conversationId: 99, lastRead: 40, total: 2, version: 11))]
+
+        sut.markRead(conversationId: 99, messageId: 40)
+        await yieldUntil { gate.isWaiting }
+
+        XCTAssertNil(sut.readState(conversationId: 99))
+        XCTAssertEqual(sut.unreadCount(conversationId: 99), 0)
+        gate.open()
+        await yieldUntil { [unowned self] in sut.readState(conversationId: 99) != nil }
+        XCTAssertEqual(sut.readState(conversationId: 99), .make(unread: 0, lastRead: 40, version: 11))
+        XCTAssertEqual(sut.unreadCount(conversationId: 99), 0)
+        XCTAssertEqual(sut.conversations.map(\.id), [1])
+        sut.markRead(conversationId: 99, messageId: 40)
+        XCTAssertEqual(conversationService.markReadRequests.map(\.messageId), [40])
+    }
+
+    /// Кейс: по переписке 99 вне списка пришло `read` с версией 12 и 3 непрочитанными, затем — с версией 11 и 0.
+    /// Ожидание: прочтение и счётчик для показа — из более новой версии (3 непрочитанных); старая версия не применена.
+    func test_conversationRead_unlistedConversation_keepsNewestReadState() async {
+        await start(cache: [.make(id: 1)], state: loadedState)
+
+        await eventQueue.send(.conversationRead(.make(conversationId: 99, lastRead: 30, unread: 3, total: 3, version: 12)))
+        await eventQueue.send(.conversationRead(.make(conversationId: 99, lastRead: 25, total: 3, version: 11)))
+
+        XCTAssertEqual(sut.readState(conversationId: 99), .make(unread: 3, lastRead: 30, version: 12))
+        XCTAssertEqual(sut.unreadCount(conversationId: 99), 3)
     }
 
     // MARK: - Pull-to-refresh
@@ -801,6 +1002,14 @@ final class ConversationListServiceTests: XCTestCase {
         ConversationListService(conversationService: conversationService, storage: storage, eventQueue: eventQueue, userCache: userCache)
     }
 
+    /// Запускает сервис над перепиской 1 с 2 непрочитанными (указатель 10, версия 10) и общим счётчиком 5.
+    private func startWithUnread() async {
+        var state = loadedState
+        state.totalUnreadCount = 5
+        state.totalUnreadVersion = 10
+        await start(cache: [.make(id: 1, readState: .make(unread: 2, lastRead: 10, version: 10))], state: state)
+    }
+
     /// Запускает сервис над заданным кэшем и дожидается чтения кэша.
     /// - Parameters:
     ///   - cache: переписки в БД.
@@ -809,7 +1018,7 @@ final class ConversationListServiceTests: XCTestCase {
         storage.stubbedList = .success((cache, state))
         sut.start()
         // Обработчик любого события, кроме `connected`, ждёт чтения кэша; `edited` без превью ничего не меняет.
-        await eventQueue.send(.messageEdited(.stub, nil))
+        await eventQueue.send(.messageEdited(.stub, nil, changeVersion: nil))
     }
 
     /// Доставляет `connected` и ждёт окончания основной фазы синхронизации.
@@ -822,8 +1031,10 @@ final class ConversationListServiceTests: XCTestCase {
     /// - Parameters:
     ///   - conversations: переписки.
     ///   - hasNext: есть ли продолжение.
-    private func page(_ conversations: [Conversation], hasNext: Bool = false) -> ConversationsPage {
-        ConversationsPage(conversations: conversations, hasNext: hasNext)
+    ///   - totalUnread: общий счётчик ответа.
+    ///   - version: `changeVersion` ответа; по умолчанию — 10, как курсор `loadedState`.
+    private func page(_ conversations: [Conversation], hasNext: Bool = false, totalUnread: Int = 0, version: Int = 10) -> ConversationsPage {
+        ConversationsPage(conversations: conversations, hasNext: hasNext, totalUnreadCount: totalUnread, changeVersion: version)
     }
 }
 

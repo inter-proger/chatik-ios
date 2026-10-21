@@ -151,4 +151,57 @@ final class ConversationMergerTests: XCTestCase {
         XCTAssertEqual(afterEdited.conversation.lastMessage?.text, "M16 правка")
         XCTAssertNil(ConversationMerger.merge(.patch(received), into: afterEdited.conversation))
     }
+
+    // MARK: - Правило 4: прочтение
+
+    /// Кейс: полная версия, пакет прочтения и патч с прочтением — с версией прочтения старше, равной и младше локальной.
+    /// Ожидание: прочтение берётся только у строго старшей версии; равная и младшая ничего не меняют.
+    func test_read_takenOnlyFromNewerVersion() throws {
+        let localRead = local.with(readState: .make(unread: 2, lastRead: 10, version: 50))
+        let newer = ConversationReadState.make(unread: 0, lastRead: 15, version: 51)
+        let updates: [(update: ConversationUpdate, expected: ConversationReadState)] = [
+            (.full(localRead.with(readState: newer)), newer),
+            (.read(.make(conversationId: 7, lastRead: 15, unread: 0, version: 51)), newer),
+            (.read(.make(conversationId: 7, lastRead: 15, unread: 0, version: 50)), localRead.readState),
+            (.read(.make(conversationId: 7, lastRead: 15, unread: 0, version: 49)), localRead.readState),
+            (.full(localRead.with(readState: .make(unread: 9, lastRead: 1, version: 50))), localRead.readState),
+        ]
+
+        for (update, expected) in updates {
+            let merged = ConversationMerger.merge(update, into: localRead)?.conversation ?? localRead
+            XCTAssertEqual(merged.readState, expected, "\(update)")
+        }
+    }
+
+    /// Кейс: `received` с прочтением новее локального — патч позиции и `readInfo`.
+    /// Ожидание: взяты и позиция, и прочтение из `readInfo`.
+    func test_patchWithReadInfo_takesPositionAndRead() throws {
+        let localRead = local.with(readState: .make(unread: 0, lastRead: 15, version: 50))
+        var patch = ConversationPatch(conversationId: 7, positionUpdatedAt: .stub(2000), lastMessage: .make(id: 16, updatedAt: .stub(2000)))
+        patch.readInfo = .make(conversationId: 7, lastRead: 15, unread: 1, total: 4, version: 51)
+
+        let result = try XCTUnwrap(ConversationMerger.merge(.patch(patch), into: localRead))
+
+        XCTAssertTrue(result.isPositionChanged)
+        XCTAssertEqual(result.conversation.lastMessage?.messageId, 16)
+        XCTAssertEqual(result.conversation.readState, .make(unread: 1, lastRead: 15, version: 51))
+    }
+
+    /// Кейс: пакет прочтения новее локального, а также полная версия с прочтением новее, но с информацией и позицией
+    /// старше локальных.
+    /// Ожидание: прочтение не трогает позицию и информацию, а старшие позиция и информация не мешают взять прочтение.
+    func test_read_independentFromPositionAndInfo() throws {
+        let localRead = local.with(name: "Новое", updatedInfoAt: .stub(500)).with(readState: .make(unread: 3, version: 50))
+        let stale = Conversation.make(id: 7, position: .stub(10), updatedInfoAt: .stub(1), readState: .make(lastRead: 15, version: 52))
+
+        let afterRead = try XCTUnwrap(ConversationMerger.merge(.read(.make(conversationId: 7, lastRead: 15, version: 51)), into: localRead))
+        let afterStale = try XCTUnwrap(ConversationMerger.merge(.full(stale), into: localRead))
+
+        XCTAssertFalse(afterRead.isPositionChanged)
+        XCTAssertEqual(afterRead.conversation.positionUpdatedAt, localRead.positionUpdatedAt)
+        XCTAssertEqual(afterRead.conversation.name, "Новое")
+        XCTAssertEqual(afterStale.conversation.readState, .make(lastRead: 15, version: 52))
+        XCTAssertEqual(afterStale.conversation.positionUpdatedAt, localRead.positionUpdatedAt)
+        XCTAssertEqual(afterStale.conversation.name, "Новое")
+    }
 }

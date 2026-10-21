@@ -9,15 +9,38 @@ import os
 /// Подъём переписки по ответу `/messages/send` — узкий протокол для очереди отправки.
 @MainActor
 protocol ConversationPositionUpdating: AnyObject {
-    /// Поднимает переписку по сообщению, которое создал сервер в ответ на отправку.
-    func applySentMessage(_ message: Message)
+    /// Поднимает переписку по сообщению, которое создал сервер в ответ на отправку, и применяет прочтение из того же
+    /// ответа: своё сообщение отмечает переписку прочитанной.
+    func applySentMessage(_ message: Message, readInfo: ReadInfo?)
     /// Обновляет превью переписки по ответу `/messages/edit`. Без `lastMessage` ничего не делает.
     /// Переписки нет в списке — не загружает её.
     func applyEditedMessage(_ message: Message, lastMessage: LastMessage?)
 }
 
+/// Общий счётчик непрочитанных — узкий протокол для экранов (и позже бейджа на иконке).
 @MainActor
-protocol ConversationListServiceProtocol: ConversationPositionUpdating, AuthServiceObserver {
+protocol UnreadCountProviding: AnyObject {
+    /// Непрочитанные по всем перепискам с учётом оптимистичных отметок прочтения.
+    var totalUnreadCount: Int { get }
+}
+
+/// Прочтение переписки — узкий протокол для экрана переписки.
+@MainActor
+protocol ConversationReadStateProviding: AnyObject {
+    /// Подтверждённое сервером прочтение переписки, без оптимистичной отметки: из списка, а для переписки вне списка —
+    /// из последнего `ReadInfo` по ней. `nil` — переписки нет в списке и `ReadInfo` по ней не приходил.
+    func readState(conversationId: Int) -> ConversationReadState?
+    /// Непрочитанные переписки для показа: `0`, пока на неё есть неподтверждённая отметка прочтения.
+    /// `nil` — прочтение переписки неизвестно (`readState` — `nil`) и отметки нет.
+    func unreadCount(conversationId: Int) -> Int?
+    /// Отмечает прочитанными сообщения переписки до `messageId` включительно — сразу оптимистично, затем запросом.
+    /// Ничего не делает, если `messageId` не больше подтверждённого указателя и отметки, уже отправленной на сервер.
+    func markRead(conversationId: Int, messageId: Int)
+}
+
+@MainActor
+protocol ConversationListServiceProtocol: ConversationPositionUpdating, UnreadCountProviding, ConversationReadStateProviding,
+    AuthServiceObserver {
     /// Переписки по позиции: `positionUpdatedAt` ↓, `conversationId` ↓.
     var conversations: [Conversation] { get }
     /// Идёт ли стартовая синхронизация — для индикатора «Обновление…».
@@ -31,7 +54,7 @@ protocol ConversationListServiceProtocol: ConversationPositionUpdating, AuthServ
 
     /// Подписывается на очередь событий и запускает чтение кэша из БД. Вызывается до `realtimeService.start()`.
     func start()
-    /// Стартовая синхронизация; прерывает идущую (включая фоновую сверку информации).
+    /// Стартовая синхронизация; прерывает идущую (включая фоновую сверку изменений).
     func synchronize()
     /// Синхронизация при открытии экрана: дожидается чтения кэша и запускает синхронизацию, если в этой сессии её
     /// ещё не было, — список не должен зависеть от того, подключится ли WebSocket. Ошибка пробрасывается;
@@ -52,12 +75,25 @@ protocol ConversationListServiceProtocol: ConversationPositionUpdating, AuthServ
 ///
 /// **Инвариант префикса.** Список в памяти совпадает с переписками в БД и остаётся непрерывным началом серверного
 /// списка (с точностью до переписок, пропавших с сервера, — их убирает только pull-to-refresh). Переписка из события
-/// с новой позицией всегда попадает в префикс; переписка из сверки информации, которой нет локально, отбрасывается.
+/// с новой позицией всегда попадает в префикс; переписка из сверки изменений, которой нет локально, отбрасывается.
 ///
 /// **Синхронизация** запускается событием `connected`, а если его в сессии ещё не было — открытием экрана списка
 /// (`synchronizeIfNeeded()`), чтобы список не зависел от WebSocket: кэш показан сразу, затем дельта позиций
 /// (`positionUpdatedAfter`) под арендой очереди событий; при переполнении дельты хвост инвалидируется, иначе
-/// без аренды идёт сверка информации (`updatedInfoAfter`). Водяные знаки хранятся в БД (`ConversationListState`).
+/// без аренды идёт сверка изменений (`changedAfter`) от курсора `syncedChangeVersion`. Водяной знак позиции и курсор
+/// хранятся в БД (`ConversationListState`).
+///
+/// **Курсор изменений** — версия пользователя, до которой клиент видел все изменения переписок. Полная загрузка ставит
+/// его в `changeVersion` первой страницы, сверка — в максимум последней страницы. События двигают его по правилу
+/// непрерывности: версия выше курсора запоминается в `seenVersions` (только в памяти), и курсор растёт, пока следующая
+/// версия есть в множестве; пропуск доберёт следующая сверка. Ответы REST курсор не двигают — то же изменение придёт
+/// событием.
+///
+/// **Прочтение.** Поля прочтения переписки сливаются по `changeVersion` (`ConversationMerger`), общий счётчик —
+/// по своей версии `totalUnreadVersion`, в том числе из `ReadInfo` переписки, которой нет в списке. Отметка прочтения
+/// (`markRead`) — отдельный слой в памяти (`pendingReads`) поверх подтверждённых полей: пока она не подтверждена,
+/// переписка показывается прочитанной, а общий счётчик — без её непрочитанных. Подтверждение (ответ или событие
+/// с указателем не меньше отметки) и ошибка снимают слой; в полёте не больше одного запроса на переписку.
 ///
 /// **Сдвиг следующей страницы** (`serverLoadedCount`) считается с недобором: повторы безопасны — их уберёт слияние,
 /// пропуск — нет.
@@ -66,8 +102,8 @@ protocol ConversationListServiceProtocol: ConversationPositionUpdating, AuthServ
 final class ConversationListService: ConversationListServiceProtocol {
     /// Размер страницы списка.
     static let pageSize = 30
-    /// Размер страницы сверки информации.
-    static let infoPageSize = 100
+    /// Размер страницы сверки изменений.
+    static let changesPageSize = 100
     /// Запас фильтров синхронизации: время на сервере фиксируется до коммита транзакции, и переписка с чуть меньшим
     /// временем может стать видна чуть позже. Лишние переписки в ответе безвредны — слияние идемпотентно.
     static let syncMargin: Int64 = 5000
@@ -84,6 +120,13 @@ final class ConversationListService: ConversationListServiceProtocol {
 
     var isLoaded: Bool {
         listState.isLoaded
+    }
+
+    var totalUnreadCount: Int {
+        let optimistic = pendingReads.keys.reduce(0) { sum, id in
+            sum + (indexById[id].map { conversations[$0].readState.unreadCount } ?? 0)
+        }
+        return max(0, listState.totalUnreadCount - optimistic)
     }
 
     private let conversationService: ConversationServiceProtocol
@@ -115,7 +158,20 @@ final class ConversationListService: ConversationListServiceProtocol {
     private var sessionGeneration = 0
     /// Основная фаза синхронизации или `refresh()`.
     private var mainTask: Task<Void, Error>?
-    private var infoSyncTask: Task<Void, Never>?
+    private var changeSyncTask: Task<Void, Never>?
+    /// Версии изменений выше курсора, пришедшие в событиях. Только в памяти: после перезапуска курсор не продвинется
+    /// дальше сохранённого, и следующая сверка доберёт разницу.
+    @ObservationIgnored private var seenVersions: Set<Int> = []
+    /// Неподтверждённые отметки прочтения: `conversationId` → `messageId`. Наблюдается — от неё зависят счётчики.
+    private var pendingReads: [Int: Int] = [:]
+    /// Подтверждённое сервером прочтение по последнему `ReadInfo` (по версии) — и для переписок, которых нет в списке:
+    /// для них это единственный источник прочтения, без него счётчик кнопки «вниз» застыл бы на снимке маршрута,
+    /// а отметка уходила бы на сервер при каждой проверке. Наблюдается: читается только для переписок вне списка.
+    private var confirmedReadStates: [Int: ConversationReadState] = [:]
+    /// Запросы `markRead` в полёте — по одному на переписку.
+    @ObservationIgnored private var readTasks: [Int: Task<Void, Never>] = [:]
+    /// Отметки, пришедшие, пока запрос по переписке в полёте; уходят после его ответа (последняя побеждает).
+    @ObservationIgnored private var queuedReads: [Int: Int] = [:]
     private var nextPageTask: Task<Void, Never>?
     /// Загрузки переписок, отсутствующих в списке, по ответу на отправку.
     private var lookupTasks: [UUID: Task<Void, Never>] = [:]
@@ -190,21 +246,27 @@ final class ConversationListService: ConversationListServiceProtocol {
             break
         case let .conversationCreated(conversation):
             applyCreated(conversation)
-        case let .messageReceived(message, lastMessage):
-            await applyReceived(ConversationPatch(message: message, lastMessage: lastMessage))
-        case let .messageEdited(message, lastMessage):
+        case let .conversationRead(readInfo):
+            applyReadInfo(readInfo, from: .event)
+        case let .messageReceived(message, lastMessage, readInfo):
+            await applyReceived(ConversationPatch(message: message, lastMessage: lastMessage, readInfo: readInfo))
+        case let .messageEdited(message, lastMessage, changeVersion):
             guard let lastMessage else { return }
-            persist(upsert(.patch(ConversationPatch(message: message, lastMessage: lastMessage)), insertIfMissing: false))
+            let changed = upsert(.patch(ConversationPatch(message: message, lastMessage: lastMessage)), insertIfMissing: false)
+            if let changeVersion {
+                noteChangeVersion(changeVersion)
+            }
+            persist(changed)
         }
     }
 
     /// Применяет событие `singleCreated`: переписка сливается или встаёт по сортировке. Водяной знак позиции
-    /// поднимается, информации — нет: смену названия и аватара WebSocket не присылает, её находит только сверка,
-    /// и подъём от события пропустил бы правки, сделанные раньше.
+    /// поднимается, курсор изменений — по правилу непрерывности.
     /// - Parameter conversation: созданная переписка.
     private func applyCreated(_ conversation: Conversation) {
         let changed = upsert(.full(conversation), insertIfMissing: true)
         raisePositionWatermark(to: conversation.positionUpdatedAt)
+        noteChangeVersion(conversation.readState.changeVersion)
         persist(changed)
     }
 
@@ -214,18 +276,15 @@ final class ConversationListService: ConversationListServiceProtocol {
     /// - Parameter patch: позиция и превью из события.
     private func applyReceived(_ patch: ConversationPatch) async {
         guard indexById[patch.conversationId] == nil else {
-            let changed = upsert(.patch(patch), insertIfMissing: false)
-            raisePositionWatermark(to: patch.positionUpdatedAt)
-            persist(changed)
+            persist(applyReceivedPatch(patch))
             return
         }
         let session = sessionGeneration
         do {
             let batch = try await conversationService.fetchConversations(ids: [patch.conversationId])
             guard session == sessionGeneration else { return }
-            let inserted = insertFetched(batch, patch: patch)
-            raisePositionWatermark(to: patch.positionUpdatedAt)
-            persist(inserted)
+            insertFetched(batch, patch: patch)
+            persist(applyReceivedPatch(patch))
         } catch {
             guard session == sessionGeneration, !Task.isCancelled else { return }
             Logger.conversationList.error("getBatch по событию не удался: \(String(describing: error), privacy: .public)")
@@ -235,15 +294,24 @@ final class ConversationListService: ConversationListServiceProtocol {
         }
     }
 
-    /// Вставляет переписку из ответа `getBatch` и сливает с ней патч. Переписки нет на сервере — ничего не делает.
+    /// Вставляет переписку из ответа `getBatch`. Переписки нет на сервере — ничего не делает.
     /// - Parameters:
     ///   - batch: ответ `getBatch`.
     ///   - patch: позиция и превью, по которым переписку загружали.
-    /// - Returns: вставленная переписка; `nil` — её нет на сервере.
-    private func insertFetched(_ batch: ConversationsBatch, patch: ConversationPatch) -> Conversation? {
-        guard let fetched = batch.conversations.first(where: { $0.conversationId == patch.conversationId }) else { return nil }
+    private func insertFetched(_ batch: ConversationsBatch, patch: ConversationPatch) {
+        guard let fetched = batch.conversations.first(where: { $0.conversationId == patch.conversationId }) else { return }
         upsert(.full(fetched), insertIfMissing: true)
+    }
+
+    /// Сливает патч `received` с перепиской из списка, поднимает водяной знак позиции и применяет прочтение события.
+    /// - Parameter patch: позиция, превью и прочтение из события.
+    /// - Returns: переписка в итоговой версии; `nil` — её нет в списке.
+    private func applyReceivedPatch(_ patch: ConversationPatch) -> Conversation? {
         upsert(.patch(patch), insertIfMissing: false)
+        raisePositionWatermark(to: patch.positionUpdatedAt)
+        if let readInfo = patch.readInfo {
+            applyReadSideEffects(readInfo, from: .event)
+        }
         return indexById[patch.conversationId].map { conversations[$0] }
     }
 
@@ -252,13 +320,20 @@ final class ConversationListService: ConversationListServiceProtocol {
     /// Поднимает переписку по ответу `/messages/send`, не дожидаясь события. Позднее событие `received` с тем же
     /// сообщением сливается вхолостую. Водяной знак не двигается: при оборванном WebSocket это скрыло бы от дельты
     /// переписки, поднявшиеся раньше. Переписки нет в списке — она загружается через `getBatch`.
-    /// - Parameter message: сообщение, созданное сервером.
-    func applySentMessage(_ message: Message) {
-        let patch = ConversationPatch(message: message)
+    /// Прочтение из ответа сливается по версии, общий счётчик — по своей, курсор не двигается.
+    /// - Parameters:
+    ///   - message: сообщение, созданное сервером.
+    ///   - readInfo: прочтение переписки для отправителя из того же ответа.
+    func applySentMessage(_ message: Message, readInfo: ReadInfo?) {
+        let patch = ConversationPatch(message: message, readInfo: readInfo)
+        if let readInfo {
+            applyReadSideEffects(readInfo, from: .response)
+        }
         guard indexById[patch.conversationId] == nil else {
             applyLocal(.patch(patch))
             return
         }
+        persist(nil)
         lookUpSentConversation(patch)
     }
 
@@ -374,9 +449,9 @@ final class ConversationListService: ConversationListServiceProtocol {
     /// - Returns: поколение новой фазы.
     private func beginMainPhase(showsIndicator: Bool) -> Int {
         mainTask?.cancel()
-        infoSyncTask?.cancel()
+        changeSyncTask?.cancel()
         nextPageTask?.cancel()
-        infoSyncTask = nil
+        changeSyncTask = nil
         nextPageTask = nil
         isLoadingNextPage = false
         syncGeneration += 1
@@ -398,12 +473,13 @@ final class ConversationListService: ConversationListServiceProtocol {
         loadNextPageIfNeeded(currentConversationId: deferredPrefetchId)
     }
 
-    /// Основная фаза синхронизации: полная загрузка, если дельту запросить не от чего, иначе дельта позиций.
+    /// Основная фаза синхронизации: полная загрузка, если дельту запросить не от чего (нет водяного знака позиции
+    /// или курсора изменений — первый старт и данные до миграции), иначе дельта позиций.
     /// - Parameters:
     ///   - generation: поколение фазы.
     ///   - lease: аренда очереди событий.
     private func runMainPhase(generation: Int, lease: RealtimeQueueLease) async throws {
-        guard listState.isLoaded, let watermark = listState.positionWatermark else {
+        guard listState.isLoaded, let watermark = listState.positionWatermark, listState.syncedChangeVersion != nil else {
             try await loadFirstPage(generation: generation, lease: lease)
             return
         }
@@ -425,13 +501,13 @@ final class ConversationListService: ConversationListServiceProtocol {
     }
 
     /// Дельта позиций от водяного знака с запасом. Поднялось больше страницы — хвост инвалидируется: страница с
-    /// фильтром совпадает с началом полного списка. Иначе дельта сливается, и запускается сверка информации.
+    /// фильтром совпадает с началом полного списка. Иначе дельта сливается, и запускается сверка изменений.
     /// - Parameters:
     ///   - watermark: водяной знак позиции.
     ///   - generation: поколение фазы.
     ///   - lease: аренда очереди событий.
     private func loadPositionDelta(from watermark: ServerTime, generation: Int, lease: RealtimeQueueLease) async throws {
-        let infoFrom = listState.infoWatermark
+        let changesFrom = listState.syncedChangeVersion
         let page = try await conversationService.fetchConversations(
             filter: .positionUpdatedAfter(watermark.adding(milliseconds: -Self.syncMargin), offset: nil),
             count: Self.pageSize
@@ -448,13 +524,15 @@ final class ConversationListService: ConversationListServiceProtocol {
         listState.positionWatermarkCeiling = nil
         let changed = upsert(page.conversations.map(ConversationUpdate.full), insertIfMissing: true)
         page.conversations.map(\.positionUpdatedAt).max().map(raisePositionWatermark(to:))
+        applyTotalUnread(of: page)
         persist(changed)
-        startInfoSync(from: infoFrom, generation: generation)
+        startChangeSync(from: changesFrom, generation: generation)
     }
 
     /// Заменяет список и БД первой страницей (полная загрузка или инвалидация хвоста), снимает потолок водяного
-    /// знака и ставит водяные знаки по максимумам страницы. Изменения мимо очереди, пришедшие за время запроса,
-    /// сливаются со страницей заново.
+    /// знака, ставит водяной знак позиции по максимуму страницы, а курсор изменений — в `changeVersion` страницы:
+    /// изменения переписок за её пределами клиенту не нужны, а сделанные позже получат версию больше. Изменения мимо
+    /// очереди, пришедшие за время запроса, сливаются со страницей заново.
     /// - Parameter page: первая страница списка — без фильтра или с `positionUpdatedAfter`.
     private func replaceList(with page: ConversationsPage) {
         setConversations(page.conversations.sorted { $0.isOrderedBefore($1) })
@@ -465,8 +543,12 @@ final class ConversationListService: ConversationListServiceProtocol {
             hasMorePages: page.hasNext,
             positionWatermark: page.conversations.map(\.positionUpdatedAt).max(),
             positionWatermarkCeiling: nil,
-            infoWatermark: page.conversations.map(\.updatedInfoAt).max()
+            syncedChangeVersion: page.changeVersion,
+            totalUnreadCount: listState.totalUnreadCount,
+            totalUnreadVersion: listState.totalUnreadVersion
         )
+        applyTotalUnread(of: page)
+        advanceCursor()
         persistReplacement()
     }
 
@@ -482,6 +564,7 @@ final class ConversationListService: ConversationListServiceProtocol {
             listState.hasMorePages = page.hasNext
             serverLoadedCount = page.conversations.count
         }
+        applyTotalUnread(of: page)
         persist(changed)
     }
 
@@ -495,43 +578,51 @@ final class ConversationListService: ConversationListServiceProtocol {
         Logger.conversationList.error("Синхронизация списка не удалась: \(String(describing: error), privacy: .public)")
     }
 
-    // MARK: - Сверка информации
+    // MARK: - Сверка изменений
 
-    /// Запускает фоновую сверку информации — без аренды и без индикатора.
+    /// Запускает фоновую сверку изменений — без аренды и без индикатора.
     /// - Parameters:
-    ///   - start: водяной знак информации на момент начала синхронизации; `nil` — сверять не от чего.
+    ///   - start: курсор изменений на момент начала синхронизации; `nil` — сверять не от чего.
     ///   - generation: поколение синхронизации.
-    private func startInfoSync(from start: ServerTime?, generation: Int) {
+    private func startChangeSync(from start: Int?, generation: Int) {
         guard let start else { return }
-        infoSyncTask = Task { await runInfoSync(from: start, generation: generation) }
+        changeSyncTask = Task { await runChangeSync(from: start, generation: generation) }
     }
 
-    /// Сверяет информацию постранично курсором `(updatedInfoAt, conversationId)`. Новая синхронизация прерывает
-    /// цикл; ошибка сети просто останавливает его — продолжит следующая синхронизация с сохранённого водяного знака.
+    /// Сверяет изменения постранично: следующая страница — с `changeVersion` последней переписки. Курсор двигается
+    /// только после последней страницы. Новая синхронизация прерывает цикл; ошибка сети просто останавливает его —
+    /// продолжит следующая синхронизация с сохранённого курсора.
     /// - Parameters:
-    ///   - start: водяной знак информации.
+    ///   - start: курсор изменений.
     ///   - generation: поколение синхронизации.
-    private func runInfoSync(from start: ServerTime, generation: Int) async {
-        var filter = ConversationListFilter.updatedInfoAfter(start.adding(milliseconds: -Self.syncMargin), afterId: nil)
+    private func runChangeSync(from start: Int, generation: Int) async {
+        var cursor = start
         while isCurrent(generation), !Task.isCancelled {
-            guard let page = try? await conversationService.fetchConversations(filter: filter, count: Self.infoPageSize),
-                  isCurrent(generation), !Task.isCancelled,
-                  let last = applyInfoPage(page) else { return }
-            guard page.hasNext else { return }
-            filter = .updatedInfoAfter(last.updatedInfoAt, afterId: last.conversationId)
+            guard let page = try? await conversationService.fetchConversations(filter: .changedAfter(cursor), count: Self.changesPageSize),
+                  isCurrent(generation), !Task.isCancelled else { return }
+            applyChangePage(page)
+            guard page.hasNext, let last = page.conversations.last else {
+                finishChangeSync(page)
+                return
+            }
+            cursor = last.readState.changeVersion
         }
     }
 
     /// Сливает страницу сверки с известными переписками (неизвестные отбрасываются — иначе в список попал бы чат
-    /// с далёкой позиции) и двигает водяной знак информации: выдача идёт по возрастанию.
-    /// - Parameter page: страница `updatedInfoAfter`.
-    /// - Returns: последняя переписка страницы — курсор следующей; `nil` — страница пуста.
-    private func applyInfoPage(_ page: ConversationsPage) -> Conversation? {
+    /// с далёкой позиции) и применяет общий счётчик.
+    /// - Parameter page: страница `changedAfter`.
+    private func applyChangePage(_ page: ConversationsPage) {
         let changed = upsert(page.conversations.map(ConversationUpdate.full), insertIfMissing: false)
-        guard let last = page.conversations.last else { return nil }
-        listState.infoWatermark = last.updatedInfoAt
+        applyTotalUnread(of: page)
         persist(changed)
-        return last
+    }
+
+    /// Ставит курсор после последней страницы сверки — в максимум из `changeVersion` ответа и переписок.
+    /// - Parameter page: последняя страница `changedAfter`.
+    private func finishChangeSync(_ page: ConversationsPage) {
+        raiseCursor(to: ([page.changeVersion] + page.conversations.map(\.readState.changeVersion)).max() ?? page.changeVersion)
+        persist(nil)
     }
 
     // MARK: - Пагинация
@@ -575,6 +666,7 @@ final class ConversationListService: ConversationListServiceProtocol {
         let changed = upsert(page.conversations.map(ConversationUpdate.full), insertIfMissing: true)
         serverLoadedCount += page.conversations.count
         listState.hasMorePages = page.hasNext
+        applyTotalUnread(of: page)
         persist(changed)
     }
 
@@ -585,7 +677,7 @@ final class ConversationListService: ConversationListServiceProtocol {
     func authServiceWillLogout() async {
         sessionGeneration += 1
         syncGeneration += 1
-        let tasks: [Task<Void, Never>?] = [infoSyncTask, nextPageTask] + lookupTasks.values.map { $0 }
+        let tasks: [Task<Void, Never>?] = [changeSyncTask, nextPageTask] + lookupTasks.values.map { $0 } + readTasks.values.map { $0 }
         let mainTask = mainTask
         mainTask?.cancel()
         tasks.forEach { $0?.cancel() }
@@ -608,9 +700,14 @@ final class ConversationListService: ConversationListServiceProtocol {
         didStartSync = false
         deferredPrefetchId = nil
         mainTask = nil
-        infoSyncTask = nil
+        changeSyncTask = nil
         nextPageTask = nil
         lookupTasks = [:]
+        seenVersions = []
+        pendingReads = [:]
+        confirmedReadStates = [:]
+        readTasks = [:]
+        queuedReads = [:]
     }
 
     // MARK: - Водяные знаки
@@ -633,6 +730,162 @@ final class ConversationListService: ConversationListServiceProtocol {
         listState.positionWatermark = listState.positionWatermark.map { min($0, ceiling) }
     }
 
+    // MARK: - Курсор изменений и общий счётчик
+
+    /// Правило непрерывности: версия выше курсора запоминается, и курсор растёт, пока следующая версия известна.
+    /// Пока курсора нет (до полной загрузки), события его не двигают.
+    /// - Parameter version: версия изменения из события.
+    private func noteChangeVersion(_ version: Int) {
+        guard let cursor = listState.syncedChangeVersion, version > cursor else { return }
+        seenVersions.insert(version)
+        advanceCursor()
+    }
+
+    /// Поднимает курсор после сверки (не опускает) и продвигает его по запомненным версиям.
+    /// - Parameter version: версия, до которой известны все изменения.
+    private func raiseCursor(to version: Int) {
+        listState.syncedChangeVersion = max(listState.syncedChangeVersion ?? version, version)
+        advanceCursor()
+    }
+
+    /// Продвигает курсор по непрерывному ряду запомненных версий и забывает версии не выше него.
+    private func advanceCursor() {
+        guard var cursor = listState.syncedChangeVersion else { return }
+        while seenVersions.remove(cursor + 1) != nil {
+            cursor += 1
+        }
+        seenVersions = seenVersions.filter { $0 > cursor }
+        listState.syncedChangeVersion = cursor
+    }
+
+    /// Применяет общий счётчик страницы `getList`: он снят на версии ответа.
+    /// - Parameter page: страница списка.
+    private func applyTotalUnread(of page: ConversationsPage) {
+        applyTotalUnread(page.totalUnreadCount, version: page.changeVersion)
+    }
+
+    /// Применяет общий счётчик, если его версия новее локальной.
+    /// - Parameters:
+    ///   - count: непрочитанные по всем перепискам.
+    ///   - version: версия, на которой снят счётчик.
+    private func applyTotalUnread(_ count: Int, version: Int) {
+        guard version > listState.totalUnreadVersion else { return }
+        listState.totalUnreadCount = count
+        listState.totalUnreadVersion = version
+    }
+
+    // MARK: - Прочтение
+
+    /// Откуда пришло прочтение: от события оно двигает курсор изменений, от ответа REST — нет.
+    private enum ReadInfoSource {
+        case event
+        case response
+    }
+
+    /// Подтверждённое прочтение переписки: из списка, а вне списка — из последнего `ReadInfo` по ней.
+    /// - Parameter conversationId: переписка.
+    func readState(conversationId: Int) -> ConversationReadState? {
+        guard let index = indexById[conversationId] else { return confirmedReadStates[conversationId] }
+        return conversations[index].readState
+    }
+
+    /// Непрочитанные для показа: пока на переписку есть неподтверждённая отметка, она прочитана — в том числе вне
+    /// списка.
+    /// - Parameter conversationId: переписка.
+    func unreadCount(conversationId: Int) -> Int? {
+        guard pendingReads[conversationId] == nil else { return 0 }
+        return readState(conversationId: conversationId)?.unreadCount
+    }
+
+    /// Оптимистично отмечает переписку прочитанной до `messageId` и отправляет запрос. Пока по переписке есть запрос
+    /// в полёте, новый id только запоминается и уходит после ответа.
+    /// - Parameters:
+    ///   - conversationId: переписка — в том числе та, которой нет в списке.
+    ///   - messageId: самое новое показанное серверное сообщение.
+    func markRead(conversationId: Int, messageId: Int) {
+        let confirmed = max(
+            readState(conversationId: conversationId)?.lastReadMessageId ?? 0,
+            confirmedReadStates[conversationId]?.lastReadMessageId ?? 0
+        )
+        guard messageId > confirmed, messageId > pendingReads[conversationId] ?? 0 else { return }
+        pendingReads[conversationId] = messageId
+        guard readTasks[conversationId] == nil else {
+            queuedReads[conversationId] = messageId
+            return
+        }
+        sendRead(conversationId: conversationId, messageId: messageId)
+    }
+
+    /// Отправляет `markRead`. Ответ сливается как прочтение из REST; ошибка снимает отметку, если после неё ничего
+    /// не запомнено, — переписка снова непрочитана, и следующая проверка экрана повторит запрос. Затем уходит
+    /// запомненная за время запроса отметка.
+    /// - Parameters:
+    ///   - conversationId: переписка.
+    ///   - messageId: последнее прочитанное сообщение.
+    private func sendRead(conversationId: Int, messageId: Int) {
+        let session = sessionGeneration
+        readTasks[conversationId] = Task {
+            do {
+                let readInfo = try await conversationService.markRead(conversationId: conversationId, messageId: messageId)
+                guard session == sessionGeneration else { return }
+                applyReadInfo(readInfo, from: .response)
+            } catch {
+                guard session == sessionGeneration else { return }
+                Logger.conversationList.error("markRead не удался: \(String(describing: error), privacy: .public)")
+                if queuedReads[conversationId] == nil, pendingReads[conversationId] == messageId {
+                    pendingReads[conversationId] = nil
+                }
+            }
+            readTasks[conversationId] = nil
+            guard let next = queuedReads.removeValue(forKey: conversationId) else { return }
+            sendRead(conversationId: conversationId, messageId: next)
+        }
+    }
+
+    /// Применяет прочтение одной переписки: поля переписки — по версии, общий счётчик — по своей.
+    /// - Parameters:
+    ///   - readInfo: прочтение из события `read` или ответа `markRead`.
+    ///   - source: событие или ответ REST.
+    private func applyReadInfo(_ readInfo: ReadInfo, from source: ReadInfoSource) {
+        applyReadSideEffects(readInfo, from: source)
+        switch source {
+        case .event:
+            persist(upsert(.read(readInfo), insertIfMissing: false))
+        case .response:
+            applyLocal(.read(readInfo))
+        }
+    }
+
+    /// Всё, что `ReadInfo` меняет помимо полей переписки: общий счётчик, подтверждённый указатель, снятие
+    /// подтверждённой отметки и — для события — курсор изменений.
+    /// - Parameters:
+    ///   - readInfo: прочтение.
+    ///   - source: событие или ответ REST.
+    private func applyReadSideEffects(_ readInfo: ReadInfo, from source: ReadInfoSource) {
+        applyTotalUnread(readInfo.totalUnreadCount, version: readInfo.changeVersion)
+        rememberConfirmedReadState(of: readInfo)
+        settlePendingRead(conversationId: readInfo.conversationId, lastReadMessageId: readInfo.lastReadMessageId)
+        guard source == .event else { return }
+        noteChangeVersion(readInfo.changeVersion)
+    }
+
+    /// Запоминает прочтение из `ReadInfo`, если его версия новее запомненной: по нему показывается переписка вне списка.
+    /// - Parameter readInfo: прочтение.
+    private func rememberConfirmedReadState(of readInfo: ReadInfo) {
+        let known = confirmedReadStates[readInfo.conversationId]
+        guard readInfo.changeVersion > known?.changeVersion ?? -1 else { return }
+        confirmedReadStates[readInfo.conversationId] = readInfo.readState
+    }
+
+    /// Снимает отметку прочтения, которую подтвердил указатель не меньше неё.
+    /// - Parameters:
+    ///   - conversationId: переписка.
+    ///   - lastReadMessageId: подтверждённый указатель.
+    private func settlePendingRead(conversationId: Int, lastReadMessageId: Int) {
+        guard let pending = pendingReads[conversationId], lastReadMessageId >= pending else { return }
+        pendingReads[conversationId] = nil
+    }
+
     // MARK: - Список в памяти
 
     /// Сливает пришедшую версию с переписками списка: известная переписка сливается на месте и при смене позиции
@@ -648,6 +901,7 @@ final class ConversationListService: ConversationListServiceProtocol {
             return upsert([update], insertIfMissing: insertIfMissing).first
         }
         guard let result = ConversationMerger.merge(update, into: conversations[index]) else { return nil }
+        settlePendingRead(conversationId: result.conversation.conversationId, lastReadMessageId: result.conversation.readState.lastReadMessageId)
         guard result.isPositionChanged else {
             conversations[index] = result.conversation
             return result.conversation
@@ -674,6 +928,9 @@ final class ConversationListService: ConversationListServiceProtocol {
             batch.apply(update, insertIfMissing: insertIfMissing)
         }
         guard !batch.changedIds.isEmpty else { return [] }
+        for conversation in batch.changedIds.compactMap({ id in batch.indexById[id].map { batch.conversations[$0] } }) {
+            settlePendingRead(conversationId: conversation.conversationId, lastReadMessageId: conversation.readState.lastReadMessageId)
+        }
         if batch.needsSort {
             batch.conversations.sort { $0.isOrderedBefore($1) }
             setConversations(batch.conversations)

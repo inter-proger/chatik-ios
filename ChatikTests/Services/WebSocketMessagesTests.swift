@@ -41,7 +41,7 @@ final class WebSocketMessagesTests: XCTestCase {
         let message = try decode(json)
 
         XCTAssertEqual(message.uid, "7d2b")
-        XCTAssertEqual(message.event, .messageReceived(.stub, .make(id: 15)))
+        XCTAssertEqual(message.event, .messageReceived(.stub, .make(id: 15), nil))
         XCTAssertEqual(message.userIds, [1])
         XCTAssertTrue(message.requiresAcknowledgement)
     }
@@ -59,16 +59,40 @@ final class WebSocketMessagesTests: XCTestCase {
     func test_decode_editedAndConversationCreated() throws {
         let conversationJSON = """
         { "conversationId": 1, "type": "single", "memberIds": [1, 2], "name": null, "avatar": null,
-          "opponentUserId": 2, "lastMessage": null, "positionUpdatedAt": 1790846400000, "updatedInfoAt": 1790846400000 }
+          "opponentUserId": 2, "lastMessage": null, "positionUpdatedAt": 1790846400000, "updatedInfoAt": 1790846400000,
+          "unreadCount": 0, "lastReadMessageId": 0, "changeVersion": 1 }
         """
         let editedLast = try decode(#"{"uid":"1","group":"messages","event":"edited","body":{"message":\#(messageJSON),"lastMessage":\#(lastMessageJSON)}}"#)
         let edited = try decode(#"{"uid":"1","group":"messages","event":"edited","body":{"message":\#(messageJSON)}}"#)
         let created = try decode(#"{"uid":"2","group":"conversations","event":"singleCreated","body":{"conversation":\#(conversationJSON)},"userIds":[1,2]}"#)
 
-        XCTAssertEqual(editedLast.event, .messageEdited(.stub, .make(id: 15)))
-        XCTAssertEqual(edited.event, .messageEdited(.stub, nil))
+        XCTAssertEqual(editedLast.event, .messageEdited(.stub, .make(id: 15), changeVersion: nil))
+        XCTAssertEqual(edited.event, .messageEdited(.stub, nil, changeVersion: nil))
         XCTAssertEqual(edited.userIds, [])
         XCTAssertEqual(created.event, .conversationCreated(.singleStub))
+    }
+
+    /// Кейс: `conversations` / `read`, `received` с `readInfo` и `edited` с `changeVersion` — новые поля прочтения.
+    /// Ожидание: прочтение разобрано в `ReadInfo`, версия правки — в `changeVersion`.
+    func test_decode_readInfoFields() throws {
+        let readInfoJSON = #"{"conversationId":1,"lastReadMessageId":15,"unreadCount":0,"totalUnreadCount":3,"changeVersion":118}"#
+        let read = try decode(#"{"uid":"1","group":"conversations","event":"read","body":{"readInfo":\#(readInfoJSON)}}"#)
+        let received = try decode(#"{"uid":"2","group":"messages","event":"received","body":{"message":\#(messageJSON),"lastMessage":\#(lastMessageJSON),"readInfo":\#(readInfoJSON)}}"#)
+        let edited = try decode(#"{"uid":"3","group":"messages","event":"edited","body":{"message":\#(messageJSON),"lastMessage":\#(lastMessageJSON),"changeVersion":119}}"#)
+        let expected = ReadInfo.make(conversationId: 1, lastRead: 15, unread: 0, total: 3, version: 118)
+
+        XCTAssertEqual(read.event, .conversationRead(expected))
+        XCTAssertTrue(read.requiresAcknowledgement)
+        XCTAssertEqual(received.event, .messageReceived(.stub, .make(id: 15), expected))
+        XCTAssertEqual(edited.event, .messageEdited(.stub, .make(id: 15), changeVersion: 119))
+    }
+
+    /// Кейс: `conversations` / `read` без обязательного поля `ReadInfo`.
+    /// Ожидание: событие `.unknown` — разбор не падает, а неполное прочтение не применяется.
+    func test_decode_readWithMalformedReadInfo_isUnknown() throws {
+        let message = try decode(#"{"uid":"1","group":"conversations","event":"read","body":{"readInfo":{"conversationId":1,"unreadCount":0}}}"#)
+
+        XCTAssertEqual(message.event, .unknown)
     }
 
     /// Кейс: неизвестное событие и известное событие с неразборчивыми данными.

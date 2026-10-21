@@ -14,10 +14,21 @@ final class ConversationServiceMock: ConversationServiceProtocol {
     /// Ответы на последовательные запросы `getBatch`; когда очередь пуста — ошибка.
     var stubbedBatches: [Result<ConversationsBatch, Error>] = []
     private(set) var createSingleUserIds: [Int] = []
-    /// Запросы списка по порядку.
+    /// Запросы списка по порядку — кроме сверки изменений.
     private(set) var requests: [(filter: ConversationListFilter, count: Int?)] = []
+    /// Ответы на последовательные запросы сверки изменений (`changedAfter`); когда очередь пуста — ошибка. Отдельно
+    /// от `stubbedPages`: сверка идёт в фоне после дельты и не должна забирать ответы других запросов.
+    var stubbedChangePages: [Result<ConversationsPage, Error>] = []
+    /// Запросы сверки изменений по порядку.
+    private(set) var changeRequests: [(filter: ConversationListFilter, count: Int?)] = []
     /// Запросы `getBatch` по порядку.
     private(set) var batchRequests: [[Int]] = []
+    /// Ответы на последовательные `markRead`; когда очередь пуста — ошибка.
+    var stubbedReadInfos: [Result<ReadInfo, Error>] = []
+    /// Запросы `markRead` по порядку.
+    private(set) var markReadRequests: [(conversationId: Int, messageId: Int)] = []
+    /// Вызывается внутри `markRead` до возврата результата — пока запрос гарантированно выполняется.
+    var onMarkRead: (@MainActor () async -> Void)?
     /// Вызывается внутри любого запроса до возврата результата — пока вызывающий гарантированно ждёт ответа.
     var onRequest: (@MainActor () async -> Void)?
 
@@ -28,8 +39,14 @@ final class ConversationServiceMock: ConversationServiceProtocol {
     }
 
     func fetchConversations(filter: ConversationListFilter, count: Int?) async throws -> ConversationsPage {
-        requests.append((filter, count))
-        let result = stubbedPages.isEmpty ? .failure(NetworkError.missingResponse) : stubbedPages.removeFirst()
+        guard case .changedAfter = filter else {
+            requests.append((filter, count))
+            let result = stubbedPages.isEmpty ? .failure(NetworkError.missingResponse) : stubbedPages.removeFirst()
+            await onRequest?()
+            return try result.get()
+        }
+        changeRequests.append((filter, count))
+        let result = stubbedChangePages.isEmpty ? .failure(NetworkError.missingResponse) : stubbedChangePages.removeFirst()
         await onRequest?()
         return try result.get()
     }
@@ -38,6 +55,13 @@ final class ConversationServiceMock: ConversationServiceProtocol {
         batchRequests.append(ids)
         let result = stubbedBatches.isEmpty ? .failure(NetworkError.missingResponse) : stubbedBatches.removeFirst()
         await onRequest?()
+        return try result.get()
+    }
+
+    func markRead(conversationId: Int, messageId: Int) async throws -> ReadInfo {
+        markReadRequests.append((conversationId, messageId))
+        let result = stubbedReadInfos.isEmpty ? .failure(NetworkError.missingResponse) : stubbedReadInfos.removeFirst()
+        await onMarkRead?()
         return try result.get()
     }
 }

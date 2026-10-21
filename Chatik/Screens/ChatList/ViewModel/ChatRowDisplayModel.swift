@@ -37,14 +37,29 @@ struct ChatRowDisplayModel: Identifiable, Equatable {
     let preview: ChatRowPreview
     /// Время, когда переписка последний раз поднялась, в формате ленты сообщений.
     let time: String
+    /// Счётчик непрочитанных: точное число до 99, выше — «99+». `nil` — непрочитанных нет, капсула не показывается.
+    let unreadCountText: String?
+    /// Подпись счётчика для VoiceOver — с точным числом.
+    let unreadAccessibilityLabel: String?
 
-    init(id: Int, title: String, isTitlePlaceholder: Bool = false, avatarURL: URL?, preview: ChatRowPreview = .message(""), time: String = "") {
+    init(
+        id: Int,
+        title: String,
+        isTitlePlaceholder: Bool = false,
+        avatarURL: URL?,
+        preview: ChatRowPreview = .message(""),
+        time: String = "",
+        unreadCountText: String? = nil,
+        unreadAccessibilityLabel: String? = nil
+    ) {
         self.id = id
         self.title = title
         self.isTitlePlaceholder = isTitlePlaceholder
         self.avatarURL = avatarURL
         self.preview = preview
         self.time = time
+        self.unreadCountText = unreadCountText
+        self.unreadAccessibilityLabel = unreadAccessibilityLabel
     }
 }
 
@@ -60,9 +75,16 @@ extension ChatRowDisplayModel {
     ///   - conversation: переписка из ответа сервера или БД.
     ///   - opponent: собеседник из кэша по `opponentUserId`; `nil` — у переписки нет собеседника.
     ///   - localPreview: неотправленное сообщение или черновик переписки; `nil` — нет ни того, ни другого.
+    ///   - unreadCount: непрочитанные для показа — с учётом оптимистичной отметки прочтения.
     ///   - timeFormatter: формат времени ленты сообщений.
     @MainActor
-    init(conversation: Conversation, opponent: CachedUser?, localPreview: ChatRowLocalPreview?, timeFormatter: MessageTimeFormatter) {
+    init(
+        conversation: Conversation,
+        opponent: CachedUser?,
+        localPreview: ChatRowLocalPreview?,
+        unreadCount: Int,
+        timeFormatter: MessageTimeFormatter
+    ) {
         let opponentUser: User?
         if case let .loaded(user) = opponent {
             opponentUser = user
@@ -76,7 +98,9 @@ extension ChatRowDisplayModel {
             isTitlePlaceholder: conversation.name == nil && opponent == .pending,
             avatarURL: avatar.map { $0.smallURL ?? $0.url },
             preview: localPreview.map { .labeled(Self.localPreview($0)) } ?? .message(Self.preview(for: conversation.lastMessage)),
-            time: timeFormatter.string(from: conversation.positionUpdatedAt.date)
+            time: timeFormatter.string(from: conversation.positionUpdatedAt.date),
+            unreadCountText: UnreadCountFormatter.text(for: unreadCount),
+            unreadAccessibilityLabel: UnreadCountFormatter.accessibilityLabel(for: unreadCount)
         )
     }
 

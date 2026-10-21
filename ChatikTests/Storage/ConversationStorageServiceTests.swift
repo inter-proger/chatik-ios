@@ -42,6 +42,17 @@ final class ConversationStorageServiceTests: XCTestCase {
         XCTAssertEqual(files, [.stub])
     }
 
+    /// Кейс: переписка с непрочитанными сохранена и прочитана обратно.
+    /// Ожидание: поля прочтения на месте.
+    func test_save_readState_roundTrips() async throws {
+        let conversation = Conversation.make(id: 3, readState: .make(unread: 4, lastRead: 15, version: 120))
+
+        try await sut.save(conversations: [conversation], state: ConversationListState())
+
+        let found = try await sut.find(byId: 3)
+        XCTAssertEqual(found?.readState, .make(unread: 4, lastRead: 15, version: 120))
+    }
+
     /// Кейс: последнее сообщение неизвестного типа без текста.
     /// Ожидание: читается из БД как есть — тип `.unknown`, текст `nil`.
     func test_save_lastMessageWithoutText_roundTrips() async throws {
@@ -56,8 +67,8 @@ final class ConversationStorageServiceTests: XCTestCase {
     /// Кейс: состояние синхронизации записано, затем перезаписано.
     /// Ожидание: читается последнее состояние; запись одна.
     func test_save_state_roundTripsAndOverwrites() async throws {
-        let first = ConversationListState(isLoaded: true, hasMorePages: true, positionWatermark: .stub, positionWatermarkCeiling: nil, infoWatermark: .stub(-5))
-        let second = ConversationListState(isLoaded: true, hasMorePages: false, positionWatermark: .stub(10), positionWatermarkCeiling: .stub(3), infoWatermark: nil)
+        let first = ConversationListState(isLoaded: true, hasMorePages: true, positionWatermark: .stub, positionWatermarkCeiling: nil, syncedChangeVersion: 7, totalUnreadCount: 3, totalUnreadVersion: 7)
+        let second = ConversationListState(isLoaded: true, hasMorePages: false, positionWatermark: .stub(10), positionWatermarkCeiling: .stub(3), syncedChangeVersion: nil)
         try await sut.save(conversations: [], state: first)
 
         try await sut.save(conversations: [], state: second)
@@ -82,7 +93,7 @@ final class ConversationStorageServiceTests: XCTestCase {
     /// Кейс: в БД записано состояние синхронизации; затем переписка сохранена без состояния (`state: nil`).
     /// Ожидание: переписка записана, сохранённое состояние не изменилось.
     func test_save_nilState_keepsStoredState() async throws {
-        let state = ConversationListState(isLoaded: true, hasMorePages: true, positionWatermark: .stub, positionWatermarkCeiling: nil, infoWatermark: .stub)
+        let state = ConversationListState(isLoaded: true, hasMorePages: true, positionWatermark: .stub, positionWatermarkCeiling: nil, syncedChangeVersion: 7)
         try await sut.save(conversations: [], state: state)
 
         try await sut.save(conversations: [Conversation.make(id: 1)], state: nil)
@@ -115,7 +126,8 @@ final class ConversationStorageServiceTests: XCTestCase {
         try await sut.save(conversations: [stored], state: ConversationListState())
         let incoming = Conversation(
             conversationId: stored.conversationId, type: .group, memberIds: stored.memberIds, name: "Старое", avatar: nil,
-            opponentUserId: nil, lastMessage: .make(id: 99, updatedAt: .stub(9999)), positionUpdatedAt: .stub(9999), updatedInfoAt: .stub
+            opponentUserId: nil, lastMessage: .make(id: 99, updatedAt: .stub(9999)), positionUpdatedAt: .stub(9999), updatedInfoAt: .stub,
+            readState: .stub
         )
 
         try await sut.save(conversations: [incoming], state: ConversationListState())
@@ -131,7 +143,7 @@ final class ConversationStorageServiceTests: XCTestCase {
     func test_save_opponentRemoved_clearsOpponentId() async throws {
         let single = Conversation(
             conversationId: 1, type: .single, memberIds: [1, 5], name: nil, avatar: nil, opponentUserId: 5,
-            lastMessage: nil, positionUpdatedAt: .stub, updatedInfoAt: .stub
+            lastMessage: nil, positionUpdatedAt: .stub, updatedInfoAt: .stub, readState: .stub
         )
         try await sut.save(conversations: [single], state: ConversationListState())
 
@@ -187,7 +199,7 @@ final class ConversationStorageServiceTests: XCTestCase {
     /// Ожидание: остались только 5 и 3, состояние записано; аватары удалённых переписок остались в файлах.
     func test_replaceList_removesMissingAndStoresState() async throws {
         try await sut.save(conversations: (1...5).map { Conversation.make(id: $0) } + [.groupStub], state: ConversationListState())
-        let state = ConversationListState(isLoaded: true, hasMorePages: true, positionWatermark: .stub, positionWatermarkCeiling: nil, infoWatermark: .stub)
+        let state = ConversationListState(isLoaded: true, hasMorePages: true, positionWatermark: .stub, positionWatermarkCeiling: nil, syncedChangeVersion: 7)
 
         try await sut.replaceList(with: [Conversation.make(id: 5), Conversation.make(id: 3)], state: state)
 
@@ -221,7 +233,8 @@ final class ConversationStorageServiceTests: XCTestCase {
         let server = Conversation(
             conversationId: Conversation.groupStub.conversationId, type: .group, memberIds: Conversation.groupStub.memberIds,
             name: Conversation.groupStub.name, avatar: nil, opponentUserId: nil, lastMessage: Conversation.groupStub.lastMessage,
-            positionUpdatedAt: Conversation.groupStub.positionUpdatedAt, updatedInfoAt: Conversation.groupStub.updatedInfoAt
+            positionUpdatedAt: Conversation.groupStub.positionUpdatedAt, updatedInfoAt: Conversation.groupStub.updatedInfoAt,
+            readState: Conversation.groupStub.readState
         )
 
         try await sut.replaceList(with: [server], state: ConversationListState(isLoaded: true))

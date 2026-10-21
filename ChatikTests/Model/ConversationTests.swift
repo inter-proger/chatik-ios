@@ -11,13 +11,14 @@ final class ConversationTests: XCTestCase {
 
     /// Кейс: личная переписка из документации — без названия и аватара, с id собеседника и последним сообщением.
     /// Ожидание: поля разобраны, `type == .single`, `name` и `avatar` — `nil`, `opponentUserId` и `lastMessage`
-    /// прочитаны, время — в миллисекундах.
+    /// прочитаны, время — в миллисекундах; поля прочтения верхнего уровня собраны в `readState`.
     func test_decode_single_readsMembersOpponentAndLastMessage() throws {
         let json = """
         {
           "conversationId": 7, "type": "single", "memberIds": [1, 5], "name": null, "avatar": null, "opponentUserId": 5,
           "lastMessage": { "messageId": 15, "type": "text", "text": "Привет!", "updatedAt": 1790846400123 },
-          "positionUpdatedAt": 1790846400123, "updatedInfoAt": 1790846000456
+          "positionUpdatedAt": 1790846400123, "updatedInfoAt": 1790846000456,
+          "unreadCount": 3, "lastReadMessageId": 12, "changeVersion": 118
         }
         """
 
@@ -32,6 +33,7 @@ final class ConversationTests: XCTestCase {
         XCTAssertEqual(conversation.lastMessage, LastMessage(messageId: 15, type: .text, text: "Привет!", updatedAt: ServerTime(milliseconds: 1_790_846_400_123)))
         XCTAssertEqual(conversation.positionUpdatedAt, ServerTime(milliseconds: 1_790_846_400_123))
         XCTAssertEqual(conversation.updatedInfoAt, ServerTime(milliseconds: 1_790_846_000_456))
+        XCTAssertEqual(conversation.readState, ConversationReadState(unreadCount: 3, lastReadMessageId: 12, changeVersion: 118))
     }
 
     /// Кейс: групповая переписка с названием и аватаром-изображением, без сообщений (`lastMessage: null`).
@@ -41,6 +43,7 @@ final class ConversationTests: XCTestCase {
         {
           "conversationId": 7, "type": "group", "memberIds": [1, 2, 3], "name": "Команда", "opponentUserId": null,
           "lastMessage": null, "positionUpdatedAt": 1790846400000, "updatedInfoAt": 1790846400000,
+          "unreadCount": 0, "lastReadMessageId": 0, "changeVersion": 1,
           "avatar": {
             "fileId": 5, "type": "image", "url": "http://h/a.jpg", "size": 1, "filename": "a.jpg", "extension": "jpg",
             "data": { "smallUrl": "http://h/a_small.jpg" }
@@ -65,7 +68,8 @@ final class ConversationTests: XCTestCase {
         {
           "conversationId": 7, "type": "single", "memberIds": [1, 2], "name": null, "avatar": null, "opponentUserId": 2,
           "lastMessage": { "messageId": 16, "type": "sticker", "text": null, "updatedAt": 1790846400000 },
-          "positionUpdatedAt": 1790846400000, "updatedInfoAt": 1790846400000
+          "positionUpdatedAt": 1790846400000, "updatedInfoAt": 1790846400000,
+          "unreadCount": 0, "lastReadMessageId": 0, "changeVersion": 1
         }
         """
 
@@ -84,7 +88,7 @@ final class ConversationTests: XCTestCase {
     /// Кейс: сервер прислал тип переписки, которого клиент ещё не знает.
     /// Ожидание: тип читается как `.unknown`, остальные поля разобраны — новый тип не ломает разбор списка.
     func test_decode_unknownType_fallsBackToUnknown() throws {
-        let json = #"{"conversationId":9,"type":"channel","memberIds":[1,2],"name":"Канал","avatar":null,"opponentUserId":null,"lastMessage":null,"positionUpdatedAt":1790846400000,"updatedInfoAt":1790846400000}"#
+        let json = #"{"conversationId":9,"type":"channel","memberIds":[1,2],"name":"Канал","avatar":null,"opponentUserId":null,"lastMessage":null,"positionUpdatedAt":1790846400000,"updatedInfoAt":1790846400000,"unreadCount":0,"lastReadMessageId":0,"changeVersion":1}"#
 
         let conversation = try decoder.decode(Conversation.self, from: Data(json.utf8))
 
@@ -93,8 +97,8 @@ final class ConversationTests: XCTestCase {
         XCTAssertEqual(conversation.name, "Канал")
     }
 
-    /// Кейс: в JSON нет обязательного поля — `memberIds`, `positionUpdatedAt` или `updatedInfoAt`; либо пришёл
-    /// старый формат с `updatedAt` вместо новых полей.
+    /// Кейс: в JSON нет обязательного поля — `memberIds`, `positionUpdatedAt`, `updatedInfoAt` или полей прочтения;
+    /// либо пришёл старый формат с `updatedAt` вместо новых полей.
     /// Ожидание: ошибка декодирования.
     func test_decode_missingRequiredField_throws() {
         let jsons = [
@@ -102,6 +106,7 @@ final class ConversationTests: XCTestCase {
             #"{"conversationId":1,"type":"single","memberIds":[1,2],"name":null,"avatar":null,"opponentUserId":null,"updatedInfoAt":1}"#,
             #"{"conversationId":1,"type":"single","memberIds":[1,2],"name":null,"avatar":null,"opponentUserId":null,"positionUpdatedAt":1}"#,
             #"{"conversationId":1,"type":"single","memberIds":[1,2],"name":null,"avatar":null,"opponentUserId":null,"updatedAt":1790846400}"#,
+            #"{"conversationId":1,"type":"single","memberIds":[1,2],"name":null,"avatar":null,"opponentUserId":null,"positionUpdatedAt":1,"updatedInfoAt":1,"unreadCount":0,"lastReadMessageId":0}"#,
         ]
 
         for json in jsons {

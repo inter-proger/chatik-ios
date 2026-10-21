@@ -5,7 +5,8 @@
 
 import SwiftUI
 
-/// Строка списка чатов: аватар, название, время и превью — черновик или последнее сообщение.
+/// Строка списка чатов: аватар, название, время, превью — черновик или последнее сообщение — и счётчик
+/// непрочитанных.
 struct ChatRowView: View {
     let conversation: ChatRowDisplayModel
 
@@ -24,10 +25,17 @@ struct ChatRowView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                previewText
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                HStack(alignment: .center, spacing: 8) {
+                    previewText
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                    if let unreadCountText = conversation.unreadCountText {
+                        UnreadBadgeView(text: unreadCountText)
+                            .accessibilityLabel(conversation.unreadAccessibilityLabel ?? unreadCountText)
+                    }
+                }
             }
         }
         .contentShape(Rectangle())
@@ -45,7 +53,7 @@ struct ChatRowView: View {
 
 #Preview {
     List {
-        ChatRowView(conversation: ChatRowDisplayModel(id: 1, title: "Иван Петров", avatarURL: nil, preview: .message("Привет!"), time: "12:30"))
+        ChatRowView(conversation: ChatRowDisplayModel(id: 1, title: "Иван Петров", avatarURL: nil, preview: .message("Привет!"), time: "12:30", unreadCountText: "3"))
         ChatRowView(conversation: ChatRowDisplayModel(id: 4, title: "Мария Иванова", avatarURL: nil, preview: .labeled(ChatRowDisplayModel.localPreview(.draft("Завтра в 15:00 подойдёт?"))), time: "12:10"))
         ChatRowView(conversation: ChatRowDisplayModel(id: 5, title: "Пётр Сидоров", avatarURL: nil, preview: .labeled(ChatRowDisplayModel.localPreview(.failed("Скинь, пожалуйста, адрес"))), time: "11:45"))
         ChatRowView(conversation: ChatRowDisplayModel(id: 2, title: "Команда", avatarURL: nil, preview: .message("Новый чат"), time: "11 окт."))

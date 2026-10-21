@@ -20,6 +20,22 @@ extension ChatViewModel {
         return .loaded(currentUser)
     }
 
+    /// Непрочитанные для кнопки «вниз»: сообщения после указателя прочтения. При входе переписка отмечается
+    /// прочитанной, поэтому это ровно новые сообщения; прочтение на другом устройстве обнуляет его само.
+    private var unreadCount: Int {
+        readStates.unreadCount(conversationId: conversation.conversationId) ?? currentReadState.unreadCount
+    }
+
+    /// Счётчик над кнопкой «вниз»: до 99 — точное число, выше — «99+»; `nil` — непрочитанных нет.
+    var unreadBadgeText: String? {
+        UnreadCountFormatter.text(for: unreadCount)
+    }
+
+    /// Значение кнопки «вниз» для VoiceOver — непрочитанные с точным числом.
+    var unreadBadgeAccessibilityValue: String? {
+        UnreadCountFormatter.accessibilityLabel(for: unreadCount)
+    }
+
     /// Заголовок экрана: название группы либо имя собеседника личной переписки.
     var title: String {
         conversation.name ?? opponentTitle

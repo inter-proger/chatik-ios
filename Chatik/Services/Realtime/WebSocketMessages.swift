@@ -14,10 +14,14 @@ enum WebSocketServerEvent: Equatable, Sendable {
     case connectionError(errorCode: Int?)
     /// `conversations` / `singleCreated` — создана личная переписка (с точки зрения получателя).
     case conversationCreated(Conversation)
-    /// `messages` / `received` — новое сообщение и новое превью переписки.
-    case messageReceived(Message, LastMessage)
-    /// `messages` / `edited` — сообщение отредактировано; превью — только если отредактировано последнее сообщение.
-    case messageEdited(Message, LastMessage?)
+    /// `conversations` / `read` — переписка прочитана (на этом или другом устройстве).
+    case conversationRead(ReadInfo)
+    /// `messages` / `received` — новое сообщение, новое превью переписки и прочтение для получателя.
+    /// `nil` — прочтения в событии нет.
+    case messageReceived(Message, LastMessage, ReadInfo?)
+    /// `messages` / `edited` — сообщение отредактировано; превью и версия пользователя — только если отредактировано
+    /// последнее сообщение.
+    case messageEdited(Message, LastMessage?, changeVersion: Int?)
     /// Событие, которого клиент не знает, или известное событие с неразборчивыми данными: игнорируется,
     /// но подтверждается — сервер будет добавлять новые события.
     case unknown
@@ -54,14 +58,20 @@ extension WebSocketServerMessage: Decodable {
         let conversation: Conversation
     }
 
+    private struct ReadBody: Decodable {
+        let readInfo: ReadInfo
+    }
+
     private struct ReceivedBody: Decodable {
         let message: Message
         let lastMessage: LastMessage
+        let readInfo: ReadInfo?
     }
 
     private struct EditedBody: Decodable {
         let message: Message
         let lastMessage: LastMessage?
+        let changeVersion: Int?
     }
 
     /// Разбирает сообщение. Заголовок (`uid`, `group`, `event`) обязателен; данные известного события, которые
@@ -89,10 +99,16 @@ extension WebSocketServerMessage: Decodable {
             return .connectionError(errorCode: (try? container.decode(ConnectionErrorBody.self, forKey: .body))?.errorCode)
         case ("conversations", "singleCreated"):
             return (try? container.decode(ConversationBody.self, forKey: .body)).map { .conversationCreated($0.conversation) }
+        case ("conversations", "read"):
+            return (try? container.decode(ReadBody.self, forKey: .body)).map { .conversationRead($0.readInfo) }
         case ("messages", "received"):
-            return (try? container.decode(ReceivedBody.self, forKey: .body)).map { .messageReceived($0.message, $0.lastMessage) }
+            return (try? container.decode(ReceivedBody.self, forKey: .body)).map {
+                .messageReceived($0.message, $0.lastMessage, $0.readInfo)
+            }
         case ("messages", "edited"):
-            return (try? container.decode(EditedBody.self, forKey: .body)).map { .messageEdited($0.message, $0.lastMessage) }
+            return (try? container.decode(EditedBody.self, forKey: .body)).map {
+                .messageEdited($0.message, $0.lastMessage, changeVersion: $0.changeVersion)
+            }
         default:
             return nil
         }

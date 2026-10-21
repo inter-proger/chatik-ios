@@ -54,7 +54,8 @@ struct ChatListView: View {
         }
     }
 
-    /// Заголовок: название экрана или, пока идёт синхронизация, индикатор и «Обновление…».
+    /// Заголовок: название экрана и общий счётчик непрочитанных или, пока идёт синхронизация, индикатор
+    /// и «Обновление…».
     @ViewBuilder
     private var titleView: some View {
         if viewModel.isSyncing {
@@ -64,8 +65,14 @@ struct ChatListView: View {
             }
             .font(.headline)
         } else {
-            Text(ChatListStrings.title)
-                .font(.headline)
+            HStack(spacing: 6) {
+                Text(ChatListStrings.title)
+                    .font(.headline)
+                if let totalUnreadText = viewModel.totalUnreadText {
+                    UnreadBadgeView(text: totalUnreadText)
+                        .accessibilityLabel(viewModel.totalUnreadAccessibilityLabel ?? totalUnreadText)
+                }
+            }
         }
     }
 

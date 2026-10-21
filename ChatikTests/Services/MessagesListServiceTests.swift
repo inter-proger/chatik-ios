@@ -232,7 +232,7 @@ final class MessagesListServiceTests: XCTestCase {
         await waitForSyncToFinish()
         let message = Message.make(id: 2)
 
-        await cache.handle(.messageReceived(message, LastMessage(message: message)))
+        await cache.handle(.messageReceived(message, LastMessage(message: message), nil))
 
         await waitUntil { [unowned self] in recorder.latest?.messages.map(\.id) == [2, 1] }
     }
@@ -245,7 +245,7 @@ final class MessagesListServiceTests: XCTestCase {
         await sut.start()
         await waitUntil { [unowned self] in recorder.latest?.messages.count == 50 }
 
-        await cache.handle(.messageEdited(.make(id: 1, blockId: 1, updatedAt: .stub(1000)), nil))
+        await cache.handle(.messageEdited(.make(id: 1, blockId: 1, updatedAt: .stub(1000)), nil, changeVersion: nil))
         await cache.waitForWrites()
         await yieldTimes()
 

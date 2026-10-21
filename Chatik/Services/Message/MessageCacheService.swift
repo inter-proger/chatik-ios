@@ -210,11 +210,11 @@ actor MessageCacheService: MessageCacheServiceProtocol, MessageCacheLogoutHandli
     func handle(_ event: RealtimeEvent) {
         guard !isLoggingOut else { return }
         switch event {
-        case let .messageReceived(message, _):
+        case let .messageReceived(message, _, _):
             handleMessageEvent(message, isNew: true)
-        case let .messageEdited(message, _):
+        case let .messageEdited(message, _, _):
             handleMessageEvent(message, isNew: false)
-        case .connected, .conversationCreated:
+        case .connected, .conversationCreated, .conversationRead:
             break
         }
     }

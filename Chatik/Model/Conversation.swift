@@ -24,8 +24,9 @@ enum ConversationType: String, Decodable, Hashable {
 /// Объект `Conversation` из API — переписка, в которой состоит текущий пользователь.
 /// `Hashable` — переписка передаётся в маршрут навигации к экрану чата.
 ///
-/// У переписки две независимые версии: **позиция** в списке (`positionUpdatedAt` вместе с `lastMessage`)
-/// и **информация** (`updatedInfoAt`). Версии сливаются по правилам `ConversationMerger`.
+/// У переписки три независимые версии: **позиция** в списке (`positionUpdatedAt` вместе с `lastMessage`),
+/// **информация** (`updatedInfoAt`) и **прочтение** (`readState.changeVersion`). Версии сливаются по правилам
+/// `ConversationMerger`.
 struct Conversation: Hashable, Identifiable {
     let conversationId: Int
     let type: ConversationType
@@ -46,6 +47,9 @@ struct Conversation: Hashable, Identifiable {
     let positionUpdatedAt: ServerTime
     /// Когда менялось то, что не двигает переписку: участники, название, аватар и текст последнего сообщения.
     let updatedInfoAt: ServerTime
+    /// Прочтение для текущего пользователя; в JSON — поля `unreadCount`, `lastReadMessageId`, `changeVersion`
+    /// на верхнем уровне переписки.
+    let readState: ConversationReadState
 
     var id: Int { conversationId }
 
@@ -58,6 +62,7 @@ struct Conversation: Hashable, Identifiable {
 extension Conversation: Decodable {
     private enum CodingKeys: String, CodingKey {
         case conversationId, type, memberIds, name, avatar, opponentUserId, lastMessage, positionUpdatedAt, updatedInfoAt
+        case unreadCount, lastReadMessageId, changeVersion
     }
 
     /// Разбирает переписку; время приходит Unix timestamp в миллисекундах.
@@ -73,6 +78,11 @@ extension Conversation: Decodable {
         lastMessage = try container.decodeIfPresent(LastMessage.self, forKey: .lastMessage)
         positionUpdatedAt = try container.decode(ServerTime.self, forKey: .positionUpdatedAt)
         updatedInfoAt = try container.decode(ServerTime.self, forKey: .updatedInfoAt)
+        readState = ConversationReadState(
+            unreadCount: try container.decode(Int.self, forKey: .unreadCount),
+            lastReadMessageId: try container.decode(Int.self, forKey: .lastReadMessageId),
+            changeVersion: try container.decode(Int.self, forKey: .changeVersion)
+        )
     }
 }
 
@@ -98,11 +108,13 @@ struct ConversationPosition: Comparable, Hashable {
 }
 
 /// Частичная версия переписки из событий `messages` и ответа `/messages/send`: позиция равна `createdAt`
-/// сообщения, информации нет.
+/// сообщения, информации нет. Прочтение — только у `received` и ответа `send`.
 struct ConversationPatch: Hashable {
     let conversationId: Int
     let positionUpdatedAt: ServerTime
     let lastMessage: LastMessage
+    /// Прочтение и общий счётчик из того же события или ответа; `nil` — их нет (`edited`).
+    var readInfo: ReadInfo?
 
     /// Версия позиции — для правила 1 слияния.
     var position: ConversationPosition {
@@ -115,11 +127,13 @@ extension ConversationPatch {
     /// - Parameters:
     ///   - message: сообщение из события или ответа `/messages/send`.
     ///   - lastMessage: превью из события; по умолчанию — из самого сообщения.
-    init(message: Message, lastMessage: LastMessage? = nil) {
+    ///   - readInfo: прочтение из события `received` или ответа `send`.
+    init(message: Message, lastMessage: LastMessage? = nil, readInfo: ReadInfo? = nil) {
         self.init(
             conversationId: message.conversationId,
             positionUpdatedAt: message.createdAt,
-            lastMessage: lastMessage ?? LastMessage(message: message)
+            lastMessage: lastMessage ?? LastMessage(message: message),
+            readInfo: readInfo
         )
     }
 }

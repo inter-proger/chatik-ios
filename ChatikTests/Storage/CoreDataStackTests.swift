@@ -39,7 +39,7 @@ final class CoreDataStackTests: XCTestCase {
     /// Ожидание: данные и состояние синхронизации на месте — пересоздаётся только хранилище, которое не открылось,
     /// а очистка кэша со временем в секундах не трогает хранилище текущей версии.
     func test_makeContainer_validStore_keepsData() async throws {
-        let state = ConversationListState(isLoaded: true, hasMorePages: true, positionWatermark: .stub, positionWatermarkCeiling: nil, infoWatermark: .stub)
+        let state = ConversationListState(isLoaded: true, hasMorePages: true, positionWatermark: .stub, positionWatermarkCeiling: nil, syncedChangeVersion: 7)
         try await ConversationStorageService(container: CoreDataStack.makeContainer(storeURL: storeURL))
             .save(conversations: [.groupStub], state: state)
 
@@ -253,6 +253,29 @@ final class CoreDataStackTests: XCTestCase {
         let stored = try await drafts.fetchAll(userId: 1)
         XCTAssertEqual(migrated, [7: MessageDraft(text: "Первый"), 8: MessageDraft(text: "Второй")])
         XCTAssertEqual(stored[7], MessageDraft(text: "Первый", edit: edit))
+    }
+
+    /// Кейс: хранилище создано десятой версией модели (без прочтения); в нём переписка и состояние загруженного списка
+    /// с водяными знаками позиции и информации.
+    /// Ожидание: лёгкая миграция без потери данных — переписка на месте с нулевым прочтением, водяной знак позиции
+    /// сохранён, а курсора изменений нет: следующая синхронизация будет полной загрузкой.
+    func test_makeContainer_tenthModelVersion_keepsListAndRequiresFullLoad() async throws {
+        try makeStore(modelVersion: "Chatik 10") { context in
+            let conversation = try self.insertConversation(id: 7, into: context)
+            conversation.setValue(1_790_846_400_000, forKey: "positionUpdatedAt")
+            let state = NSEntityDescription.insertNewObject(forEntityName: "ConversationListStateEntity", into: context)
+            state.setValue(true, forKey: "isLoaded")
+            state.setValue(1_790_846_400_000, forKey: "positionWatermark")
+            state.setValue(1_790_846_400_000, forKey: "infoWatermark")
+        }
+
+        let stored = try await ConversationStorageService(container: CoreDataStack.makeContainer(storeURL: storeURL)).fetchList()
+
+        XCTAssertEqual(stored.conversations.map(\.conversationId), [7])
+        XCTAssertEqual(stored.conversations.first?.readState, ConversationReadState(unreadCount: 0, lastReadMessageId: 0, changeVersion: 0))
+        XCTAssertEqual(stored.state.positionWatermark, ServerTime(milliseconds: 1_790_846_400_000))
+        XCTAssertNil(stored.state.syncedChangeVersion)
+        XCTAssertEqual(stored.state.totalUnreadCount, 0)
     }
 
     // MARK: - Helpers

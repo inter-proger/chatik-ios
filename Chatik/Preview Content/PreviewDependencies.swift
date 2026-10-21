@@ -90,7 +90,7 @@ enum PreviewDependencies {
     static func chatViewModel(
         conversation: Conversation = Conversation(
             conversationId: 2, type: .group, memberIds: [1, 2, 3], name: "Команда", avatar: nil, opponentUserId: nil,
-            lastMessage: nil, positionUpdatedAt: .now, updatedInfoAt: .now
+            lastMessage: nil, positionUpdatedAt: .now, updatedInfoAt: .now, readState: .previewRead
         )
     ) -> ChatViewModel {
         let user = User(userId: 1, login: "ivan", name: "Иван Петров", avatar: nil)
@@ -132,7 +132,8 @@ enum PreviewDependencies {
             messageTextValidator: MessageTextValidator(),
             dateHeaderFormatterProvider: MessageDateHeaderFormatterProvider.default,
             timeChangeService: SignificantTimeChangeService(),
-            notifications: notificationService
+            notifications: notificationService,
+            readStates: ConversationReadStatePreviewMock()
         )
     }
 
@@ -305,7 +306,8 @@ final class ConversationServicePreviewMock: ConversationServiceProtocol {
             opponentUserId: userId,
             lastMessage: nil,
             positionUpdatedAt: .now,
-            updatedInfoAt: .now
+            updatedInfoAt: .now,
+            readState: .previewRead
         )
         await sendUsersAction(for: [conversation])
         return conversation
@@ -314,15 +316,22 @@ final class ConversationServicePreviewMock: ConversationServiceProtocol {
     /// Отдаёт две переписки на первую страницу без фильтра; на остальные запросы — пустую страницу.
     func fetchConversations(filter: ConversationListFilter, count: Int?) async throws -> ConversationsPage {
         try await Task.sleep(for: delay)
-        guard filter == .none(offset: nil) else { return ConversationsPage(conversations: [], hasNext: false) }
+        guard filter == .none(offset: nil) else {
+            return ConversationsPage(conversations: [], hasNext: false, totalUnreadCount: 3, changeVersion: 1)
+        }
         await sendUsersAction(for: previewConversations)
-        return ConversationsPage(conversations: previewConversations, hasNext: false)
+        return ConversationsPage(conversations: previewConversations, hasNext: false, totalUnreadCount: 3, changeVersion: 1)
     }
 
     func fetchConversations(ids: [Int]) async throws -> ConversationsBatch {
         try await Task.sleep(for: delay)
         let found = previewConversations.filter { ids.contains($0.conversationId) }
         return ConversationsBatch(conversations: found, notFoundIds: ids.filter { id in !found.contains { $0.id == id } })
+    }
+
+    func markRead(conversationId: Int, messageId: Int) async throws -> ReadInfo {
+        try await Task.sleep(for: delay)
+        return ReadInfo(conversationId: conversationId, lastReadMessageId: messageId, unreadCount: 0, totalUnreadCount: 0, changeVersion: 2)
     }
 
     /// Переписки списка: личная — с последним сообщением, групповая — без сообщений.
@@ -332,11 +341,13 @@ final class ConversationServicePreviewMock: ConversationServiceProtocol {
             Conversation(
                 conversationId: 1, type: .single, memberIds: [1, 2], name: nil, avatar: nil, opponentUserId: 2,
                 lastMessage: LastMessage(messageId: 1, type: .text, text: "Привет! Во сколько созвон?", updatedAt: now),
-                positionUpdatedAt: now, updatedInfoAt: now
+                positionUpdatedAt: now, updatedInfoAt: now,
+                readState: ConversationReadState(unreadCount: 3, lastReadMessageId: 0, changeVersion: 1)
             ),
             Conversation(
                 conversationId: 2, type: .group, memberIds: [1, 2, 3], name: "Команда", avatar: nil, opponentUserId: nil,
-                lastMessage: nil, positionUpdatedAt: now.adding(milliseconds: -86_400_000), updatedInfoAt: now
+                lastMessage: nil, positionUpdatedAt: now.adding(milliseconds: -86_400_000), updatedInfoAt: now,
+                readState: .previewRead
             ),
         ]
     }
@@ -373,9 +384,10 @@ final class MessageServicePreviewMock: MessageServiceProtocol, Sendable {
         return MessageBlocksBatch(blocks: [], notFoundIds: ids)
     }
 
-    func send(conversationId: Int, text: String, clientId: String) async throws -> Message {
+    func send(conversationId: Int, text: String, clientId: String) async throws -> MessageResponse {
         try await Task.sleep(for: delay)
-        return makeMessage(id: Int.random(in: 100...10_000), conversationId: conversationId, senderId: 1, text: text, clientId: clientId)
+        let message = makeMessage(id: Int.random(in: 100...10_000), conversationId: conversationId, senderId: 1, text: text, clientId: clientId)
+        return MessageResponse(message: message, readInfo: nil)
     }
 
     func edit(messageId: Int, newText: String) async throws -> MessageEditResult {
@@ -487,7 +499,7 @@ final class SessionWorkPreviewMock: SessionWorkStarting {
 /// Список чатов для превью экрана переписки: подъём переписки по ответу на отправку там не виден.
 @MainActor
 final class ConversationPositionUpdatingPreviewMock: ConversationPositionUpdating {
-    func applySentMessage(_ message: Message) {}
+    func applySentMessage(_ message: Message, readInfo: ReadInfo?) {}
     func applyEditedMessage(_ message: Message, lastMessage: LastMessage?) {}
 }
 
@@ -512,5 +524,17 @@ actor UserDefaultsServicePreviewMock: UserDefaultsServiceProtocol {
     func setLanguage(_ language: AppLanguage) {
         storedLanguage = language
     }
+}
+
+/// Прочтение для превью экрана переписки: переписки нет в списке, отметки ничего не делают.
+final class ConversationReadStatePreviewMock: ConversationReadStateProviding {
+    func readState(conversationId: Int) -> ConversationReadState? { nil }
+    func unreadCount(conversationId: Int) -> Int? { nil }
+    func markRead(conversationId: Int, messageId: Int) {}
+}
+
+extension ConversationReadState {
+    /// Прочтение переписки превью: всё прочитано.
+    static let previewRead = ConversationReadState(unreadCount: 0, lastReadMessageId: 0, changeVersion: 1)
 }
 #endif

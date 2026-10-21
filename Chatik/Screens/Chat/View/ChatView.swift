@@ -60,6 +60,13 @@ struct ChatView: View {
             guard phase != .active else { return }
             viewModel.saveDraft()
         }
+        // Прочтение — только в активной сцене этого экрана: шторка, фон и неактивная сцена iPad его не дают.
+        .onChange(of: scenePhase, initial: true) { _, phase in
+            viewModel.setSceneActive(phase == .active)
+        }
+        // Экран может уйти и вернуться без смены `scenePhase`: при появлении активность берётся заново.
+        .onAppear { viewModel.setSceneActive(scenePhase == .active) }
+        .onDisappear { viewModel.setSceneActive(false) }
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .principal) {
@@ -96,7 +103,12 @@ struct ChatView: View {
             onAction: viewModel.didSelectAction,
             onMenuRequest: showMenu,
             menuMessageId: menuController?.menuMessageId,
-            areActionsEnabled: viewModel.areMessageActionsEnabled
+            areActionsEnabled: viewModel.areMessageActionsEnabled,
+            unreadBadgeText: viewModel.unreadBadgeText,
+            unreadBadgeAccessibilityValue: viewModel.unreadBadgeAccessibilityValue,
+            insertionAnimationToken: viewModel.insertionAnimationToken,
+            scrollToBottomRequest: viewModel.scrollToBottomRequest,
+            onBottomChange: viewModel.setAtBottom
         )
         .onTapGesture { isInputFocused = false }
         .overlay(alignment: .top) { navigationBarBackground }

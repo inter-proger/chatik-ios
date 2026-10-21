@@ -12,7 +12,7 @@ import Foundation
 /// и передаёт ему действия пользователя.
 ///
 /// Строки (`conversations`) пересобирает `observeConversations()`: он следит через Observation за списком,
-/// собеседниками в кэше пользователей, неотправленными сообщениями, черновиками, языком и днём «сейчас» и применяет изменения не чаще раза
+/// собеседниками в кэше пользователей, неотправленными сообщениями, черновиками, счётчиками непрочитанных, языком и днём «сейчас» и применяет изменения не чаще раза
 /// в `rowsUpdateInterval`, — частые события (поток сообщений, слияние страниц) не перерисовывают список
 /// на каждое изменение.
 @MainActor
@@ -53,9 +53,9 @@ final class ChatListViewModel {
 
     /// Ожидание между обновлениями строк; подменяется в тестах.
     typealias Sleep = @MainActor (Duration) async throws -> Void
-    /// Собирает строку списка из переписки, собеседника, локального состояния (неотправленное или черновик)
-    /// и формата времени.
-    typealias RowBuilder = @MainActor (Conversation, CachedUser?, ChatRowLocalPreview?, MessageTimeFormatter) -> ChatRowDisplayModel
+    /// Собирает строку списка из переписки, собеседника, локального состояния (неотправленное или черновик),
+    /// непрочитанных для показа и формата времени.
+    typealias RowBuilder = @MainActor (Conversation, CachedUser?, ChatRowLocalPreview?, Int, MessageTimeFormatter) -> ChatRowDisplayModel
 
     /// - Parameters:
     ///   - conversationList: список переписок.
@@ -83,7 +83,9 @@ final class ChatListViewModel {
         messageNotifications: MessageNotificationServiceProtocol,
         router: ChatListRouter,
         now: @escaping () -> Date = { Date() },
-        makeRow: @escaping RowBuilder = { ChatRowDisplayModel(conversation: $0, opponent: $1, localPreview: $2, timeFormatter: $3) },
+        makeRow: @escaping RowBuilder = {
+            ChatRowDisplayModel(conversation: $0, opponent: $1, localPreview: $2, unreadCount: $3, timeFormatter: $4)
+        },
         sleep: @escaping Sleep = { try await Task.sleep(for: $0) }
     ) {
         self.conversationList = conversationList
@@ -127,7 +129,8 @@ final class ChatListViewModel {
 
     /// Собирает строки из текущего списка. Строка берётся из кэша, если не изменились ни переписка, ни собеседник,
     /// ни локальное состояние, ни язык, календарь и день формата. Читает список, собеседников, неотправленные
-    /// сообщения, черновики, язык и `referenceDate` — по этим чтениям `observeConversations()` узнаёт об изменениях.
+    /// сообщения, черновики, счётчики непрочитанных, язык и `referenceDate` — по этим чтениям `observeConversations()`
+    /// узнаёт об изменениях.
     private func makeRows() -> [ChatRowDisplayModel] {
         let context = RowFormatContext(language: localizationService.language, calendar: .current, referenceDate: referenceDate)
         if context != rowCacheContext {
@@ -140,9 +143,10 @@ final class ChatListViewModel {
         let rows = conversationList.conversations.map { conversation in
             let opponent = conversation.opponentUserId.map(userCache.user(id:))
             let localPreview = localPreview(for: conversation.id)
-            let row = rowCache[conversation.id]?.row(for: conversation, opponent: opponent, localPreview: localPreview)
-                ?? makeRow(conversation, opponent, localPreview, timeFormatter)
-            cache[conversation.id] = CachedRow(conversation: conversation, opponent: opponent, localPreview: localPreview, row: row)
+            let unreadCount = conversationList.unreadCount(conversationId: conversation.id) ?? 0
+            let key = CachedRow.Key(conversation: conversation, opponent: opponent, localPreview: localPreview, unreadCount: unreadCount)
+            let row = rowCache[conversation.id]?.row(for: key) ?? makeRow(conversation, opponent, localPreview, unreadCount, timeFormatter)
+            cache[conversation.id] = CachedRow(key: key, row: row)
             return row
         }
         // Кэш держит только строки текущего списка — ушедшие переписки (выход, pull-to-refresh) не копятся.
@@ -163,6 +167,16 @@ final class ChatListViewModel {
     /// `true`, пока идёт стартовая синхронизация: в заголовке вместо названия — «Обновление…».
     var isSyncing: Bool {
         conversationList.isSyncing
+    }
+
+    /// Общий счётчик непрочитанных у заголовка «Чаты»: до 99 — точное число, выше — «99+»; `nil` — непрочитанных нет.
+    var totalUnreadText: String? {
+        UnreadCountFormatter.text(for: conversationList.totalUnreadCount)
+    }
+
+    /// Подпись общего счётчика для VoiceOver — с точным числом.
+    var totalUnreadAccessibilityLabel: String? {
+        UnreadCountFormatter.accessibilityLabel(for: conversationList.totalUnreadCount)
     }
 
     /// `true`, пока грузится следующая страница.
@@ -296,19 +310,22 @@ final class ChatListViewModel {
 
 /// Строка списка вместе с данными, из которых она собрана.
 private struct CachedRow {
-    let conversation: Conversation
-    let opponent: CachedUser?
-    let localPreview: ChatRowLocalPreview?
+    /// Всё, из чего собрана строка, кроме формата времени (он в `RowFormatContext`).
+    struct Key: Equatable {
+        let conversation: Conversation
+        let opponent: CachedUser?
+        let localPreview: ChatRowLocalPreview?
+        let unreadCount: Int
+    }
+
+    let key: Key
     let row: ChatRowDisplayModel
 
-    /// Строка, если она собрана из тех же переписки, собеседника и локального состояния.
-    /// - Parameters:
-    ///   - conversation: текущая версия переписки.
-    ///   - opponent: текущее состояние собеседника в кэше пользователей.
-    ///   - localPreview: текущее неотправленное сообщение или черновик переписки.
+    /// Строка, если она собрана из тех же переписки, собеседника, локального состояния и счётчика.
+    /// - Parameter key: текущие данные строки.
     /// - Returns: `nil` — строку нужно собрать заново.
-    func row(for conversation: Conversation, opponent: CachedUser?, localPreview: ChatRowLocalPreview?) -> ChatRowDisplayModel? {
-        guard conversation == self.conversation, opponent == self.opponent, localPreview == self.localPreview else { return nil }
+    func row(for key: Key) -> ChatRowDisplayModel? {
+        guard key == self.key else { return nil }
         return row
     }
 }

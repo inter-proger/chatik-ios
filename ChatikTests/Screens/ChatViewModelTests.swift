@@ -17,6 +17,8 @@ final class ChatViewModelTests: XCTestCase {
     private var localizationService: LocalizationService!
     private var timeChanges: SignificantTimeChangeServiceMock!
     private var notifications: InAppNotificationServiceMock!
+    /// Прочтение переписок — мок списка чатов.
+    private var readStates: ConversationListServiceMock!
     private var sleeper: ThrottleSleeper!
     private var observation: Task<Void, Never>?
     /// Ожидание исходов запросов правки (`observeEditSubmission`) — как `.task` показанного экрана.
@@ -37,6 +39,7 @@ final class ChatViewModelTests: XCTestCase {
         localizationService = LocalizationService(userDefaultsService: UserDefaultsServiceMock(), systemLanguage: .ru)
         timeChanges = SignificantTimeChangeServiceMock()
         notifications = InAppNotificationServiceMock()
+        readStates = ConversationListServiceMock()
         sleeper = ThrottleSleeper()
     }
 
@@ -67,7 +70,7 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertEqual(list.stopCallCount, 1)
     }
 
-    /// Кейс: лента обновилась; за интервал после этого пришли ещё два снимка; затем интервал истёк.
+    /// Кейс: лента обновилась и отлистана от низа; за интервал после этого пришли ещё два снимка; затем интервал истёк.
     /// Ожидание: пока интервал не истёк, сообщения прежние; после — последняя версия; пауза — 0,5 с.
     func test_snapshots_withinInterval_areCoalesced() async {
         let sut = makeSUT()
@@ -75,6 +78,7 @@ final class ChatViewModelTests: XCTestCase {
         list.publish(.make(messages: [.make(id: 1)], isUrgent: true))
         await waitUntil { sut.messages.count == 1 }
         await yieldUntil { [unowned self] in sleeper.isWaiting }
+        sut.setAtBottom(false)
 
         list.publish(.make(messages: [.make(id: 2), .make(id: 1)]))
         list.publish(.make(messages: [.make(id: 3), .make(id: 2), .make(id: 1)]))
@@ -976,6 +980,179 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertEqual(sleeper.requested.count, requestsBefore)
     }
 
+    // MARK: - Прочтение
+
+    /// Кейс: лента с сообщениями собеседника 3, 2, 1 загружена; сцена сначала неактивна, затем активна; затем лента
+    /// отлистана, пришло сообщение 4; затем лента вернулась вниз.
+    /// Ожидание: в неактивной сцене прочтения нет; в активной — до самого нового (3); отлистанная лента 4 не отмечает,
+    /// а возврат вниз — отмечает.
+    func test_markRead_requiresActiveSceneAndBottom() async {
+        let sut = makeSUT()
+        await startObserving(sut)
+        list.publish(.make(messages: incoming(3, 2, 1), isUrgent: true))
+        await waitUntil { sut.messages.count == 3 }
+        XCTAssertTrue(readStates.markReadRequests.isEmpty)
+
+        sut.setSceneActive(true)
+        XCTAssertEqual(readStates.markReadRequests.last?.messageId, 3)
+
+        sut.setAtBottom(false)
+        list.publish(.make(messages: incoming(4, 3, 2, 1)))
+        sleeper.releaseAll()
+        await waitUntil { sut.messages.count == 4 }
+        XCTAssertEqual(readStates.markReadRequests.last?.messageId, 3)
+
+        sut.setAtBottom(true)
+        XCTAssertEqual(readStates.markReadRequests.last?.messageId, 4)
+        XCTAssertEqual(Set(readStates.markReadRequests.map(\.conversationId)), [1])
+    }
+
+    /// Кейс: экран открыт в активной сцене, лента внизу, но идёт первая синхронизация; затем она закончилась.
+    /// Ожидание: пока синхронизация идёт, прочтения нет; после — отмечено до самого нового сообщения.
+    func test_markRead_waitsForSync() async {
+        let sut = makeSUT()
+        sut.setSceneActive(true)
+        await startObserving(sut)
+
+        list.publish(.make(messages: incoming(2, 1), isSyncing: true, isUrgent: true))
+        await waitUntil { sut.messages.count == 2 }
+        XCTAssertTrue(readStates.markReadRequests.isEmpty)
+        list.publish(.make(messages: incoming(3, 2, 1), isSyncing: false, isUrgent: true))
+        await waitUntil { sut.messages.count == 3 }
+
+        XCTAssertEqual(readStates.markReadRequests.map(\.messageId), [3])
+    }
+
+    /// Кейс: при входе у переписки 2 непрочитанных после сообщения 1; лента 3, 2, 1 от собеседника.
+    /// Ожидание: граница — подтверждённый указатель до отметки; заголовок непрочитанных над сообщением 2.
+    func test_unreadBoundary_onEntry_placesHeaderAboveFirstUnread() async {
+        readStates.readStates[1] = .make(unread: 2, lastRead: 1, version: 5)
+        let sut = makeSUT()
+        sut.setSceneActive(true)
+        await startObserving(sut)
+
+        list.publish(.make(messages: incoming(3, 2, 1), isUrgent: true))
+        await waitUntil { sut.unreadHeaderKey != nil }
+
+        XCTAssertEqual(sut.unreadBoundary, 1)
+        XCTAssertEqual(sut.unreadHeaderKey, MessageClientKey(senderId: 2, clientId: "client-2"))
+    }
+
+    /// Кейс: при входе непрочитанных нет.
+    /// Ожидание: границы и заголовка нет.
+    func test_unreadBoundary_onEntryWithoutUnread_noHeader() async {
+        readStates.readStates[1] = .make(unread: 0, lastRead: 3, version: 5)
+        let sut = makeSUT()
+        sut.setSceneActive(true)
+        await startObserving(sut)
+
+        list.publish(.make(messages: incoming(3, 2, 1), isUrgent: true))
+        await waitUntil { !readStates.markReadRequests.isEmpty }
+
+        XCTAssertNil(sut.unreadBoundary)
+        XCTAssertNil(sut.unreadHeaderKey)
+    }
+
+    /// Кейс: при входе непрочитанных нет; лента отлистана; пришли сообщения собеседника 4, затем 5.
+    /// Ожидание: заголовок закрепился над 4 (граница — 3) и от 5 не сдвинулся; ленту вниз не вернули.
+    func test_unreadBoundary_newMessageAway_pinsOnce() async {
+        let sut = makeSUT()
+        sut.setSceneActive(true)
+        await startObserving(sut)
+        list.publish(.make(messages: incoming(3, 2, 1), isUrgent: true))
+        await waitUntil { !readStates.markReadRequests.isEmpty }
+        sut.setAtBottom(false)
+
+        list.publish(.make(messages: incoming(4, 3, 2, 1)))
+        await waitUntil { sut.unreadHeaderKey != nil }
+        list.publish(.make(messages: incoming(5, 4, 3, 2, 1)))
+        sleeper.releaseAll()
+        await waitUntil { sut.messages.count == 5 }
+
+        XCTAssertEqual(sut.unreadBoundary, 3)
+        XCTAssertEqual(sut.unreadHeaderKey, MessageClientKey(senderId: 2, clientId: "client-4"))
+        XCTAssertEqual(sut.scrollToBottomRequest, 0)
+    }
+
+    /// Кейс: лента отлистана; пришло своё сообщение — отправленное с другого клиента.
+    /// Ожидание: лента возвращается вниз; заголовок непрочитанных не появляется.
+    func test_ownMessageAway_requestsScrollToBottom() async {
+        let sut = makeSUT()
+        sut.setSceneActive(true)
+        await startObserving(sut)
+        list.publish(.make(messages: incoming(2, 1), isUrgent: true))
+        await waitUntil { sut.messages.count == 2 }
+        sut.setAtBottom(false)
+
+        list.publish(.make(messages: [.make(id: 3, senderId: 1)] + incoming(2, 1)))
+        sleeper.releaseAll()
+        await waitUntil { sut.messages.count == 3 }
+
+        XCTAssertEqual(sut.scrollToBottomRequest, 1)
+        XCTAssertNil(sut.unreadBoundary)
+    }
+
+    /// Кейс: лента внизу, идёт пауза между обновлениями; пришёл обычный (не срочный) снимок с новым сообщением.
+    /// Ожидание: сообщение показано сразу, без конца паузы, и изменение помечено для анимации вставки.
+    func test_newMessageAtBottom_isShownImmediatelyAndAnimated() async {
+        let sut = makeSUT()
+        await startObserving(sut)
+        list.publish(.make(messages: incoming(1), isUrgent: true))
+        await waitUntil { sut.messages.count == 1 }
+        await yieldUntil { [unowned self] in sleeper.isWaiting }
+        let token = sut.insertionAnimationToken
+
+        list.publish(.make(messages: incoming(2, 1)))
+
+        await waitUntil { sut.messages.count == 2 }
+        XCTAssertEqual(sut.insertionAnimationToken, token + 1)
+    }
+
+    /// Кейс: лента отлистана; пришло новое сообщение; также подгрузились более старые.
+    /// Ожидание: изменения ленты не анимируются.
+    func test_insertionAway_isNotAnimated() async {
+        let sut = makeSUT()
+        await startObserving(sut)
+        list.publish(.make(messages: incoming(2, 1), isUrgent: true))
+        await waitUntil { sut.messages.count == 2 }
+        sut.setAtBottom(false)
+        let token = sut.insertionAnimationToken
+
+        list.publish(.make(messages: incoming(3, 2, 1, 0)))
+        sleeper.releaseAll()
+        await waitUntil { sut.messages.count == 4 }
+
+        XCTAssertEqual(sut.insertionAnimationToken, token)
+    }
+
+    /// Кейс: заголовок закреплён при входе; затем pull-to-refresh, после которого непрочитанных нет.
+    /// Ожидание: граница вычислена заново, как при входе, — заголовок исчез.
+    func test_refresh_recomputesBoundary() async {
+        readStates.readStates[1] = .make(unread: 2, lastRead: 1, version: 5)
+        let sut = makeSUT()
+        sut.setSceneActive(true)
+        await startObserving(sut)
+        list.publish(.make(messages: incoming(3, 2, 1), isUrgent: true))
+        await waitUntil { sut.unreadBoundary == 1 }
+
+        readStates.readStates[1] = .make(unread: 0, lastRead: 3, version: 6)
+        await sut.refresh()
+
+        XCTAssertNil(sut.unreadBoundary)
+    }
+
+    /// Кейс: счётчик непрочитанных для кнопки «вниз» — переписка в списке с 120 непрочитанными; переписки в списке нет.
+    /// Ожидание: «99+» с точным числом для VoiceOver; без переписки в списке — по переписке экрана (непрочитанных нет).
+    func test_unreadBadge_fromReadStates() {
+        readStates.unreadCounts[1] = 120
+        let sut = makeSUT()
+        let other = makeSUT(conversation: .make(id: 5))
+
+        XCTAssertEqual(sut.unreadBadgeText, "99+")
+        XCTAssertEqual(sut.unreadBadgeAccessibilityValue?.hasPrefix("120"), true)
+        XCTAssertNil(other.unreadBadgeText)
+    }
+
     // MARK: - Helpers
 
     /// ViewModel с запущенной лентой, в которой своё доставленное сообщение 15 с текстом «Привет».
@@ -1011,6 +1188,7 @@ final class ChatViewModelTests: XCTestCase {
             dateHeaderFormatterProvider: MessageDateHeaderFormatterProvider.default,
             timeChangeService: timeChanges,
             notifications: notifications,
+            readStates: readStates,
             now: now,
             calendar: { .stub() },
             sleep: { [sleeper] in try await sleeper!.sleep($0) }
@@ -1032,6 +1210,12 @@ final class ChatViewModelTests: XCTestCase {
         await yieldUntil { [unowned self] in list.subscriberCount == 1 && list.startCallCount == 1 }
     }
 
+    /// Сообщения собеседника (отправитель 2) с заданными `messageId`, сначала самые новые.
+    /// - Parameter ids: `messageId` в порядке ленты.
+    private func incoming(_ ids: Int...) -> [Message] {
+        ids.map { Message.make(id: $0, senderId: 2) }
+    }
+
     /// `clientId` сообщений из `Message.make` с заданными `messageId`.
     /// - Parameter ids: `messageId` сообщений в порядке ленты.
     private func clientIds(_ ids: Int...) -> [String] {
@@ -1043,6 +1227,11 @@ private extension ChatViewModel {
     /// Сообщения всех секций в плоском порядке ленты, сначала самые новые.
     var messages: [MessageDisplayModel] {
         sections.flatMap(\.messages)
+    }
+
+    /// Сообщение, над которым стоит заголовок непрочитанных; `nil` — заголовка нет.
+    var unreadHeaderKey: MessageClientKey? {
+        sections.lazy.compactMap(\.unreadHeaderBefore).first
     }
 }
 

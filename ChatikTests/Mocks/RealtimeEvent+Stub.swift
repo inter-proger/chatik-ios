@@ -8,14 +8,18 @@ import Foundation
 
 extension RealtimeEvent {
     /// `received` с превью, собранным из самого сообщения.
-    /// - Parameter message: новое сообщение.
-    static func received(_ message: Message) -> RealtimeEvent {
-        .messageReceived(message, LastMessage(message: message))
+    /// - Parameters:
+    ///   - message: новое сообщение.
+    ///   - readInfo: прочтение из события; по умолчанию — нет.
+    static func received(_ message: Message, readInfo: ReadInfo? = nil) -> RealtimeEvent {
+        .messageReceived(message, LastMessage(message: message), readInfo)
     }
 
     /// `edited` с превью, собранным из самого сообщения, — отредактировано последнее сообщение переписки.
-    /// - Parameter message: отредактированное сообщение.
-    static func edited(_ message: Message) -> RealtimeEvent {
-        .messageEdited(message, LastMessage(message: message))
+    /// - Parameters:
+    ///   - message: отредактированное сообщение.
+    ///   - changeVersion: версия пользователя из события; по умолчанию — нет.
+    static func edited(_ message: Message, changeVersion: Int? = nil) -> RealtimeEvent {
+        .messageEdited(message, LastMessage(message: message), changeVersion: changeVersion)
     }
 }

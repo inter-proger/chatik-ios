@@ -13,7 +13,10 @@ final class ConversationListStateEntity: NSManagedObject {
     /// Водяные знаки в миллисекундах; `nil` — не заданы.
     @NSManaged var positionWatermark: NSNumber?
     @NSManaged var positionWatermarkCeiling: NSNumber?
-    @NSManaged var infoWatermark: NSNumber?
+    /// Курсор `changedAfter`; `nil` — нужна полная загрузка.
+    @NSManaged var syncedChangeVersion: NSNumber?
+    @NSManaged var totalUnreadCount: Int64
+    @NSManaged var totalUnreadVersion: Int64
 
     /// Запрос записи состояния. Имя Entity в модели совпадает с именем класса.
     static func makeFetchRequest() -> NSFetchRequest<ConversationListStateEntity> {
@@ -27,7 +30,9 @@ final class ConversationListStateEntity: NSManagedObject {
         hasMorePages = state.hasMorePages
         positionWatermark = state.positionWatermark.map { NSNumber(value: $0.milliseconds) }
         positionWatermarkCeiling = state.positionWatermarkCeiling.map { NSNumber(value: $0.milliseconds) }
-        infoWatermark = state.infoWatermark.map { NSNumber(value: $0.milliseconds) }
+        syncedChangeVersion = state.syncedChangeVersion.map { NSNumber(value: $0) }
+        totalUnreadCount = Int64(state.totalUnreadCount)
+        totalUnreadVersion = Int64(state.totalUnreadVersion)
     }
 
     /// Записывает состояние в единственную запись (создаёт её, если её нет), не вызывая `save()`.
@@ -51,7 +56,9 @@ extension ConversationListState {
             hasMorePages: entity.hasMorePages,
             positionWatermark: entity.positionWatermark.map { ServerTime(milliseconds: $0.int64Value) },
             positionWatermarkCeiling: entity.positionWatermarkCeiling.map { ServerTime(milliseconds: $0.int64Value) },
-            infoWatermark: entity.infoWatermark.map { ServerTime(milliseconds: $0.int64Value) }
+            syncedChangeVersion: entity.syncedChangeVersion?.intValue,
+            totalUnreadCount: Int(entity.totalUnreadCount),
+            totalUnreadVersion: Int(entity.totalUnreadVersion)
         )
     }
 }

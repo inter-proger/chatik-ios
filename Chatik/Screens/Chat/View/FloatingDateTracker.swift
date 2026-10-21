@@ -54,13 +54,31 @@ final class FloatingDateTracker {
     @ObservationIgnored private var suppressedUntil: ContinuousClock.Instant?
     /// Прокрутка определяется по фазе (iOS 18+), а не по кадрам.
     @ObservationIgnored private let usesScrollPhase: Bool
+    /// Текущий момент; подменяется в тестах.
+    @ObservationIgnored private let now: () -> ContinuousClock.Instant
+    /// Длительность анимированной смены раскладки (вставки нового сообщения).
+    @ObservationIgnored private let layoutAnimationDuration: Duration
+    /// Номер последней анимированной смены раскладки, пришедший с кадром.
+    @ObservationIgnored private var lastLayoutAnimation = 0
 
-    init() {
-        if #available(iOS 18, *) {
-            usesScrollPhase = true
+    /// - Parameters:
+    ///   - layoutAnimationDuration: длительность анимированной смены раскладки ленты.
+    ///   - usesScrollPhase: определять прокрутку по фазе; по умолчанию — на iOS 18+. Подменяется в тестах.
+    ///   - now: текущий момент; подменяется в тестах.
+    init(
+        layoutAnimationDuration: Duration = .zero,
+        usesScrollPhase: Bool? = nil,
+        now: @escaping () -> ContinuousClock.Instant = { .now }
+    ) {
+        self.layoutAnimationDuration = layoutAnimationDuration
+        if let usesScrollPhase {
+            self.usesScrollPhase = usesScrollPhase
+        } else if #available(iOS 18, *) {
+            self.usesScrollPhase = true
         } else {
-            usesScrollPhase = false
+            self.usesScrollPhase = false
         }
+        self.now = now
     }
 
     // MARK: - События ленты
@@ -70,8 +88,10 @@ final class FloatingDateTracker {
     /// - Parameters:
     ///   - row: строка.
     ///   - frame: визуальный кадр в координатах ленты.
-    func update(_ row: FloatingDateRow, frame: CGRect) {
+    ///   - layoutAnimation: номер анимированной смены раскладки, в которой снят кадр.
+    func update(_ row: FloatingDateRow, frame: CGRect, layoutAnimation: Int = 0) {
         rows[row] = frame
+        noteLayoutAnimation(layoutAnimation)
         // Кадры до первых секций — начальная раскладка экрана, а не жест: иначе плашка мигнула бы при открытии,
         // а окно подавления из `setTitles` не началось бы из-за уже идущей «прокрутки».
         guard !usesScrollPhase, !titles.isEmpty, !isSuppressed else {
@@ -97,12 +117,26 @@ final class FloatingDateTracker {
         refresh(scrollStateChanged: false)
     }
 
-    /// Раскладка ленты меняется без жеста пользователя (данные, высота ленты, индикатор подгрузки): на iOS 17
-    /// изменения кадров на время `layoutChangeSuppression` не считаются прокруткой. Во время прокрутки окно
-    /// не начинается — плашка уже видна.
-    func layoutDidChange() {
+    /// Раскладка ленты меняется без жеста пользователя (данные, высота ленты, индикатор подгрузки, анимация вставки):
+    /// на iOS 17 изменения кадров на время `layoutChangeSuppression` — а при анимации ещё и на её длительность —
+    /// не считаются прокруткой. Уже идущее окно не укорачивается. Во время прокрутки окно не начинается — плашка
+    /// уже видна.
+    /// - Parameter animationDuration: длительность анимации, в которой строки сдвигаются; `.zero` — без анимации.
+    func layoutDidChange(animationDuration: Duration = .zero) {
         guard !usesScrollPhase, !isScrolling else { return }
-        suppressedUntil = .now + Self.layoutChangeSuppression
+        let until = now() + animationDuration + Self.layoutChangeSuppression
+        suppressedUntil = max(suppressedUntil ?? until, until)
+    }
+
+    /// Номер анимированной смены раскладки сменился — с первого кадра новой раскладки на время анимации и
+    /// `layoutChangeSuppression` изменения кадров не считаются прокруткой. Номер приходит вместе с кадром, а не
+    /// отдельным `onChange`: тот выполняется уже после первых кадров новой раскладки, и они успевали бы начать
+    /// «прокрутку».
+    /// - Parameter layoutAnimation: номер, с которым строка сообщила кадр.
+    private func noteLayoutAnimation(_ layoutAnimation: Int) {
+        guard layoutAnimation != lastLayoutAnimation else { return }
+        lastLayoutAnimation = layoutAnimation
+        layoutDidChange(animationDuration: layoutAnimationDuration)
     }
 
     /// Фаза прокрутки изменилась (iOS 18+).
@@ -121,7 +155,7 @@ final class FloatingDateTracker {
     /// Идёт окно подавления после изменения раскладки.
     private var isSuppressed: Bool {
         guard let suppressedUntil else { return false }
-        return ContinuousClock.now < suppressedUntil
+        return now() < suppressedUntil
     }
 
     /// Лента сдвинулась (iOS 17): прокрутка идёт, скрытие откладывается до остановки кадров на `hideDelay`.
@@ -205,11 +239,12 @@ extension View {
     /// - Parameters:
     ///   - row: строка ленты.
     ///   - tracker: трекер.
-    func trackFrame(_ row: FloatingDateRow, in tracker: FloatingDateTracker) -> some View {
+    ///   - layoutAnimation: номер анимированной смены раскладки ленты, к которой относится строка.
+    func trackFrame(_ row: FloatingDateRow, in tracker: FloatingDateTracker, layoutAnimation: Int = 0) -> some View {
         onGeometryChange(for: CGRect.self) { proxy in
             proxy.frame(in: .named(FloatingDateTracker.coordinateSpace))
         } action: { frame in
-            tracker.update(row, frame: frame)
+            tracker.update(row, frame: frame, layoutAnimation: layoutAnimation)
         }
         .onDisappear { tracker.remove(row) }
     }

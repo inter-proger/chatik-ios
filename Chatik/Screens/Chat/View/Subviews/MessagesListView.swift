@@ -17,6 +17,10 @@ import SwiftUI
 ///
 /// Секции и строки — плоские `ForEach` внутри одного `LazyVStack`: обёртка дня в `VStack` выключила бы ленивую
 /// загрузку внутри дня, а за день бывают сотни сообщений.
+///
+/// Положение относительно низа ленты меряется якорем низа (`FeedBottomTracker`). Пока лента не внизу, новое сообщение
+/// её не сдвигает — видимую строку держит `FeedOffsetKeeper`; справа внизу тогда же — кнопка «вниз» со счётчиком
+/// непрочитанных. Новое сообщение у нижнего края появляется с анимацией (`insertionAnimationToken`).
 struct MessagesListView: View {
     /// Секции по дням, сначала самые новые.
     let sections: [MessageDaySectionDisplayModel]
@@ -31,42 +35,70 @@ struct MessagesListView: View {
     var menuMessageId: MessageClientKey?
     /// Действия с сообщениями доступны; `false` — режим редактирования, действий нет ни у одного сообщения.
     var areActionsEnabled = true
+    /// Счётчик непрочитанных в углу кнопки «вниз»; `nil` — непрочитанных нет.
+    var unreadBadgeText: String?
+    /// Непрочитанные для VoiceOver — значение кнопки «вниз».
+    var unreadBadgeAccessibilityValue: String?
+    /// Меняется, когда изменение ленты нужно анимировать: новое сообщение у нижнего края.
+    var insertionAnimationToken = 0
+    /// Меняется, когда ленту нужно вернуть вниз.
+    var scrollToBottomRequest = 0
+    /// Лента дошла до низа или ушла от него.
+    var onBottomChange: (Bool) -> Void = { _ in }
 
-    @State private var tracker = FloatingDateTracker()
+    /// Анимация вставки сдвигает строки без жеста всё время анимации: трекер узнаёт о ней по `insertionAnimationToken`
+    /// в кадрах строк, и плавающая дата при этом не появляется.
+    @State private var tracker = FloatingDateTracker(layoutAnimationDuration: .seconds(MessagesListView.scrollAnimationSeconds))
+    @State private var bottomTracker = FeedBottomTracker()
+    @State private var keeper = FeedOffsetKeeper()
+
+    /// Идентификатор якоря низа — цель прокрутки кнопки «вниз».
+    private static let bottomAnchorId = "feedBottom"
+    /// Длительность прокрутки кнопкой «вниз» и вставки нового сообщения, в секундах.
+    private static let scrollAnimationSeconds: TimeInterval = 0.3
+    /// Кривая прокрутки кнопкой «вниз» и вставки нового сообщения: вставка выглядит как та же прокрутка.
+    private static let scrollAnimation: Animation = .easeOut(duration: scrollAnimationSeconds)
+    /// Появление строки у нижнего края: строка выезжает из-под края вместе со сдвигом остальных строк, без
+    /// прозрачности — лента выглядит программно прокрученной вверх. В отражённой ленте визуальный низ — верх
+    /// содержимого, поэтому край `.top`. Удаление без анимации: под той же анимацией строка не должна уезжать.
+    private static let rowInsertion: AnyTransition = .asymmetric(insertion: .move(edge: .top), removal: .identity)
 
     var body: some View {
+        ScrollViewReader { proxy in
+            feed
+                .overlay(alignment: .bottomTrailing) { scrollToBottomButton(proxy: proxy) }
+                .onChange(of: scrollToBottomRequest) { scrollToBottom(proxy) }
+        }
+        .onChange(of: bottomTracker.isAtBottom, initial: true) { _, isAtBottom in
+            keeper.isHolding = !isAtBottom
+            onBottomChange(isAtBottom)
+        }
+        .onAppear {
+            // Компенсация сдвигает строки без жеста: на iOS 17 трекер иначе принял бы её за прокрутку.
+            keeper.onCompensation = { [tracker] in tracker.layoutDidChange() }
+        }
+    }
+
+    /// Лента: якорь низа и строки в перевёрнутом `ScrollView`.
+    private var feed: some View {
         ScrollView {
-            LazyVStack(spacing: 2) {
-                ForEach(sections) { section in
-                    ForEach(section.messages) { message in
-                        MessageBubbleView(
-                            message: message,
-                            onAction: { onAction($0, message) },
-                            onMenuRequest: { onMenuRequest(message, $0) },
-                            isHiddenForMenu: menuMessageId == message.id,
-                            areActionsEnabled: areActionsEnabled
-                        )
-                            .flippedVertically()
-                            .onAppear { onAppear(message) }
-                            .trackFrame(FloatingDateRow(kind: .message(message.id), section: section.id), in: tracker)
-                    }
-                    DateHeaderRow(section: section, tracker: tracker)
-                }
-                if isLoadingOlder {
-                    ProgressView()
-                        .padding()
-                        .flippedVertically()
-                }
+            VStack(spacing: 0) {
+                bottomAnchor
+                rows
+                    .background { FeedScrollViewLocator(keeper: keeper) }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+            .coordinateSpace(.named(FeedOffsetKeeper.contentSpace))
         }
         .flippedVertically()
         .scrollPhaseTracking(tracker)
         // Пространство — снаружи отражения: кадры строк в нём уже визуальные.
         .coordinateSpace(.named(FloatingDateTracker.coordinateSpace))
         // Клавиатура и поворот меняют высоту ленты и сдвигают строки без жеста.
-        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { _ in tracker.layoutDidChange() }
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+            tracker.layoutDidChange()
+            bottomTracker.viewportDidChange(height: height)
+            keeper.viewportDidChange(height: height)
+        }
         .overlay(alignment: .top) { FloatingDateHeaderView(tracker: tracker) }
         // Только заголовки, а не сами секции: сравнение всей ленты с сообщениями на каждом `body` шло бы на main.
         .onChange(of: sectionTitles, initial: true) { _, titles in tracker.setTitles(titles) }
@@ -75,10 +107,111 @@ struct MessagesListView: View {
         .scrollDismissesKeyboard(.interactively)
     }
 
+    /// Якорь низа: строка нулевой высоты у начала данных (визуально — у нижнего края) вне `LazyVStack` — выкладывается
+    /// всегда и сообщает, насколько лента отлистана от низа.
+    private var bottomAnchor: some View {
+        Color.clear
+            .frame(height: 0)
+            .id(Self.bottomAnchorId)
+            .onGeometryChange(for: CGFloat.self) { proxy in
+                proxy.frame(in: .named(FloatingDateTracker.coordinateSpace)).minY
+            } action: { minY in
+                bottomTracker.anchorDidMove(minY: minY)
+            }
+    }
+
+    /// Строки ленты: сообщения, заголовки непрочитанных и дней, индикатор подгрузки старых.
+    private var rows: some View {
+        LazyVStack(spacing: 2) {
+            ForEach(sections) { section in
+                ForEach(section.messages) { message in
+                    messageRow(message, in: section)
+                        .transition(Self.rowInsertion)
+                    if section.unreadHeaderBefore == message.id {
+                        // В данных после сообщения — визуально над ним.
+                        UnreadMessagesHeaderView()
+                            .padding(.vertical, 6)
+                            .flippedVertically()
+                            .transition(Self.rowInsertion)
+                    }
+                }
+                DateHeaderRow(section: section, tracker: tracker, layoutAnimation: insertionAnimationToken)
+                    .transition(Self.rowInsertion)
+            }
+            if isLoadingOlder {
+                ProgressView()
+                    .padding()
+                    .flippedVertically()
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .animation(Self.scrollAnimation, value: insertionAnimationToken)
+    }
+
+    /// Строка сообщения: пузырь, подгрузка старых, кадр для плавающей даты и для удержания ленты.
+    /// - Parameters:
+    ///   - message: сообщение.
+    ///   - section: секция сообщения.
+    private func messageRow(_ message: MessageDisplayModel, in section: MessageDaySectionDisplayModel) -> some View {
+        MessageBubbleView(
+            message: message,
+            onAction: { onAction($0, message) },
+            onMenuRequest: { onMenuRequest(message, $0) },
+            isHiddenForMenu: menuMessageId == message.id,
+            areActionsEnabled: areActionsEnabled
+        )
+            .flippedVertically()
+            .onAppear { onAppear(message) }
+            .trackFrame(
+                FloatingDateRow(kind: .message(message.id), section: section.id),
+                in: tracker,
+                layoutAnimation: insertionAnimationToken
+            )
+            .holdsFeedPosition(message.id, keeper: keeper)
+    }
+
+    /// Кнопка «вниз»: видна, если лента не внизу и либо отлистана дальше порога, либо есть непрочитанные.
+    /// - Parameter proxy: прокрутка к якорю низа.
+    @ViewBuilder
+    private func scrollToBottomButton(proxy: ScrollViewProxy) -> some View {
+        if !bottomTracker.isAtBottom, bottomTracker.isBeyondThreshold || unreadBadgeText != nil {
+            ScrollToBottomButton(badgeText: unreadBadgeText, accessibilityValue: unreadBadgeAccessibilityValue) {
+                scrollToBottom(proxy)
+            }
+            .padding(.trailing, 12)
+            .padding(.bottom, 12)
+            .transition(.scale.combined(with: .opacity))
+        }
+    }
+
+    /// Возвращает ленту вниз: издалека — переходом без анимации (анимированная прокрутка через сотни ленивых строк
+    /// дёргается), иначе — плавно. На время возврата удержание не компенсирует сдвиги — иначе спорило бы с прокруткой.
+    /// Отметку прочтения сделает экран, когда лента окажется внизу.
+    /// - Parameter proxy: прокрутка к якорю низа.
+    private func scrollToBottom(_ proxy: ScrollViewProxy) {
+        keeper.beginReturnToBottom()
+        guard !bottomTracker.shouldJumpToBottom else {
+            proxy.scrollTo(Self.bottomAnchorId, anchor: .top)
+            return
+        }
+        withAnimation(Self.scrollAnimation) {
+            proxy.scrollTo(Self.bottomAnchorId, anchor: .top)
+        }
+    }
+
     /// Заголовки секций для трекера плавающей даты.
     private var sectionTitles: [MessageDaySectionID: String] {
         Dictionary(sections.map { ($0.id, $0.title) }, uniquingKeysWith: { first, _ in first })
     }
+}
+
+/// Кадр строки для удержания ленты.
+private struct FeedRowPosition: Equatable {
+    /// `minY` в координатах содержимого прокрутки.
+    let contentMinY: CGFloat
+    /// Визуальный `minY` в координатах ленты.
+    let visualMinY: CGFloat
 }
 
 /// Заголовок дня в ленте. Отдельный View: прозрачность под плашкой перерисовывает только этот заголовок, а не всю
@@ -86,18 +219,37 @@ struct MessagesListView: View {
 private struct DateHeaderRow: View {
     let section: MessageDaySectionDisplayModel
     let tracker: FloatingDateTracker
+    /// Номер анимированной смены раскладки ленты — для трекера.
+    let layoutAnimation: Int
 
     var body: some View {
         MessageDateHeaderView(title: section.title)
             .opacity(tracker.coveredHeader == section.id ? 0 : 1)
             .flippedVertically()
-            .trackFrame(FloatingDateRow(kind: .header, section: section.id), in: tracker)
+            .trackFrame(FloatingDateRow(kind: .header, section: section.id), in: tracker, layoutAnimation: layoutAnimation)
             // Снаружи `trackFrame`: трекер знает кадр капсулы, и плашка встаёт ровно на место заголовка.
             .padding(.vertical, 8)
     }
 }
 
 private extension View {
+    /// Сообщает удержанию ленты кадр строки: в координатах содержимого — для компенсации, визуальный — чтобы понять,
+    /// видна ли строка.
+    /// - Parameters:
+    ///   - id: строка.
+    ///   - keeper: удержание ленты.
+    func holdsFeedPosition(_ id: MessageClientKey, keeper: FeedOffsetKeeper) -> some View {
+        onGeometryChange(for: FeedRowPosition.self) { proxy in
+            FeedRowPosition(
+                contentMinY: proxy.frame(in: .named(FeedOffsetKeeper.contentSpace)).minY,
+                visualMinY: proxy.frame(in: .named(FloatingDateTracker.coordinateSpace)).minY
+            )
+        } action: { position in
+            keeper.rowDidMove(id, contentMinY: position.contentMinY, visualMinY: position.visualMinY)
+        }
+        .onDisappear { keeper.rowDidDisappear(id) }
+    }
+
     /// Скрывает эффекты краёв прокрутки iOS 26 (размытие и затемнение под панелями). Для перевёрнутой ленты они
     /// рисуются не у тех краёв: нижний эффект, высота которого — панель ввода вместе с клавиатурой, оказывается
     /// сверху и при открытой клавиатуре затемняет почти всю ленту. Подложку под панелью навигации рисует `ChatView`.

@@ -49,3 +49,9 @@
 
 /* Confirm button that replaces "Send" while editing (VoiceOver) */
 "chat.edit.save" = "Save";
+
+/* Заголовок в ленте над первым непрочитанным сообщением */
+"chat.unread_header" = "Unread messages";
+
+/* Кнопка со стрелкой вниз над лентой (для VoiceOver) */
+"chat.scroll_to_bottom" = "Scroll to latest message";

@@ -15,6 +15,13 @@ final class ConversationListServiceMock: ConversationListServiceProtocol {
     var isLoadingNextPage = false
     var hasMorePages = false
     var isLoaded = false
+    var totalUnreadCount = 0
+    /// Подтверждённое прочтение по `conversationId`; нет ключа — переписки нет в списке.
+    var readStates: [Int: ConversationReadState] = [:]
+    /// Непрочитанные для показа по `conversationId`; нет ключа — переписки нет в списке.
+    var unreadCounts: [Int: Int] = [:]
+    /// Запросы `markRead` по порядку.
+    private(set) var markReadRequests: [(conversationId: Int, messageId: Int)] = []
     /// Чем завершается `synchronizeIfNeeded()`; `nil` — успешно.
     var stubbedSynchronizeIfNeededError: Error?
     /// Чем завершается `refresh()`; `nil` — успешно.
@@ -26,6 +33,7 @@ final class ConversationListServiceMock: ConversationListServiceProtocol {
     private(set) var nextPageRequests: [Int] = []
     private(set) var applied: [Conversation] = []
     private(set) var sentMessages: [Message] = []
+    private(set) var sentReadInfos: [ReadInfo?] = []
     private(set) var editedMessages: [(message: Message, lastMessage: LastMessage?)] = []
     /// Вызывается в `start()` — чтобы проверить, что к этому моменту уже сделано.
     var onStart: (() -> Void)?
@@ -57,8 +65,21 @@ final class ConversationListServiceMock: ConversationListServiceProtocol {
         applied.append(conversation)
     }
 
-    func applySentMessage(_ message: Message) {
+    func applySentMessage(_ message: Message, readInfo: ReadInfo?) {
         sentMessages.append(message)
+        sentReadInfos.append(readInfo)
+    }
+
+    func readState(conversationId: Int) -> ConversationReadState? {
+        readStates[conversationId]
+    }
+
+    func unreadCount(conversationId: Int) -> Int? {
+        unreadCounts[conversationId]
+    }
+
+    func markRead(conversationId: Int, messageId: Int) {
+        markReadRequests.append((conversationId, messageId))
     }
 
     func applyEditedMessage(_ message: Message, lastMessage: LastMessage?) {

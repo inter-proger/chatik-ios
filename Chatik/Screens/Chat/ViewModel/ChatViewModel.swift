@@ -36,6 +36,13 @@ import os
 /// задача которого живёт, пока экран показан. Ошибка, которую экран не успел показать, остаётся в сервисе до
 /// следующего открытия.
 ///
+/// Прочтение (раздел «Прочтение», решения 6 и 10 в `docs/unread-messages.md`): переписка отмечается прочитанной до
+/// самого нового показанного серверного сообщения, когда экран в активной сцене, лента внизу и загружена, — одно
+/// правило покрывает вход, входящее у нижнего края, докрутку до низа и возврат из фона. Заголовок непрочитанных
+/// стоит над первым сообщением после границы `unreadBoundary`: при входе это указатель до первой отметки, при новом
+/// сообщении собеседника вне видимости — сообщение перед ним; дальше граница не двигается до повторного входа
+/// или pull-to-refresh. Положение ленты и активность сцены сообщает View.
+///
 /// Тексты и производные данные — в `ChatViewModel+Texts`.
 @MainActor
 @Observable
@@ -67,6 +74,14 @@ final class ChatViewModel {
     private(set) var hasOlder = false
     /// Окно ленты прочитано из БД хотя бы раз: до этого пустая лента — ещё не «сообщений нет».
     private(set) var isLoaded = false
+    /// Граница непрочитанных: id последнего сообщения, прочитанного до заголовка «Непрочитанные сообщения».
+    /// `nil` — заголовка нет.
+    private(set) var unreadBoundary: Int?
+    /// Растёт, когда новое сообщение появляется у нижнего края ленты: View анимирует это изменение ленты.
+    /// Подгрузка старых, правка, смена статуса и вставка при отлистанной ленте его не меняют.
+    private(set) var insertionAnimationToken = 0
+    /// Растёт, когда ленту нужно вернуть вниз: своё сообщение при отлистанной ленте.
+    private(set) var scrollToBottomRequest = 0
 
     /// Минимальный интервал между обновлениями ленты.
     static let messagesUpdateInterval: Duration = .milliseconds(500)
@@ -96,6 +111,8 @@ final class ChatViewModel {
     private let dateHeaderFormatterProvider: MessageDateHeaderFormatterProviding
     private let timeChangeService: SignificantTimeChangeServiceProtocol
     private let notifications: InAppNotificationServiceProtocol
+    /// Прочтение переписки и отметка прочтения.
+    let readStates: ConversationReadStateProviding
     private let sleep: Sleep
 
     /// Сообщения с сервера из последнего снимка ленты. Не наблюдается: об изменении `observeMessages()` узнаёт
@@ -115,6 +132,19 @@ final class ChatViewModel {
     @ObservationIgnored private var snapshotsTask: Task<Void, Never>?
     /// Подписка на значимые изменения времени, пока лента запущена.
     @ObservationIgnored private var timeChangesTask: Task<Void, Never>?
+    /// Сцена экрана активна — сообщает View.
+    @ObservationIgnored private var isSceneActive = false
+    /// Лента внизу: последнее сообщение видно — сообщает View.
+    @ObservationIgnored private var isAtBottom = true
+    /// Граница непрочитанных уже вычислена при входе или pull-to-refresh: дальше её меняет только новое сообщение.
+    @ObservationIgnored private var isUnreadBoundaryResolved = false
+    /// Самое новое серверное сообщение последнего снимка — чтобы заметить новые.
+    @ObservationIgnored private var snapshotNewestServerId: Int?
+    /// Самое новое серверное сообщение показанной ленты — до него отмечается прочтение.
+    @ObservationIgnored private var displayedNewestServerId: Int?
+    /// Все неотправленные сообщения, побывавшие в ленте: подтверждённое сервером своё сообщение не анимируется второй
+    /// раз — у него тот же `id`.
+    @ObservationIgnored private var knownOutgoingKeys: Set<MessageClientKey> = []
 
     /// Ожидание между обновлениями ленты; подменяется в тестах.
     typealias Sleep = @MainActor (Duration) async throws -> Void
@@ -133,6 +163,7 @@ final class ChatViewModel {
     ///   - dateHeaderFormatterProvider: форматтеры заголовков дней по языку.
     ///   - timeChangeService: полночь, смена часового пояса и перевод часов — пересобирают заголовки.
     ///   - notifications: показ ошибок ленты и правки.
+    ///   - readStates: прочтение переписки — граница непрочитанных, счётчик кнопки «вниз» и отметка прочтения.
     ///   - now: текущее время; подменяется в тестах форматирования.
     ///   - calendar: календарь устройства; подменяется в тестах, чтобы деление на дни не зависело от устройства.
     ///   - sleep: ожидание между обновлениями ленты; подменяется в тестах.
@@ -149,6 +180,7 @@ final class ChatViewModel {
         dateHeaderFormatterProvider: MessageDateHeaderFormatterProviding,
         timeChangeService: SignificantTimeChangeServiceProtocol,
         notifications: InAppNotificationServiceProtocol,
+        readStates: ConversationReadStateProviding,
         now: @escaping () -> Date = { Date() },
         calendar: @escaping () -> Calendar = { .current },
         sleep: @escaping Sleep = { try await Task.sleep(for: $0) }
@@ -165,6 +197,7 @@ final class ChatViewModel {
         self.dateHeaderFormatterProvider = dateHeaderFormatterProvider
         self.timeChangeService = timeChangeService
         self.notifications = notifications
+        self.readStates = readStates
         self.now = now
         self.calendar = calendar
         self.sleep = sleep
@@ -248,11 +281,14 @@ final class ChatViewModel {
             let isWindowLoaded = isServerWindowLoaded
             loadSenders(ids: input.senders.keys)
             let feed = await Self.buildFeed(input)
+            updateInsertionAnimation(input: input)
             messagePositions = feed.positions
             if feed.sections != sections {
                 sections = feed.sections
             }
             isLoaded = isWindowLoaded
+            displayedNewestServerId = feed.newestServerMessageId
+            markReadIfNeeded()
             await loop.waitBeforeNextUpdate(sleep: sleep)
             guard await iterator.next() != nil else { return }
         }
@@ -283,7 +319,9 @@ final class ChatViewModel {
         serverMessages = snapshot.messages
         refreshEditedMessageText()
         isServerWindowLoaded = snapshot.isLoaded
-        if snapshot.isUrgent {
+        let hasNewMessages = handleNewMessages(in: snapshot.messages)
+        // Новое сообщение у нижнего края не ждёт паузы: оно появляется с анимацией, и задержка была бы заметна.
+        if snapshot.isUrgent || (hasNewMessages && isAtBottom) {
             requestImmediateUpdate()
         } else {
             updateLoops.forEach { $0.signalChange() }
@@ -295,9 +333,12 @@ final class ChatViewModel {
         updateLoops.forEach { $0.signalUrgentChange() }
     }
 
-    /// Синхронизация по pull-to-refresh: ждёт её окончания, ошибка придёт в снимке.
+    /// Синхронизация по pull-to-refresh: ждёт её окончания, ошибка придёт в снимке. Граница непрочитанных после неё
+    /// вычисляется заново, как при входе.
     func refresh() async {
         await messagesList.synchronize()
+        isUnreadBoundaryResolved = false
+        markReadIfNeeded()
     }
 
     /// Начинает загрузку более старых сообщений, если показано одно из самых старых.
@@ -322,6 +363,8 @@ final class ChatViewModel {
             serverMessages: serverMessages,
             outgoing: outgoing,
             senders: Dictionary(uniqueKeysWithValues: senderIds.map { ($0, cachedSender(id: $0)) }),
+            unreadBoundary: unreadBoundary,
+            hasOlder: hasOlder,
             context: MessageDisplayContext(
                 currentUserId: sessionService.currentUser?.userId,
                 locale: locale,
@@ -367,7 +410,100 @@ final class ChatViewModel {
         if let draftUserId {
             draftService.remove(conversationId: conversation.conversationId, userId: draftUserId)
         }
+        requestScrollToBottomIfNeeded()
         requestImmediateUpdate()
+    }
+
+    // MARK: - Прочтение
+
+    /// Сцена экрана стала активной или неактивной (шторка, фон, неактивная сцена iPad).
+    /// - Parameter isActive: `scenePhase == .active` сцены экрана.
+    func setSceneActive(_ isActive: Bool) {
+        guard isActive != isSceneActive else { return }
+        isSceneActive = isActive
+        markReadIfNeeded()
+    }
+
+    /// Лента дошла до низа или ушла от него.
+    /// - Parameter atBottom: последнее сообщение видно.
+    func setAtBottom(_ atBottom: Bool) {
+        guard atBottom != isAtBottom else { return }
+        isAtBottom = atBottom
+        markReadIfNeeded()
+    }
+
+    /// Правило прочтения (решение 6): экран в активной сцене, лента внизу, загружена и не идёт синхронизация — тогда
+    /// переписка отмечается прочитанной до самого нового показанного серверного сообщения. Повторы отсекает сервис
+    /// прочтения. Первая отметка сначала фиксирует границу непрочитанных.
+    private func markReadIfNeeded() {
+        guard isSceneActive, isAtBottom, isLoaded, !isSyncing, let newest = displayedNewestServerId else { return }
+        resolveUnreadBoundaryIfNeeded()
+        readStates.markRead(conversationId: conversation.conversationId, messageId: newest)
+    }
+
+    /// Прочтение переписки: из сервиса прочтения (список чатов или последний `ReadInfo` по ней), а пока оно там
+    /// неизвестно — из переписки, с которой открыт экран.
+    var currentReadState: ConversationReadState {
+        readStates.readState(conversationId: conversation.conversationId) ?? conversation.readState
+    }
+
+    /// Фиксирует границу непрочитанных при входе (и после pull-to-refresh) — по подтверждённому указателю до первой
+    /// отметки прочтения. Непрочитанных нет — заголовка нет.
+    private func resolveUnreadBoundaryIfNeeded() {
+        guard !isUnreadBoundaryResolved else { return }
+        isUnreadBoundaryResolved = true
+        let readState = currentReadState
+        setUnreadBoundary(readState.unreadCount > 0 ? readState.lastReadMessageId : nil)
+    }
+
+    /// Меняет границу непрочитанных и сразу пересобирает ленту: заголовок не ждёт паузы обновления.
+    /// - Parameter boundary: новая граница.
+    private func setUnreadBoundary(_ boundary: Int?) {
+        guard boundary != unreadBoundary else { return }
+        unreadBoundary = boundary
+        requestImmediateUpdate()
+    }
+
+    /// Разбирает новые серверные сообщения снимка: своё при отлистанной ленте возвращает её вниз, сообщение
+    /// собеседника вне видимости закрепляет заголовок непрочитанных над собой, если его ещё нет.
+    /// - Parameter messages: сообщения снимка, сначала самые новые.
+    /// - Returns: `true` — в снимке есть сообщения новее прежнего снимка.
+    private func handleNewMessages(in messages: [Message]) -> Bool {
+        let previousNewest = snapshotNewestServerId
+        snapshotNewestServerId = messages.first?.messageId
+        guard let previousNewest, let newest = messages.first?.messageId, newest > previousNewest else { return false }
+        let newMessages = messages.prefix { $0.messageId > previousNewest }
+        let currentUserId = sessionService.currentUser?.userId
+        if newMessages.contains(where: { $0.senderId == currentUserId }) {
+            requestScrollToBottomIfNeeded()
+        }
+        if !isAtBottom, isUnreadBoundaryResolved, unreadBoundary == nil,
+           newMessages.contains(where: { $0.senderId != currentUserId }) {
+            setUnreadBoundary(previousNewest)
+        }
+        return true
+    }
+
+    /// Просит View вернуть ленту вниз, если она отлистана.
+    private func requestScrollToBottomIfNeeded() {
+        guard !isAtBottom else { return }
+        scrollToBottomRequest += 1
+    }
+
+    /// Анимирует изменение ленты, если у нижнего края появилось новое сообщение: серверное новее показанного
+    /// (кроме подтверждения своего неотправленного — у него тот же `id`) или новое неотправленное.
+    /// - Parameter input: входные данные собираемой ленты.
+    private func updateInsertionAnimation(input: MessagesBuildInput) {
+        let outgoingKeys = Set(input.outgoing.map(\.clientKey))
+        let hasNewOutgoing = !outgoingKeys.isSubset(of: knownOutgoingKeys)
+        knownOutgoingKeys.formUnion(outgoingKeys)
+        // До первой показанной ленты вставок нет: это загрузка экрана.
+        guard isAtBottom, isLoaded else { return }
+        let previousNewest = displayedNewestServerId ?? 0
+        let hasNewServer = input.serverMessages.prefix { $0.messageId > previousNewest }
+            .contains { !knownOutgoingKeys.contains($0.clientKey) }
+        guard hasNewOutgoing || hasNewServer else { return }
+        insertionAnimationToken += 1
     }
 
     // MARK: - Черновик
@@ -584,6 +720,10 @@ struct MessagesBuildInput: Sendable {
     let outgoing: [OutgoingMessage]
     /// Отправители по идентификатору.
     let senders: [Int: CachedUser]
+    /// Граница непрочитанных: id последнего сообщения, прочитанного до заголовка. `nil` — заголовка нет.
+    let unreadBoundary: Int?
+    /// Есть ли сообщения старше окна: без них заголовок над самым старым загруженным мог бы оказаться не на месте.
+    let hasOlder: Bool
     let context: MessageDisplayContext
 
     /// Лента для отображения, сначала самые новые: неотправленные — в самом низу ленты (в начале массива), под
@@ -600,9 +740,27 @@ struct MessagesBuildInput: Sendable {
         let items = pending.reversed().map(ChatFeedItem.outgoing) + serverMessages.map(ChatFeedItem.sent)
         let runs = dayRuns(of: items)
         let ids = sectionIDs(of: runs)
-        let sections = zip(runs, ids).map { run, id in makeSection(id: id, items: items[run.range]) }
+        let unreadHeaderKey = unreadHeaderKey()
+        let sections = zip(runs, ids).map { run, id in
+            makeSection(id: id, items: items[run.range], unreadHeaderKey: unreadHeaderKey)
+        }
         let positions = items.enumerated().map { ($0.element.clientKey, $0.offset) }
-        return MessagesFeed(sections: sections, positions: Dictionary(positions, uniquingKeysWith: { first, _ in first }))
+        return MessagesFeed(
+            sections: sections,
+            positions: Dictionary(positions, uniquingKeysWith: { first, _ in first }),
+            newestServerMessageId: serverMessages.first?.messageId
+        )
+    }
+
+    /// Сообщение, над которым стоит заголовок непрочитанных: самое старое серверное сообщение после границы от другого
+    /// отправителя. Если ни одного сообщения до границы в окне нет, а есть более старые, заголовок выше окна —
+    /// он появится при подгрузке.
+    /// - Returns: `nil` — заголовка в окне нет.
+    private func unreadHeaderKey() -> MessageClientKey? {
+        guard let unreadBoundary else { return nil }
+        guard !hasOlder || serverMessages.contains(where: { $0.messageId <= unreadBoundary }) else { return nil }
+        let currentUserId = context.currentUserId
+        return serverMessages.last { $0.messageId > unreadBoundary && $0.senderId != currentUserId }?.clientKey
     }
 
     /// Разбивает элементы на подряд идущие серии одного дня.
@@ -638,7 +796,12 @@ struct MessagesBuildInput: Sendable {
     /// - Parameters:
     ///   - id: идентификатор секции.
     ///   - items: элементы секции, сначала самые новые.
-    private func makeSection(id: MessageDaySectionID, items: ArraySlice<ChatFeedItem>) -> MessageDaySectionDisplayModel {
+    ///   - unreadHeaderKey: сообщение, над которым стоит заголовок непрочитанных; в секцию попадает, если оно в ней.
+    private func makeSection(
+        id: MessageDaySectionID,
+        items: ArraySlice<ChatFeedItem>,
+        unreadHeaderKey: MessageClientKey?
+    ) -> MessageDaySectionDisplayModel {
         let messages = items.indices.map { index in
             let item = items[index]
             // Порядок — от новых к старым, поэтому первое сообщение серии — то, за которым идёт сообщение
@@ -653,7 +816,8 @@ struct MessagesBuildInput: Sendable {
             }
         }
         let title = context.dateHeaderFormatter.string(from: items[items.startIndex].createdAt, now: context.now)
-        return MessageDaySectionDisplayModel(id: id, title: title, messages: messages)
+        let header = unreadHeaderKey.flatMap { key in items.contains { $0.clientKey == key } ? key : nil }
+        return MessageDaySectionDisplayModel(id: id, title: title, messages: messages, unreadHeaderBefore: header)
     }
 }
 
@@ -663,6 +827,8 @@ struct MessagesFeed: Sendable {
     let sections: [MessageDaySectionDisplayModel]
     /// Позиция каждого сообщения в плоском порядке ленты, от самого нового.
     let positions: [MessageClientKey: Int]
+    /// Самое новое серверное сообщение ленты — для правила прочтения; `nil` — серверных сообщений нет.
+    let newestServerMessageId: Int?
 }
 
 /// Подряд идущие элементы ленты одного дня.

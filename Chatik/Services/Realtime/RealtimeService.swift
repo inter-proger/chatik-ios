@@ -14,10 +14,13 @@ enum RealtimeEvent: Equatable, Sendable {
     case connected
     /// Создана личная переписка.
     case conversationCreated(Conversation)
-    /// Новое сообщение и новое превью его переписки.
-    case messageReceived(Message, LastMessage)
-    /// Сообщение отредактировано; превью — только если отредактировано последнее сообщение переписки.
-    case messageEdited(Message, LastMessage?)
+    /// Переписка прочитана — на этом или другом устройстве текущего пользователя.
+    case conversationRead(ReadInfo)
+    /// Новое сообщение, новое превью его переписки и прочтение для текущего пользователя (`nil` — его нет в событии).
+    case messageReceived(Message, LastMessage, ReadInfo?)
+    /// Сообщение отредактировано; превью и версия пользователя — только если отредактировано последнее сообщение
+    /// переписки.
+    case messageEdited(Message, LastMessage?, changeVersion: Int?)
 }
 
 @MainActor
@@ -439,8 +442,9 @@ final class RealtimeService: RealtimeServiceProtocol {
     private func realtimeEvent(for event: WebSocketServerEvent) -> RealtimeEvent? {
         switch event {
         case let .conversationCreated(conversation): return .conversationCreated(conversation)
-        case let .messageReceived(message, lastMessage): return .messageReceived(message, lastMessage)
-        case let .messageEdited(message, lastMessage): return .messageEdited(message, lastMessage)
+        case let .conversationRead(readInfo): return .conversationRead(readInfo)
+        case let .messageReceived(message, lastMessage, readInfo): return .messageReceived(message, lastMessage, readInfo)
+        case let .messageEdited(message, lastMessage, changeVersion): return .messageEdited(message, lastMessage, changeVersion: changeVersion)
         case .connected, .connectionError, .unknown: return nil
         }
     }

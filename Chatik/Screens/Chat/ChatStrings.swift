@@ -27,6 +27,8 @@ enum ChatStrings {
     static var editTitle: String { localized("chat.edit.title") }
     static var editCancel: String { localized("chat.edit.cancel") }
     static var editSave: String { localized("chat.edit.save") }
+    static var unreadHeader: String { localized("chat.unread_header") }
+    static var scrollToBottom: String { localized("chat.scroll_to_bottom") }
 
     /// Подсказка о превышении длины сообщения.
     /// - Parameter maxLength: лимит длины на стороне сервера.

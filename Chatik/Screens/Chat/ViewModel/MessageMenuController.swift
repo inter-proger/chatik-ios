@@ -126,6 +126,12 @@ final class MessageMenuController {
         presenter.dismiss()
     }
 
+    /// Уход с экрана: ждущее меню не покажется, показанное закрывается сразу, без выбора.
+    func dismiss() {
+        pending = nil
+        presenter.dismiss()
+    }
+
     /// Показывает ждущее меню, если оно ещё ждёт.
     /// - Parameter id: меню, которое должно быть показано.
     private func presentPending(id: UUID) {

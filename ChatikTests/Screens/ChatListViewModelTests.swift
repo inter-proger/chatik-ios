@@ -16,6 +16,8 @@ final class ChatListViewModelTests: XCTestCase {
     private var unsentMessages: UnsentMessagePreviewProvidingMock!
     private var router: ChatListRouter!
     private var notifications: InAppNotificationServiceMock!
+    private var navigator: ConversationNavigatorMock!
+    private var messageNotifications: MessageNotificationServiceMock!
     private var sleeper: RowsUpdateSleeper!
     private var sut: ChatListViewModel!
     /// Наблюдатель строк текущего `sut`; отменяется в `tearDown` и при замене `sut`.
@@ -32,6 +34,8 @@ final class ChatListViewModelTests: XCTestCase {
         unsentMessages = UnsentMessagePreviewProvidingMock()
         router = ChatListRouter()
         notifications = InAppNotificationServiceMock()
+        navigator = ConversationNavigatorMock()
+        messageNotifications = MessageNotificationServiceMock()
         sleeper = RowsUpdateSleeper()
         sut = makeSUT(now: { ServerTime.stub.date })
     }
@@ -627,6 +631,42 @@ final class ChatListViewModelTests: XCTestCase {
         XCTAssertEqual(router.presentedSheet, .createSingleConversation)
     }
 
+    // MARK: - Уведомления о сообщениях
+
+    /// Кейс: экран появился дважды подряд (без исчезновения).
+    /// Ожидание: роутер экрана зарегистрирован в навигаторе один раз, со сценой экрана.
+    func test_didAppear_registersRouterOnce() {
+        let sceneId = UUID()
+
+        sut.didAppear(sceneId: sceneId)
+        sut.didAppear(sceneId: sceneId)
+
+        XCTAssertEqual(navigator.registrations.count, 1)
+        XCTAssertTrue(navigator.registrations.first?.router === router)
+        XCTAssertEqual(navigator.registrations.first?.sceneId, sceneId)
+    }
+
+    /// Кейс: экран появился и исчез; исчез ещё раз.
+    /// Ожидание: регистрация снята один раз, тем же токеном.
+    func test_didDisappear_unregistersRouter() {
+        sut.didAppear(sceneId: nil)
+        let token = navigator.registrations.first?.token
+
+        sut.didDisappear()
+        sut.didDisappear()
+
+        XCTAssertEqual(navigator.unregisteredTokens, token.map { [$0] })
+    }
+
+    /// Кейс: поверх списка открылась переписка, затем её закрыли.
+    /// Ожидание: сервис уведомлений узнал об открытии один раз; закрытие ему не передаётся.
+    func test_openedConversationDidChange_notifiesOpenedConversation() {
+        sut.openedConversationDidChange(1)
+        sut.openedConversationDidChange(nil)
+
+        XCTAssertEqual(messageNotifications.openedConversationIds, [1])
+    }
+
     // MARK: - Helpers
 
     /// Создаёт ViewModel над моками теста.
@@ -647,6 +687,8 @@ final class ChatListViewModelTests: XCTestCase {
             unsentMessages: unsentMessages,
             localizationService: localizationService ?? LocalizationService(userDefaultsService: UserDefaultsServiceMock(), systemLanguage: .ru),
             notifications: notifications,
+            navigator: navigator,
+            messageNotifications: messageNotifications,
             router: router,
             now: now,
             makeRow: makeRow ?? { ChatRowDisplayModel(conversation: $0, opponent: $1, localPreview: $2, timeFormatter: $3) },

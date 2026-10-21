@@ -16,7 +16,7 @@ struct InAppNotification: Identifiable {
     let duration: Duration
     /// Тактильный отклик при появлении; `nil` — без отклика.
     let feedback: SensoryFeedback?
-    /// Действие по нажатию; `nil` — нажатие ничего не делает (ошибки).
+    /// Действие по нажатию; `nil` — нажатие ничего не делает (ошибки). У сообщений — открыть переписку.
     let onTap: (@MainActor () -> Void)?
 
     /// - Parameters:
@@ -42,11 +42,14 @@ struct InAppNotification: Identifiable {
     enum Content: Equatable {
         /// Ошибка: текст уже готов к показу (`ErrorMessages.message(for:)`).
         case error(message: String)
+        /// Новое сообщение в неоткрытой переписке.
+        case message(MessageNotificationDisplayModel)
 
-        /// Тактильный отклик вида по умолчанию.
+        /// Тактильный отклик вида по умолчанию. У сообщений отклика нет: они приходят часто.
         var defaultFeedback: SensoryFeedback? {
             switch self {
             case .error: .error
+            case .message: nil
             }
         }
     }

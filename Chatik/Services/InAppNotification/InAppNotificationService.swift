@@ -18,6 +18,9 @@ protocol InAppNotificationServiceProtocol: AnyObject, Observable, AuthServiceObs
     /// Сцена, в окне которой показывается уведомление: последняя ставшая активной; `nil` — активных сцен нет.
     /// Отслеживается Observation: её смена убирает уведомление без анимации.
     var presentingSceneId: UUID? { get }
+    /// Активна ли сцена: свёрнутая или неактивная сцена пользователю не видна.
+    /// - Parameter sceneId: идентификатор сцены.
+    func isSceneActive(_ sceneId: UUID) -> Bool
     /// Показывает уведомление вместо прежнего и запускает таймер. С тем же содержимым — только перезапускает таймер
     /// показанного (на паузе — не запускает).
     /// - Returns: `false` — приложение неактивно, уведомление отброшено.
@@ -100,6 +103,10 @@ final class InAppNotificationService: InAppNotificationServiceProtocol {
     var isActive: Bool { !activeSceneIds.isEmpty }
 
     var presentingSceneId: UUID? { activeSceneIds.last }
+
+    func isSceneActive(_ sceneId: UUID) -> Bool {
+        activeSceneIds.contains(sceneId)
+    }
 
     func setActive(_ isActive: Bool, sceneId: UUID) {
         var sceneIds = activeSceneIds.filter { $0 != sceneId }

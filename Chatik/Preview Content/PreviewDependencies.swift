@@ -63,6 +63,7 @@ enum PreviewDependencies {
         )
         conversationList.start()
         conversationList.synchronize()
+        let navigator = ConversationNavigator(notifications: notificationService, conversationList: conversationList)
         return ChatListViewModel(
             conversationList: conversationList,
             sessionService: sessionService,
@@ -71,6 +72,15 @@ enum PreviewDependencies {
             unsentMessages: messageSendQueue,
             localizationService: localizationService,
             notifications: notificationService,
+            navigator: navigator,
+            messageNotifications: MessageNotificationService(
+                eventQueue: realtimeEventQueue,
+                sessionService: sessionService,
+                conversationList: conversationList,
+                userCache: userCache,
+                navigator: navigator,
+                notifications: notificationService
+            ),
             router: ChatListRouter()
         )
     }

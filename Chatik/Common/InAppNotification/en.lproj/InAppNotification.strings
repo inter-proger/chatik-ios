@@ -2,7 +2,22 @@
   InAppNotification.strings
   Chatik
 
-  In-app notifications: VoiceOver actions.
+  In-app notifications: VoiceOver actions, new message notifications.
 */
 
 "in_app_notification.dismiss" = "Dismiss";
+
+/* Title of a message notification in a group without a name */
+"in_app_notification.message.untitled" = "Untitled";
+
+/* Sender name when the sender is not loaded by the time the notification is shown */
+"in_app_notification.message.unknown_sender" = "User";
+
+/* Sender name when the sender does not exist on the server */
+"in_app_notification.message.deleted_sender" = "Deleted user";
+
+/* Text of a notification about a message of an unsupported type */
+"in_app_notification.message.unsupported" = "Message";
+
+/* VoiceOver announcement of a new message: title and text */
+"in_app_notification.message.announcement" = "New message, %1$@: %2$@";

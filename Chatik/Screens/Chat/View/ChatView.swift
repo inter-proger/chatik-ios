@@ -49,7 +49,11 @@ struct ChatView: View {
         .task { await viewModel.observeMessages() }
         // Запрос правки, начатый на прошлом открытии экрана: его успех возвращает в поле черновик, ошибка показывается.
         .task { await viewModel.observeEditSubmission() }
-        .onDisappear { viewModel.saveDraft() }
+        // Меню закрывается: с экрана можно уйти при открытом меню — нажатием на уведомление о сообщении.
+        .onDisappear {
+            viewModel.saveDraft()
+            menuController?.dismiss()
+        }
         // `.inactive` — не только шторка: закрытие из переключателя приложений не гарантирует перехода в `.background`.
         // Повторное сохранение без изменений в БД не пишет.
         .onChange(of: scenePhase) { _, phase in

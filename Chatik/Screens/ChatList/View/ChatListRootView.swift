@@ -11,6 +11,7 @@ import SwiftUI
 struct ChatListRootView: View {
     @State private var router: ChatListRouter
     @State private var viewModel: ChatListViewModel
+    @Environment(\.inAppNotificationSceneId) private var sceneId
 
     init() {
         let router = ChatListRouter()
@@ -23,6 +24,8 @@ struct ChatListRootView: View {
             unsentMessages: DIContainer.shared.messageSendQueue,
             localizationService: DIContainer.shared.localizationService,
             notifications: DIContainer.shared.notificationService,
+            navigator: DIContainer.shared.conversationNavigator,
+            messageNotifications: DIContainer.shared.messageNotificationService,
             router: router
         ))
     }
@@ -43,6 +46,8 @@ struct ChatListRootView: View {
                             isCameraAvailable: UIImagePickerController.isSourceTypeAvailable(.camera)
                         ))
                     case let .conversation(conversation):
+                        // `.id`: смена переписки из уведомления заменяет элемент стека на той же позиции — экран
+                        // должен пересоздаться с новой ViewModel, а прежний уйти через `onDisappear` (черновик).
                         ChatView(viewModel: ChatViewModel(
                             conversation: conversation,
                             messagesList: DIContainer.shared.makeMessagesListService(conversationId: conversation.conversationId),
@@ -57,8 +62,14 @@ struct ChatListRootView: View {
                             timeChangeService: DIContainer.shared.significantTimeChangeService,
                             notifications: DIContainer.shared.notificationService
                         ))
+                        .id(conversation.id)
                     }
                 }
+        }
+        .onAppear { viewModel.didAppear(sceneId: sceneId) }
+        .onDisappear { viewModel.didDisappear() }
+        .onChange(of: router.openedConversationId) { _, conversationId in
+            viewModel.openedConversationDidChange(conversationId)
         }
         .sheet(item: $router.presentedSheet) { sheet in
             switch sheet {

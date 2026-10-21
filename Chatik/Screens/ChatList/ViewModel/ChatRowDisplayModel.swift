@@ -109,9 +109,7 @@ extension ChatRowDisplayModel {
         }
     }
 
-    /// Превью с цветным префиксом: префикс, пробел и текст в одну строку — переводы строк и повторяющиеся
-    /// пробельные символы заменены одним пробелом, края обрезаны по `MessageTextValidator.trimmedCharacters` —
-    /// как и при решении, пуст ли черновик. Иначе в строке был бы виден только первый абзац.
+    /// Превью с цветным префиксом: префикс, пробел и текст в одну строку (`SingleLineText`).
     /// - Parameters:
     ///   - prefix: префикс — «Черновик:», «Не отправлено:» или фраза целиком.
     ///   - color: цвет префикса; текст остаётся без цвета.
@@ -121,13 +119,7 @@ extension ChatRowDisplayModel {
         var label = AttributedString(prefix)
         label.foregroundColor = color
         guard let text else { return label }
-        let trimmed = MessageTextValidator.trimmedCharacters
-        let line = text.drop { $0.unicodeScalars.allSatisfy(trimmed.contains) }
-            .prefix(localPreviewLength)
-            .split(whereSeparator: \.isWhitespace)
-            .joined(separator: " ")
-            .trimmingCharacters(in: trimmed)
-        return label + AttributedString(" " + line)
+        return label + AttributedString(" " + SingleLineText.make(text, maxLength: localPreviewLength))
     }
 
     /// Заголовок по собеседнику.

@@ -2,7 +2,22 @@
   InAppNotification.strings
   Chatik
 
-  Уведомления в приложении: действия VoiceOver.
+  Уведомления в приложении: действия VoiceOver, уведомления о новых сообщениях.
 */
 
 "in_app_notification.dismiss" = "Скрыть";
+
+/* Заголовок уведомления о сообщении в группе без названия */
+"in_app_notification.message.untitled" = "Без названия";
+
+/* Имя отправителя, если он не загрузился к показу уведомления */
+"in_app_notification.message.unknown_sender" = "Пользователь";
+
+/* Имя отправителя, которого нет на сервере */
+"in_app_notification.message.deleted_sender" = "Удалённый пользователь";
+
+/* Текст уведомления о сообщении, тип которого не поддерживается */
+"in_app_notification.message.unsupported" = "Сообщение";
+
+/* Объявление VoiceOver о новом сообщении: заголовок и текст */
+"in_app_notification.message.announcement" = "Новое сообщение, %1$@: %2$@";

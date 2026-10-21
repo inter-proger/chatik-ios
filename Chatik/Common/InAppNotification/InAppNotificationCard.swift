@@ -47,6 +47,8 @@ struct InAppNotificationCard: View {
         switch notification.content {
         case .error(let message):
             ErrorNotificationView(message: message)
+        case .message(let model):
+            MessageNotificationView(model: model)
         }
     }
 

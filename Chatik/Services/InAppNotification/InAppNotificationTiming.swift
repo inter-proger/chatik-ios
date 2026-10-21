@@ -15,6 +15,8 @@ enum InAppNotificationTiming {
     static let perExtraCharacter: Duration = .milliseconds(50)
     /// Верхняя граница времени показа без VoiceOver.
     static let maxDuration: Duration = .seconds(6)
+    /// Время показа уведомления о сообщении: текст в одну строку, от длины время не зависит.
+    static let messageDuration: Duration = .seconds(4)
     /// Время показа с VoiceOver: объявление должны успеть дослушать.
     static let voiceOverDuration: Duration = .seconds(10)
 
@@ -34,6 +36,8 @@ enum InAppNotificationTiming {
         switch content {
         case .error(let message):
             return textDuration(length: message.count)
+        case .message:
+            return messageDuration
         }
     }
 

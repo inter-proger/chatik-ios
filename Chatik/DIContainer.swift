@@ -51,8 +51,12 @@ final class DIContainer {
     let messageDraftService: MessageDraftServiceProtocol
     /// Отправка правок сообщений: запрос переживает уход с экрана.
     let messageEditService: MessageEditServiceProtocol
-    /// Уведомления поверх приложения: ошибки экранов.
+    /// Уведомления поверх приложения: ошибки экранов, новые сообщения.
     let notificationService: InAppNotificationServiceProtocol
+    /// Роутеры списка чатов по сценам: открытые переписки и открытие переписки из уведомления.
+    let conversationNavigator: ConversationNavigating
+    /// Уведомления о новых сообщениях в неоткрытых переписках.
+    let messageNotificationService: MessageNotificationServiceProtocol
     /// Держит наблюдение за сетью, пока жив контейнер: при появлении сети WebSocket переподключается сразу.
     private let networkPathMonitor: NetworkPathMonitor
     /// Подписка кэша сообщений на очередь событий — живёт, пока жив контейнер.
@@ -162,8 +166,23 @@ final class DIContainer {
         )
         self.globalService = globalService
         self.realtimeService = realtimeService
+        let conversationNavigator = ConversationNavigator(
+            notifications: notificationService,
+            conversationList: conversationListService
+        )
+        self.conversationNavigator = conversationNavigator
+        let messageNotificationService = MessageNotificationService(
+            eventQueue: realtimeEventQueue,
+            sessionService: sessionService,
+            conversationList: conversationListService,
+            userCache: userCache,
+            navigator: conversationNavigator,
+            notifications: notificationService
+        )
+        self.messageNotificationService = messageNotificationService
         let sessionWorkLauncher = SessionWorkLauncher(
             conversationList: conversationListService,
+            messageNotifications: messageNotificationService,
             messageDelivery: messageSendQueue,
             realtimeService: realtimeService
         )
@@ -183,8 +202,8 @@ final class DIContainer {
             )
         }
         #endif
-        // Соединение, очередь событий, список, очередь отправки, правки, кэш сообщений и черновики останавливаются,
-        // а уведомление прошлой сессии убирается в фазе `authServiceWillLogout`
+        // Соединение, очередь событий, список, очередь отправки, правки, кэш сообщений, черновики и подготовка
+        // уведомления о сообщении останавливаются, а уведомление прошлой сессии убирается в фазе `authServiceWillLogout`
         // (до запроса выхода), сессия завершается в `authServiceDidLogout` (после него) — от порядка подписки
         // это не зависит.
         authService.addObserver(realtimeService)
@@ -195,6 +214,7 @@ final class DIContainer {
         authService.addObserver(messageCacheLogoutObserver)
         authService.addObserver(messageDraftLogoutObserver)
         authService.addObserver(notificationService)
+        authService.addObserver(messageNotificationService)
         authService.addObserver(sessionService)
         self.networkPathMonitor = NetworkPathMonitor { [weak realtimeService] in
             realtimeService?.networkDidBecomeAvailable()

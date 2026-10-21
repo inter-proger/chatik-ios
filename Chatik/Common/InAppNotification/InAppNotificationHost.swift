@@ -80,6 +80,8 @@ struct InAppNotificationHost: View {
         switch content {
         case .error(let message):
             message
+        case .message(let model):
+            InAppNotificationStrings.messageAnnouncement(title: model.title, text: String(model.text.characters))
         }
     }
 }

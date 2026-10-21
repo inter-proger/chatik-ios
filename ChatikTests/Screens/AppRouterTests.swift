@@ -22,7 +22,7 @@ final class AppRouterTests: XCTestCase {
 
     /// Начало работы с сервером над моками списка, очереди и соединения — настоящий порядок запуска.
     private func makeSessionWork() -> SessionWorkLauncher {
-        SessionWorkLauncher(conversationList: conversationList, messageDelivery: messageSendQueue, realtimeService: realtimeService)
+        SessionWorkLauncher(conversationList: conversationList, messageNotifications: MessageNotificationServiceMock(), messageDelivery: messageSendQueue, realtimeService: realtimeService)
     }
 
     /// Создаёт роутер над сессией с заданным сохранённым пользователем и без задержки splash.

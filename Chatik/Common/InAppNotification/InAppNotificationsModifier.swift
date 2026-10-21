@@ -14,12 +14,18 @@ extension View {
     }
 }
 
+extension EnvironmentValues {
+    /// Сцена, в корне которой висит `.inAppNotifications`; `nil` — модификатора нет (превью). По ней
+    /// `ConversationNavigator` открывает переписку в сцене, где показано уведомление.
+    @Entry var inAppNotificationSceneId: UUID?
+}
+
 /// Создаёт окно уведомлений в сцене корня и передаёт сервису активность этой сцены.
 ///
 /// Модификатор живёт в корне каждой сцены (на iPad их может быть несколько), поэтому у него свой идентификатор
 /// сцены. `.inactive` тоже выключает сцену (шторка, переключатель приложений); закрываемая сцена до этого уходит
 /// в `.background`. Фаза передаётся и при появлении: `onChange` на начальное значение не срабатывает, а сервис
-/// создаётся без активных сцен.
+/// создаётся без активных сцен. Идентификатор сцены передаётся содержимому через окружение.
 private struct InAppNotificationsModifier: ViewModifier {
     let service: any InAppNotificationServiceProtocol
 
@@ -29,6 +35,7 @@ private struct InAppNotificationsModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         content
+            .environment(\.inAppNotificationSceneId, sceneId)
             .background {
                 WindowSceneReader { scene in
                     presenter.install(in: scene, sceneId: sceneId, service: service)

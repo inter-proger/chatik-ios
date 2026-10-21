@@ -231,6 +231,34 @@ final class MessageMenuControllerTests: XCTestCase {
     private func section(_ messages: [MessageDisplayModel]) -> MessageDaySectionDisplayModel {
         MessageDaySectionDisplayModel(id: MessageDaySectionID(day: .distantPast, occurrence: 0), title: "Сегодня", messages: messages)
     }
+
+    /// Кейс: меню показано; экран уходит (`dismiss`).
+    /// Ожидание: меню закрыто без выбора, пузырь в ленте снова виден.
+    func test_dismiss_shownMenu_closesWithoutAction() {
+        let source = MessageMenuSourceMock(screenFrame: CGRect(x: 0, y: 0, width: 100, height: 40))
+        var actions: [MessageAction] = []
+        sut.request(message: message, source: source, hideKeyboard: {}, onAction: { actions.append($0) })
+
+        sut.dismiss()
+
+        XCTAssertEqual(presenter.dismissCount, 1)
+        XCTAssertNil(sut.menuMessageId)
+        XCTAssertTrue(actions.isEmpty)
+    }
+
+    /// Кейс: клавиатура открыта, меню ждёт её скрытия; экран уходит (`dismiss`), затем клавиатура спряталась.
+    /// Ожидание: ждущее меню не показывается.
+    func test_dismiss_pendingMenu_isNotPresented() {
+        let source = MessageMenuSourceMock(screenFrame: CGRect(x: 0, y: 0, width: 100, height: 40))
+        sut.keyboardWillShow()
+        sut.request(message: message, source: source, hideKeyboard: {}, onAction: { _ in })
+
+        sut.dismiss()
+        sut.keyboardDidHide()
+
+        XCTAssertTrue(presenter.presented.isEmpty)
+        XCTAssertNil(sut.menuMessageId)
+    }
 }
 
 private extension MessageDisplayModel {

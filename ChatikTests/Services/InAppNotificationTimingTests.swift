@@ -57,4 +57,30 @@ final class InAppNotificationTimingTests: XCTestCase {
             XCTAssertEqual(duration, InAppNotificationTiming.voiceOverDuration, "\(message.count)")
         }
     }
+
+    /// Кейс: уведомления о сообщениях с коротким и очень длинным текстом без VoiceOver.
+    /// Ожидание: время показа фиксированное — `messageDuration`, от длины текста не зависит.
+    func test_message_usesFixedDuration() {
+        let texts = [
+            "а",
+            String(repeating: "а", count: 1000),
+        ]
+
+        for text in texts {
+            let content = InAppNotification.Content.message(MessageNotificationDisplayModel(
+                conversationId: 1, messageId: 1, title: "Анна", avatarURL: nil, text: AttributedString(text)
+            ))
+            XCTAssertEqual(InAppNotificationTiming.duration(for: content, isVoiceOverRunning: false), InAppNotificationTiming.messageDuration)
+        }
+    }
+
+    /// Кейс: уведомление о сообщении при включённом VoiceOver.
+    /// Ожидание: время для VoiceOver.
+    func test_message_withVoiceOver_usesVoiceOverDuration() {
+        let content = InAppNotification.Content.message(MessageNotificationDisplayModel(
+            conversationId: 1, messageId: 1, title: "Анна", avatarURL: nil, text: AttributedString("Привет")
+        ))
+
+        XCTAssertEqual(InAppNotificationTiming.duration(for: content, isVoiceOverRunning: true), InAppNotificationTiming.voiceOverDuration)
+    }
 }

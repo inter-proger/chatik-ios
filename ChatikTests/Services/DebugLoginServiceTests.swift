@@ -34,6 +34,7 @@ final class DebugLoginServiceTests: XCTestCase {
         await session.restore()
         let sessionWork = SessionWorkLauncher(
             conversationList: conversationList,
+            messageNotifications: MessageNotificationServiceMock(),
             messageDelivery: messageSendQueue,
             realtimeService: realtimeService
         )

@@ -321,6 +321,18 @@ final class InAppNotificationServiceTests: XCTestCase {
         XCTAssertNil(sut.presentingSceneId)
     }
 
+    /// Кейс: активны две сцены, B ушла из `.active`; сцена C ни разу не была активной.
+    /// Ожидание: активна только A.
+    func test_isSceneActive_reflectsActiveScenes() {
+        sut.setActive(true, sceneId: sceneB)
+
+        sut.setActive(false, sceneId: sceneB)
+
+        XCTAssertTrue(sut.isSceneActive(sceneA))
+        XCTAssertFalse(sut.isSceneActive(sceneB))
+        XCTAssertFalse(sut.isSceneActive(UUID()))
+    }
+
     /// Кейс: уведомление показано, начался выход из аккаунта.
     /// Ожидание: уведомление прошлой сессии убрано.
     func test_authServiceWillLogout_hidesNotification() async {
@@ -344,5 +356,18 @@ final class InAppNotificationServiceTests: XCTestCase {
         XCTAssertEqual(byDefault.duration, InAppNotificationTiming.duration(for: content))
         XCTAssertEqual(byDefault.feedback, .error)
         XCTAssertNil(silent.feedback)
+    }
+
+    /// Кейс: уведомление о сообщении создано без параметров.
+    /// Ожидание: время от `InAppNotificationTiming`, без тактильного отклика.
+    func test_messageNotification_defaults() {
+        let content = InAppNotification.Content.message(MessageNotificationDisplayModel(
+            conversationId: 1, messageId: 1, title: "Анна", avatarURL: nil, text: AttributedString("Привет")
+        ))
+
+        let notification = InAppNotification(content: content)
+
+        XCTAssertEqual(notification.duration, InAppNotificationTiming.duration(for: content))
+        XCTAssertNil(notification.feedback)
     }
 }

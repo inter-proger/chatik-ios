@@ -36,6 +36,7 @@ final class AuthViewModelTests: XCTestCase {
             sessionService: sessionService,
             sessionWork: SessionWorkLauncher(
                 conversationList: conversationList,
+                messageNotifications: MessageNotificationServiceMock(),
                 messageDelivery: messageSendQueue,
                 realtimeService: realtimeService
             ),

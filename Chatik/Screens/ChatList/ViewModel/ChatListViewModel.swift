@@ -32,6 +32,8 @@ final class ChatListViewModel {
     private let unsentMessages: UnsentMessagePreviewProviding
     private let localizationService: LocalizationServiceProtocol
     private let notifications: InAppNotificationServiceProtocol
+    private let navigator: ConversationNavigating
+    private let messageNotifications: MessageNotificationServiceProtocol
     private let router: ChatListRouter
     private let now: () -> Date
     private let makeRow: RowBuilder
@@ -41,6 +43,8 @@ final class ChatListViewModel {
     @ObservationIgnored private var rowCache: [Int: CachedRow] = [:]
     /// Язык, календарь и день, с которыми собраны строки кэша; сменились — кэш сбрасывается.
     @ObservationIgnored private var rowCacheContext: RowFormatContext?
+    /// Регистрация роутера в навигаторе; `nil` — экран не на экране.
+    @ObservationIgnored private var navigatorToken: UUID?
 
     private let sleep: Sleep
 
@@ -61,6 +65,8 @@ final class ChatListViewModel {
     ///   - unsentMessages: неотправленные сообщения — показываются в строке вместо черновика и последнего сообщения.
     ///   - localizationService: язык форматирования времени.
     ///   - notifications: показ ошибок загрузки.
+    ///   - navigator: реестр роутеров сцен — открытая переписка и открытие переписки из уведомления.
+    ///   - messageNotifications: уведомления о новых сообщениях — скрываются при открытии переписки.
     ///   - router: переходы с экрана.
     ///   - now: текущее время; подменяется в тестах форматирования.
     ///   - makeRow: сборка строки; подменяется в тестах кэша строк.
@@ -73,6 +79,8 @@ final class ChatListViewModel {
         unsentMessages: UnsentMessagePreviewProviding,
         localizationService: LocalizationServiceProtocol,
         notifications: InAppNotificationServiceProtocol,
+        navigator: ConversationNavigating,
+        messageNotifications: MessageNotificationServiceProtocol,
         router: ChatListRouter,
         now: @escaping () -> Date = { Date() },
         makeRow: @escaping RowBuilder = { ChatRowDisplayModel(conversation: $0, opponent: $1, localPreview: $2, timeFormatter: $3) },
@@ -85,6 +93,8 @@ final class ChatListViewModel {
         self.unsentMessages = unsentMessages
         self.localizationService = localizationService
         self.notifications = notifications
+        self.navigator = navigator
+        self.messageNotifications = messageNotifications
         self.router = router
         self.now = now
         self.makeRow = makeRow
@@ -257,6 +267,30 @@ final class ChatListViewModel {
     /// Обработчик пункта «Личный диалог» меню создания: открывает экран создания личного диалога.
     func didTapCreateSingleConversation() {
         router.showCreateSingleConversation()
+    }
+
+    // MARK: - Уведомления о сообщениях
+
+    /// Экран появился: роутер регистрируется в навигаторе — уведомления о сообщениях узнают открытую переписку
+    /// и открывают переписку по нажатию. Повторное появление без исчезновения ничего не делает.
+    /// - Parameter sceneId: сцена экрана; `nil` — неизвестна (превью).
+    func didAppear(sceneId: UUID?) {
+        guard navigatorToken == nil else { return }
+        navigatorToken = navigator.register(router, sceneId: sceneId)
+    }
+
+    /// Экран исчез: регистрация роутера в навигаторе снимается.
+    func didDisappear() {
+        guard let navigatorToken else { return }
+        navigator.unregister(navigatorToken)
+        self.navigatorToken = nil
+    }
+
+    /// Открытая поверх списка переписка сменилась: уведомление о ней скрывается.
+    /// - Parameter conversationId: открытая переписка; `nil` — поверх списка переписки нет.
+    func openedConversationDidChange(_ conversationId: Int?) {
+        guard let conversationId else { return }
+        messageNotifications.conversationDidOpen(conversationId)
     }
 }
 

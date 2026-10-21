@@ -14,15 +14,24 @@ final class InAppNotificationServiceMock: InAppNotificationServiceProtocol {
     private(set) var current: InAppNotification?
     var isActive = true
     var presentingSceneId: UUID?
+    /// Активные сцены: задаются через `setActive`.
+    private(set) var activeSceneIds: Set<UUID> = []
     /// Все принятые к показу уведомления по порядку.
     private(set) var shown: [InAppNotification] = []
 
     /// Тексты показанных ошибок по порядку.
     var shownErrors: [String] {
-        shown.map { notification in
-            switch notification.content {
-            case .error(let message): message
-            }
+        shown.compactMap { notification in
+            guard case let .error(message) = notification.content else { return nil }
+            return message
+        }
+    }
+
+    /// Показанные уведомления о сообщениях по порядку.
+    var shownMessages: [MessageNotificationDisplayModel] {
+        shown.compactMap { notification in
+            guard case let .message(model) = notification.content else { return nil }
+            return model
         }
     }
 
@@ -43,8 +52,17 @@ final class InAppNotificationServiceMock: InAppNotificationServiceProtocol {
 
     func resumeTimer(id: InAppNotification.ID) {}
 
+    func isSceneActive(_ sceneId: UUID) -> Bool {
+        activeSceneIds.contains(sceneId)
+    }
+
     func setActive(_ isActive: Bool, sceneId: UUID) {
         self.isActive = isActive
         presentingSceneId = isActive ? sceneId : nil
+        if isActive {
+            activeSceneIds.insert(sceneId)
+        } else {
+            activeSceneIds.remove(sceneId)
+        }
     }
 }

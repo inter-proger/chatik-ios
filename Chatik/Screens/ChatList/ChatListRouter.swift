@@ -21,7 +21,7 @@ enum ChatListSheet: Identifiable {
 /// Роутер экрана списка чатов. Возврат к авторизации происходит через смену состояния сессии (`AppRouter`).
 @MainActor
 @Observable
-final class ChatListRouter {
+final class ChatListRouter: ConversationOpening {
     /// Стек экранов поверх списка. Типизированный массив, а не `NavigationPath`: по нему список узнаёт,
     /// какая переписка сейчас открыта.
     var path: [ChatListRoute] = []
@@ -43,6 +43,15 @@ final class ChatListRouter {
     /// - Parameter conversation: переписка, которую нужно показать.
     func showConversation(_ conversation: Conversation) {
         path.append(ChatListRoute.conversation(conversation))
+    }
+
+    /// Открывает переписку с любого экрана (нажатие на уведомление о сообщении): закрывает лист и заменяет стек —
+    /// назад из переписки ведёт к списку. Если переписка уже открыта поверх списка, стек не меняется.
+    /// - Parameter conversation: переписка, которую нужно показать.
+    func openConversation(_ conversation: Conversation) {
+        presentedSheet = nil
+        guard openedConversationId != conversation.id else { return }
+        path = [.conversation(conversation)]
     }
 
     /// Открывает экран создания личного диалога.

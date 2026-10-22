@@ -21,6 +21,9 @@ enum ConversationEndpoint: Endpoint {
     /// POST /conversations/markRead — отметка прочтения сообщений переписки до `messageId` включительно.
     /// Идемпотентен: повтор или более старый `messageId` возвращает текущее прочтение. Ответ: `ReadInfoResponse`.
     case markRead(conversationId: Int, messageId: Int)
+    /// GET /conversations/getMembersReadMeta — указатели прочтения всех участников переписки, кроме текущего
+    /// пользователя. Ответ: `MembersReadMetaResponse`.
+    case getMembersReadMeta(conversationId: Int)
 
     var path: String {
         switch self {
@@ -28,13 +31,14 @@ enum ConversationEndpoint: Endpoint {
         case .getList: return "/conversations/getList"
         case .getBatch: return "/conversations/getBatch"
         case .markRead: return "/conversations/markRead"
+        case .getMembersReadMeta: return "/conversations/getMembersReadMeta"
         }
     }
 
     var method: HTTPMethod {
         switch self {
         case .createSingle, .markRead: return .post
-        case .getList, .getBatch: return .get
+        case .getList, .getBatch, .getMembersReadMeta: return .get
         }
     }
 
@@ -50,6 +54,8 @@ enum ConversationEndpoint: Endpoint {
             return ["conversationIds": ids.map(String.init).joined(separator: ",")]
         case let .markRead(conversationId, messageId):
             return ["conversationId": String(conversationId), "messageId": String(messageId)]
+        case let .getMembersReadMeta(conversationId):
+            return ["conversationId": String(conversationId)]
         }
     }
 

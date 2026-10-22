@@ -105,6 +105,31 @@ final class ConversationServiceTests: XCTestCase {
         XCTAssertEqual(endpoint.parameters, ["conversationId": "1", "messageId": "15"])
     }
 
+    /// Кейс: запрос прочтения переписки другими участниками.
+    /// Ожидание: GET /conversations/getMembersReadMeta с `conversationId`; наружу — указатели из `membersReadMeta`.
+    func test_fetchMembersReadMeta_requestsAndUnwrapsPointers() async throws {
+        let expected = [MemberReadMeta(userId: 2, lastReadMessageId: 15), MemberReadMeta(userId: 3, lastReadMessageId: 0)]
+        networkService.stubbedResult = .success(MembersReadMetaResponse(membersReadMeta: expected))
+
+        let meta = try await sut.fetchMembersReadMeta(conversationId: 7)
+
+        XCTAssertEqual(meta, expected)
+        let endpoint = try XCTUnwrap(networkService.requestedEndpoints.first)
+        XCTAssertEqual(endpoint.path, "/conversations/getMembersReadMeta")
+        XCTAssertEqual(endpoint.method, .get)
+        XCTAssertEqual(endpoint.parameters, ["conversationId": "7"])
+    }
+
+    /// Кейс: ответ `getMembersReadMeta` в формате сервера.
+    /// Ожидание: разобраны `userId` и `lastReadMessageId` каждого участника.
+    func test_membersReadMetaResponse_decodesServerJSON() throws {
+        let json = #"{"membersReadMeta":[{"userId":2,"lastReadMessageId":15}]}"#
+
+        let response = try JSONDecoder().decode(MembersReadMetaResponse.self, from: Data(json.utf8))
+
+        XCTAssertEqual(response.membersReadMeta, [MemberReadMeta(userId: 2, lastReadMessageId: 15)])
+    }
+
     /// Кейс: метка фильтра после вычета запаса синхронизации стала отрицательной.
     /// Ожидание: в запрос уходит 0 — отрицательное значение сервер отклонил бы ошибкой 1004.
     func test_fetchConversations_negativeTime_isClampedToZero() async throws {

@@ -27,6 +27,12 @@ final class ConversationServiceMock: ConversationServiceProtocol {
     var stubbedReadInfos: [Result<ReadInfo, Error>] = []
     /// Запросы `markRead` по порядку.
     private(set) var markReadRequests: [(conversationId: Int, messageId: Int)] = []
+    /// Ответы на последовательные `getMembersReadMeta`; когда очередь пуста — ошибка.
+    var stubbedMembersReadMeta: [Result<[MemberReadMeta], Error>] = []
+    /// Запросы `getMembersReadMeta` по порядку.
+    private(set) var membersReadMetaRequests: [Int] = []
+    /// Вызывается внутри `getMembersReadMeta` до возврата результата — пока запрос гарантированно выполняется.
+    var onFetchMembersReadMeta: (@MainActor () async -> Void)?
     /// Вызывается внутри `markRead` до возврата результата — пока запрос гарантированно выполняется.
     var onMarkRead: (@MainActor () async -> Void)?
     /// Вызывается внутри любого запроса до возврата результата — пока вызывающий гарантированно ждёт ответа.
@@ -62,6 +68,13 @@ final class ConversationServiceMock: ConversationServiceProtocol {
         markReadRequests.append((conversationId, messageId))
         let result = stubbedReadInfos.isEmpty ? .failure(NetworkError.missingResponse) : stubbedReadInfos.removeFirst()
         await onMarkRead?()
+        return try result.get()
+    }
+
+    func fetchMembersReadMeta(conversationId: Int) async throws -> [MemberReadMeta] {
+        membersReadMetaRequests.append(conversationId)
+        let result = stubbedMembersReadMeta.isEmpty ? .failure(NetworkError.missingResponse) : stubbedMembersReadMeta.removeFirst()
+        await onFetchMembersReadMeta?()
         return try result.get()
     }
 }

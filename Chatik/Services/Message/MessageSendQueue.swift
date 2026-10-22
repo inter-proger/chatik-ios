@@ -409,7 +409,7 @@ final class MessageSendQueue: MessageSendQueueProtocol {
         switch event {
         case let .messageReceived(message, _, _), let .messageEdited(message, _, _):
             removeConfirmed(by: [message])
-        case .connected, .conversationCreated, .conversationRead:
+        case .connected, .conversationCreated, .conversationRead, .memberRead:
             break
         }
     }

@@ -8,7 +8,7 @@ import Foundation
 /// Начало работы открытой сессии с сервером — всё, что о нём знают `AppRouter` и `AuthViewModel`.
 @MainActor
 protocol SessionWorkStarting: AnyObject {
-    /// Начинает работу открытой сессии: список переписок, отправка очереди, `/global/start`.
+    /// Начинает работу открытой сессии: список переписок, прочтение другими, отправка очереди, `/global/start`.
     func startSessionWork()
 }
 
@@ -18,37 +18,44 @@ protocol SessionWorkStarting: AnyObject {
 /// 1. Список переписок читает кэш и подписывается на события: очередь событий не хранит их для будущих подписчиков.
 /// 2. Уведомления о новых сообщениях подписываются после списка: к их обработке событие уже применено к списку,
 ///    и переписка из события есть в нём.
-/// 3. Очередь отправки отправляет сообщения, прерванные прошлой сессией или закрытием приложения: ответ на отправку
+/// 3. Прочтение другими участниками подписывается на события до соединения: иначе пропустило бы первые `memberRead`.
+/// 4. Очередь отправки отправляет сообщения, прерванные прошлой сессией или закрытием приложения: ответ на отправку
 ///    поднимает переписку в списке, поэтому список должен быть запущен.
-/// 4. `/global/start` выдаёт токен WebSocket для пользователя сессии.
+/// 5. `/global/start` выдаёт токен WebSocket для пользователя сессии.
 @MainActor
 final class SessionWorkLauncher: SessionWorkStarting {
     private let conversationList: ConversationListServiceProtocol
     private let messageNotifications: MessageNotificationServiceProtocol
+    private let memberReads: MemberReadServiceProtocol
     private let messageDelivery: MessageDeliveryResuming
     private let realtimeService: RealtimeServiceProtocol
 
     /// - Parameters:
     ///   - conversationList: список переписок; повторный запуск (вход после выхода) ничего не делает.
     ///   - messageNotifications: уведомления о новых сообщениях; повторный запуск ничего не делает.
+    ///   - memberReads: прочтение другими участниками; повторный запуск в той же сессии ничего не делает.
     ///   - messageDelivery: отправка очереди — очередь загружена `SessionService` при открытии сессии.
     ///   - realtimeService: соединение с WebSocket.
     init(
         conversationList: ConversationListServiceProtocol,
         messageNotifications: MessageNotificationServiceProtocol,
+        memberReads: MemberReadServiceProtocol,
         messageDelivery: MessageDeliveryResuming,
         realtimeService: RealtimeServiceProtocol
     ) {
         self.conversationList = conversationList
         self.messageNotifications = messageNotifications
+        self.memberReads = memberReads
         self.messageDelivery = messageDelivery
         self.realtimeService = realtimeService
     }
 
-    /// Запускает список переписок, уведомления о сообщениях, отправку очереди и работу с сервером — в этом порядке.
+    /// Запускает список переписок, уведомления о сообщениях, прочтение другими участниками, отправку очереди
+    /// и работу с сервером — в этом порядке.
     func startSessionWork() {
         conversationList.start()
         messageNotifications.start()
+        memberReads.start()
         messageDelivery.resumeDeliveries()
         realtimeService.start()
     }

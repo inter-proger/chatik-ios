@@ -100,6 +100,37 @@ final class MessageDisplayModelTests: XCTestCase {
         }
     }
 
+    /// Кейс: своё и чужое сообщение, своё сообщение неизвестного типа в групповой переписке.
+    /// Ожидание: «Кем прочитано» есть у всех серверных сообщений, «Редактировать» — только у своего текстового.
+    func test_actions_group_serverMessages_haveReaders() {
+        let unknown = Message(messageId: 3, clientId: "c", conversationId: 1, blockId: 1, senderId: 1, type: .unknown, text: "", isEdited: false, createdAt: .stub, updatedAt: .stub)
+        let cases: [(message: Message, actions: [MessageAction])] = [
+            (.make(id: 1, senderId: 1), [.edit, .readers]),
+            (.make(id: 2, senderId: 2), [.readers]),
+            (unknown, [.readers]),
+        ]
+
+        for testCase in cases {
+            let sut = MessageDisplayModel(message: testCase.message, sender: nil, context: makeContext(conversationType: .group))
+            XCTAssertEqual(sut.actions, testCase.actions, "\(testCase.message.messageId)")
+        }
+    }
+
+    /// Кейс: отправляющееся и неотправленное своё сообщение в групповой переписке.
+    /// Ожидание: «Кем прочитано» нет — сообщения нет на сервере; набор действий как в личной переписке.
+    func test_actions_group_outgoing_hasNoReaders() {
+        let cases: [(status: OutgoingMessageStatus, actions: [MessageAction])] = [
+            (.sending, []),
+            (.failed, [.retrySending, .deleteUnsent]),
+        ]
+
+        for testCase in cases {
+            let outgoing = OutgoingMessage.stub(clientId: "a", createdAt: now, status: testCase.status)
+            let sut = MessageDisplayModel(outgoing: outgoing, sender: nil, context: makeContext(conversationType: .group))
+            XCTAssertEqual(sut.actions, testCase.actions, "\(testCase.status)")
+        }
+    }
+
     /// Кейс: своё неотправленное сообщение.
     /// Ожидание: в меню «Повторить отправку» и «Удалить», без «Редактировать».
     func test_actions_failedOutgoing_hasRetrySendingAndDeleteUnsent() {
@@ -110,14 +141,40 @@ final class MessageDisplayModelTests: XCTestCase {
 
     // MARK: - Состояние доставки
 
-    /// Кейс: сообщение с сервера.
-    /// Ожидание: доставлено, без описания состояния; идентификатор — отправитель и `clientId`.
-    func test_init_serverMessage_isDelivered() {
+    /// Кейс: своё сообщение с сервера, меты прочтения нет.
+    /// Ожидание: доставлено (одна галочка), описание «Доставлено»; идентификатор — отправитель и `clientId`.
+    func test_init_ownServerMessage_withoutMeta_isDelivered() {
         let sut = MessageDisplayModel(message: .stub, sender: nil, context: makeContext())
 
         XCTAssertEqual(sut.deliveryState, .delivered)
-        XCTAssertNil(sut.deliveryStateLabel)
+        XCTAssertEqual(sut.deliveryStateLabel, ChatStrings.messageDelivered)
         XCTAssertEqual(sut.id, Message.stub.clientKey)
+    }
+
+    /// Кейс: свои сообщения с id ниже порога прочтения, на пороге и выше.
+    /// Ожидание: ниже и на пороге — прочитано («Прочитано»), выше — доставлено («Доставлено»).
+    func test_init_ownServerMessage_byReadUpTo() {
+        let cases: [(messageId: Int, state: MessageDeliveryState, label: String)] = [
+            (9, .read, ChatStrings.messageRead),
+            (10, .read, ChatStrings.messageRead),
+            (11, .delivered, ChatStrings.messageDelivered),
+        ]
+
+        for testCase in cases {
+            let message = Message.make(id: testCase.messageId, senderId: 1)
+            let sut = MessageDisplayModel(message: message, sender: nil, context: makeContext(readUpTo: 10))
+            XCTAssertEqual(sut.deliveryState, testCase.state, "\(testCase.messageId)")
+            XCTAssertEqual(sut.deliveryStateLabel, testCase.label, "\(testCase.messageId)")
+        }
+    }
+
+    /// Кейс: чужое сообщение ниже порога прочтения.
+    /// Ожидание: доставлено, без описания состояния — у чужих сообщений галочек нет.
+    func test_init_othersServerMessage_hasNoCheckmarks() {
+        let sut = MessageDisplayModel(message: .make(id: 1, senderId: 2), sender: nil, context: makeContext(readUpTo: 10))
+
+        XCTAssertEqual(sut.deliveryState, .delivered)
+        XCTAssertNil(sut.deliveryStateLabel)
     }
 
     /// Кейс: неотправленное сообщение в статусах «отправляется» и «не отправлено».
@@ -180,15 +237,24 @@ final class MessageDisplayModelTests: XCTestCase {
     // MARK: - Helpers
 
     /// Контекст отображения с русской локалью и часовым поясом UTC.
-    /// - Parameter currentUserId: текущий пользователь.
-    private func makeContext(currentUserId: Int? = 1) -> MessageDisplayContext {
+    /// - Parameters:
+    ///   - currentUserId: текущий пользователь.
+    ///   - conversationType: тип переписки.
+    ///   - readUpTo: порог прочтения другими участниками.
+    private func makeContext(
+        currentUserId: Int? = 1,
+        conversationType: ConversationType = .single,
+        readUpTo: Int? = nil
+    ) -> MessageDisplayContext {
         MessageDisplayContext(
             currentUserId: currentUserId,
             locale: Locale(identifier: "ru"),
             calendar: calendar,
             now: now,
             strings: .current,
-            dateHeaderFormatter: RussianMessageDateHeaderFormatter(calendar: calendar)
+            dateHeaderFormatter: RussianMessageDateHeaderFormatter(calendar: calendar),
+            conversationType: conversationType,
+            readUpTo: readUpTo
         )
     }
 }

@@ -242,7 +242,7 @@ final class ConversationListService: ConversationListServiceProtocol {
         }
         await cacheTask?.value
         switch event {
-        case .connected:
+        case .connected, .memberRead:
             break
         case let .conversationCreated(conversation):
             applyCreated(conversation)

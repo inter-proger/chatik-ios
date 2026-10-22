@@ -61,7 +61,8 @@ struct ChatListRootView: View {
                             dateHeaderFormatterProvider: DIContainer.shared.messageDateHeaderFormatterProvider,
                             timeChangeService: DIContainer.shared.significantTimeChangeService,
                             notifications: DIContainer.shared.notificationService,
-                            readStates: DIContainer.shared.conversationListService
+                            readStates: DIContainer.shared.conversationListService,
+                            memberReads: DIContainer.shared.memberReadService
                         ))
                         .id(conversation.id)
                     }

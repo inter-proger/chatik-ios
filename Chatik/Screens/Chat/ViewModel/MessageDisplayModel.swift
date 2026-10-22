@@ -7,8 +7,10 @@ import Foundation
 
 /// Состояние доставки сообщения.
 enum MessageDeliveryState: Equatable, Sendable {
-    /// Сообщение есть на сервере.
+    /// Сообщение есть на сервере; у своего — одна галочка.
     case delivered
+    /// Своё сообщение прочитано хотя бы одним другим участником — две галочки.
+    case read
     /// Отправляется: сервер ещё не ответил.
     case sending
     /// Не отправлено: меню сообщения предлагает повторить отправку или удалить сообщение.
@@ -23,6 +25,8 @@ enum MessageAction: Equatable, Sendable {
     case retrySending
     /// Удалить неотправленное сообщение.
     case deleteUnsent
+    /// Показать, кто из участников групповой переписки прочитал сообщение.
+    case readers
 }
 
 /// Сообщение переписки в готовом для отображения виде.
@@ -45,7 +49,7 @@ struct MessageDisplayModel: Identifiable, Equatable, Sendable {
     /// Пометка «изменено»; `nil` — сообщение не редактировалось.
     let editedLabel: String?
     let deliveryState: MessageDeliveryState
-    /// Описание состояния доставки для VoiceOver; `nil` — сообщение доставлено.
+    /// Описание состояния доставки для VoiceOver; `nil` — у сообщения нет состояния доставки (чужое).
     let deliveryStateLabel: String?
     /// Действия меню сообщения; пусто — меню нет.
     let actions: [MessageAction]
@@ -67,6 +71,8 @@ struct MessageDisplayStrings: Equatable, Sendable {
     let edited: String
     let sending: String
     let failed: String
+    let delivered: String
+    let read: String
     let userLoading: String
     let userDeleted: String
 
@@ -78,6 +84,8 @@ struct MessageDisplayStrings: Equatable, Sendable {
             edited: ChatStrings.messageEdited,
             sending: ChatStrings.messageSending,
             failed: ChatStrings.messageFailed,
+            delivered: ChatStrings.messageDelivered,
+            read: ChatStrings.messageRead,
             userLoading: ChatStrings.userLoading,
             userDeleted: ChatStrings.userDeleted
         )
@@ -98,6 +106,11 @@ struct MessageDisplayContext: Sendable {
     let strings: MessageDisplayStrings
     /// Заголовки дней на языке `locale`.
     let dateHeaderFormatter: any MessageDateHeaderFormatting
+    /// Тип переписки: «Кем прочитано» есть только в групповой.
+    let conversationType: ConversationType
+    /// Порог прочтения другими участниками: свои сообщения с id не больше него прочитаны. `nil` — меты нет,
+    /// две галочки не показываются.
+    let readUpTo: Int?
 }
 
 extension MessageDisplayModel {
@@ -108,29 +121,48 @@ extension MessageDisplayModel {
     ///   - context: общие параметры отображения.
     init(message: Message, sender: CachedUser?, context: MessageDisplayContext) {
         let isUnsupported = message.type == .unknown
+        let isOutgoing = message.senderId == context.currentUserId
+        let deliveryState = Self.deliveryState(for: message, isOutgoing: isOutgoing, context: context)
         self.init(
             id: message.clientKey,
             text: isUnsupported ? context.strings.unsupported : message.text,
             isUnsupported: isUnsupported,
-            isOutgoing: message.senderId == context.currentUserId,
+            isOutgoing: isOutgoing,
             sender: sender.map { MessageSenderDisplayModel(cachedUser: $0, strings: context.strings) },
             time: Self.formattedTime(message.createdAt.date, context: context),
             editedLabel: message.isEdited ? context.strings.edited : nil,
-            deliveryState: .delivered,
-            deliveryStateLabel: nil,
+            deliveryState: deliveryState,
+            deliveryStateLabel: isOutgoing ? (deliveryState == .read ? context.strings.read : context.strings.delivered) : nil,
             actions: Self.actions(for: message, context: context)
         )
     }
 
-    /// Действия с доставленным сообщением: редактировать можно своё текстовое сообщение. Режим редактирования
-    /// здесь не учитывается — действия в это время скрывает экран (`ChatViewModel.areMessageActionsEnabled`):
-    /// включение и выключение режима не пересобирают ленту.
+    /// Состояние серверного сообщения: своё с id не больше порога прочтения — прочитано, остальные — доставлены.
+    /// Без меты (`readUpTo == nil`) две галочки не показываются.
+    /// - Parameters:
+    ///   - message: сообщение с сервера.
+    ///   - isOutgoing: сообщение текущего пользователя.
+    ///   - context: общие параметры отображения.
+    static func deliveryState(for message: Message, isOutgoing: Bool, context: MessageDisplayContext) -> MessageDeliveryState {
+        guard isOutgoing, let readUpTo = context.readUpTo, message.messageId <= readUpTo else { return .delivered }
+        return .read
+    }
+
+    /// Действия с доставленным сообщением: редактировать можно своё текстовое сообщение, «Кем прочитано» — любое
+    /// сообщение групповой переписки. Режим редактирования здесь не учитывается — действия в это время скрывает
+    /// экран (`ChatViewModel.areMessageActionsEnabled`): включение и выключение режима не пересобирают ленту.
     /// - Parameters:
     ///   - message: сообщение с сервера.
     ///   - context: общие параметры отображения.
     static func actions(for message: Message, context: MessageDisplayContext) -> [MessageAction] {
-        guard message.senderId == context.currentUserId, message.type == .text else { return [] }
-        return [.edit]
+        var actions: [MessageAction] = []
+        if message.senderId == context.currentUserId, message.type == .text {
+            actions.append(.edit)
+        }
+        if context.conversationType == .group {
+            actions.append(.readers)
+        }
+        return actions
     }
 
     /// Собирает для отображения сообщение, ещё не подтверждённое сервером. Оно всегда исходящее и без времени:

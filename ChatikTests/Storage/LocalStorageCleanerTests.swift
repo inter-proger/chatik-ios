@@ -9,7 +9,7 @@ import XCTest
 
 final class LocalStorageCleanerTests: XCTestCase {
     /// Кейс: в БД сохранены переписки со вложенными пользователями и файлами, отдельные пользователь и файл,
-    /// а также сообщения.
+    /// сообщения и прочтение другими участниками.
     /// Ожидание: после `clearAll()` все storage-сервисы возвращают пустые выборки, состояние синхронизации списка
     /// сброшено.
     func test_clearAll_removesAllEntities() async throws {
@@ -18,6 +18,8 @@ final class LocalStorageCleanerTests: XCTestCase {
         let users = UserStorageService(container: container)
         let files = FileStorageService(container: container)
         let messages = MessageStorageService(container: container)
+        let memberReads = MemberReadStorageService(container: container)
+        try await memberReads.apply([1: MemberReadWrite(pointers: [2: 15], createsMissing: true)])
         try await conversations.save(conversations: [.singleStub, .groupStub], state: ConversationListState(isLoaded: true))
         try await users.save(user: .stub)
         try await files.save(file: .stub)
@@ -35,12 +37,14 @@ final class LocalStorageCleanerTests: XCTestCase {
         let remainingFiles = try await files.fetchAll()
         let remainingMessages = try await messages.fetchLatestBlocks(conversationId: Message.stub.conversationId, minCount: 10)
         let remainingCacheState = try await messages.fetchState(conversationId: Message.stub.conversationId)
+        let remainingMemberReads = try await memberReads.fetchConversationIds()
         XCTAssertTrue(remainingList.conversations.isEmpty)
         XCTAssertEqual(remainingList.state, ConversationListState())
         XCTAssertTrue(remainingUsers.isEmpty)
         XCTAssertTrue(remainingFiles.isEmpty)
         XCTAssertTrue(remainingMessages.isEmpty)
         XCTAssertNil(remainingCacheState)
+        XCTAssertTrue(remainingMemberReads.isEmpty)
     }
 
     /// Кейс: в БД сохранены переписка, черновики и неотправленные сообщения двух пользователей.

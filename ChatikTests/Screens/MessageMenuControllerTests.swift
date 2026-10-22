@@ -221,7 +221,9 @@ final class MessageMenuControllerTests: XCTestCase {
             calendar: calendar,
             now: .distantPast,
             strings: .current,
-            dateHeaderFormatter: RussianMessageDateHeaderFormatter(calendar: calendar)
+            dateHeaderFormatter: RussianMessageDateHeaderFormatter(calendar: calendar),
+            conversationType: .single,
+            readUpTo: nil
         )
         return MessageDisplayModel(outgoing: .stub(clientId: "f", status: status), sender: nil, context: context)
     }

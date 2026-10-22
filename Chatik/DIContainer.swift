@@ -57,6 +57,8 @@ final class DIContainer {
     let conversationNavigator: ConversationNavigating
     /// Уведомления о новых сообщениях в неоткрытых переписках.
     let messageNotificationService: MessageNotificationServiceProtocol
+    /// Прочтение переписок другими участниками — единственный, кто пишет его в БД.
+    let memberReadService: MemberReadServiceProtocol
     /// Держит наблюдение за сетью, пока жив контейнер: при появлении сети WebSocket переподключается сразу.
     private let networkPathMonitor: NetworkPathMonitor
     /// Подписка кэша сообщений на очередь событий — живёт, пока жив контейнер.
@@ -180,9 +182,17 @@ final class DIContainer {
             notifications: notificationService
         )
         self.messageNotificationService = messageNotificationService
+        let memberReadService = MemberReadService(
+            conversationService: conversationService,
+            storage: MemberReadStorageService(container: storageContainer),
+            eventQueue: realtimeEventQueue,
+            sessionService: sessionService
+        )
+        self.memberReadService = memberReadService
         let sessionWorkLauncher = SessionWorkLauncher(
             conversationList: conversationListService,
             messageNotifications: messageNotificationService,
+            memberReads: memberReadService,
             messageDelivery: messageSendQueue,
             realtimeService: realtimeService
         )
@@ -202,10 +212,10 @@ final class DIContainer {
             )
         }
         #endif
-        // Соединение, очередь событий, список, очередь отправки, правки, кэш сообщений, черновики и подготовка
-        // уведомления о сообщении останавливаются, а уведомление прошлой сессии убирается в фазе `authServiceWillLogout`
-        // (до запроса выхода), сессия завершается в `authServiceDidLogout` (после него) — от порядка подписки
-        // это не зависит.
+        // Соединение, очередь событий, список, очередь отправки, правки, кэш сообщений, черновики, прочтение другими
+        // и подготовка уведомления о сообщении останавливаются, а уведомление прошлой сессии убирается в фазе
+        // `authServiceWillLogout` (до запроса выхода), сессия завершается в `authServiceDidLogout` (после него) —
+        // от порядка подписки это не зависит.
         authService.addObserver(realtimeService)
         authService.addObserver(realtimeEventQueue)
         authService.addObserver(conversationListService)
@@ -215,6 +225,7 @@ final class DIContainer {
         authService.addObserver(messageDraftLogoutObserver)
         authService.addObserver(notificationService)
         authService.addObserver(messageNotificationService)
+        authService.addObserver(memberReadService)
         authService.addObserver(sessionService)
         self.networkPathMonitor = NetworkPathMonitor { [weak realtimeService] in
             realtimeService?.networkDidBecomeAvailable()

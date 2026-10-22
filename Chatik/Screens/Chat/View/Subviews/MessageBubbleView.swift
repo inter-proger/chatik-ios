@@ -11,7 +11,8 @@ import SwiftUI
 /// подстраивается под содержимое. Входящий пузырь — от аватара до 32 pt от правого края экрана; свой — в той же
 /// полосе, сдвинутой на `outgoingShift` вправо: не ближе 68 pt к левому краю экрана и 16 pt к правому.
 ///
-/// В подвале пузыря — только время (дату показывает заголовок дня). У отправляющегося сообщения на месте времени
+/// В подвале пузыря — время (дату показывает заголовок дня), а у своего серверного сообщения ещё и галочки: одна —
+/// доставлено, две — прочитано хотя бы одним собеседником. У отправляющегося сообщения на месте времени
 /// часы, у неотправленного — светло-розовое «Не отправлено» и красный значок слева от пузыря. Высота подвала одна
 /// при любом состоянии — пузырь не прыгает при смене статуса.
 ///
@@ -191,13 +192,19 @@ struct MessageBubble: View {
     }
 
     /// Подвал пузыря: время или состояние доставки. Выводится всегда и последним элементом раскладки — к правому
-    /// краю прижат он, а не текст. Высоту задаёт невидимая строка времени того же шрифта, поэтому она одна
-    /// и та же у времени, часов и «Не отправлено».
+    /// краю прижат он, а не текст. Размер задаёт невидимый образец того же шрифта: высота одна и та же у времени,
+    /// часов и «Не отправлено», а у своих сообщений в образце есть и две галочки — переходы «отправляется →
+    /// доставлено → прочитано» не меняют ширину пузыря.
     private var footer: some View {
         ZStack(alignment: .trailing) {
-            Text(verbatim: "00:00")
-                .hidden()
-                .accessibilityHidden(true)
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text(verbatim: "00:00")
+                if message.isOutgoing {
+                    DeliveryCheckmarksView(isRead: true)
+                }
+            }
+            .hidden()
+            .accessibilityHidden(true)
             footerContent
         }
         .font(.caption2)
@@ -207,13 +214,18 @@ struct MessageBubble: View {
     @ViewBuilder
     private var footerContent: some View {
         switch message.deliveryState {
-        case .delivered:
-            HStack(spacing: 4) {
+        case .delivered, .read:
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
                 if let editedLabel = message.editedLabel {
                     Text(editedLabel)
                 }
                 if let time = message.time {
                     Text(time)
+                }
+                if message.isOutgoing {
+                    DeliveryCheckmarksView(isRead: message.deliveryState == .read)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(message.deliveryStateLabel ?? "")
                 }
             }
             .opacity(0.7)
@@ -282,7 +294,8 @@ private struct MessageBubbleLayout: Layout {
 #Preview {
     let ivan = MessageSenderDisplayModel(name: "Иван Петров", isPlaceholder: false, avatarURL: nil)
     VStack(spacing: 0) {
-        MessageBubbleView(message: MessageDisplayModel(id: MessageClientKey(senderId: 1, clientId: "1"), text: "Привет!", isUnsupported: false, isOutgoing: true, sender: ivan, time: "12:01", editedLabel: nil, deliveryState: .delivered, deliveryStateLabel: nil, actions: []))
+        MessageBubbleView(message: MessageDisplayModel(id: MessageClientKey(senderId: 1, clientId: "1"), text: "Привет!", isUnsupported: false, isOutgoing: true, sender: ivan, time: "12:01", editedLabel: nil, deliveryState: .read, deliveryStateLabel: "Прочитано", actions: []))
+        MessageBubbleView(message: MessageDisplayModel(id: MessageClientKey(senderId: 1, clientId: "6"), text: "Я на месте", isUnsupported: false, isOutgoing: true, sender: nil, time: "12:01", editedLabel: nil, deliveryState: .delivered, deliveryStateLabel: "Доставлено", actions: []))
         MessageBubbleView(message: MessageDisplayModel(id: MessageClientKey(senderId: 1, clientId: "2"), text: "Как дела?", isUnsupported: false, isOutgoing: true, sender: nil, time: nil, editedLabel: nil, deliveryState: .sending, deliveryStateLabel: "Отправляется", actions: []))
         MessageBubbleView(message: MessageDisplayModel(id: MessageClientKey(senderId: 1, clientId: "3"), text: "Ты тут?", isUnsupported: false, isOutgoing: true, sender: nil, time: nil, editedLabel: nil, deliveryState: .failed, deliveryStateLabel: "Не отправлено", actions: [.retrySending, .deleteUnsent]))
         MessageBubbleView(message: MessageDisplayModel(id: MessageClientKey(senderId: 2, clientId: "4"), text: "Ок", isUnsupported: false, isOutgoing: false, sender: MessageSenderDisplayModel(name: "Мария Александровна Константинопольская-Вознесенская", isPlaceholder: false, avatarURL: nil), time: "12:02", editedLabel: "Изменено", deliveryState: .delivered, deliveryStateLabel: nil, actions: []))

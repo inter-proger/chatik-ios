@@ -43,6 +43,10 @@ import os
 /// сообщении собеседника вне видимости — сообщение перед ним; дальше граница не двигается до повторного входа
 /// или pull-to-refresh. Положение ленты и активность сцены сообщает View.
 ///
+/// Прочтение другими участниками (`docs/read-receipts.md`): пока лента запущена, экран наблюдает переписку
+/// в `MemberReadService`. Галочки собираются по порогу `readUpTo`, который сервис меняет только при росте, —
+/// лента не пересобирается на каждое событие. «Кем прочитано» открывает лист (`presentedReaders`).
+///
 /// Тексты и производные данные — в `ChatViewModel+Texts`.
 @MainActor
 @Observable
@@ -82,6 +86,8 @@ final class ChatViewModel {
     private(set) var insertionAnimationToken = 0
     /// Растёт, когда ленту нужно вернуть вниз: своё сообщение при отлистанной ленте.
     private(set) var scrollToBottomRequest = 0
+    /// Открытый лист «Кем прочитано»; `nil` — лист закрыт. Сбрасывает и View, когда лист смахивают.
+    var presentedReaders: MessageReadersRequest?
 
     /// Минимальный интервал между обновлениями ленты.
     static let messagesUpdateInterval: Duration = .milliseconds(500)
@@ -113,6 +119,8 @@ final class ChatViewModel {
     private let notifications: InAppNotificationServiceProtocol
     /// Прочтение переписки и отметка прочтения.
     let readStates: ConversationReadStateProviding
+    /// Прочтение переписки другими участниками: галочки и «Кем прочитано».
+    private let memberReads: MemberReadProviding
     private let sleep: Sleep
 
     /// Сообщения с сервера из последнего снимка ленты. Не наблюдается: об изменении `observeMessages()` узнаёт
@@ -164,6 +172,7 @@ final class ChatViewModel {
     ///   - timeChangeService: полночь, смена часового пояса и перевод часов — пересобирают заголовки.
     ///   - notifications: показ ошибок ленты и правки.
     ///   - readStates: прочтение переписки — граница непрочитанных, счётчик кнопки «вниз» и отметка прочтения.
+    ///   - memberReads: прочтение переписки другими участниками — галочки и «Кем прочитано».
     ///   - now: текущее время; подменяется в тестах форматирования.
     ///   - calendar: календарь устройства; подменяется в тестах, чтобы деление на дни не зависело от устройства.
     ///   - sleep: ожидание между обновлениями ленты; подменяется в тестах.
@@ -181,6 +190,7 @@ final class ChatViewModel {
         timeChangeService: SignificantTimeChangeServiceProtocol,
         notifications: InAppNotificationServiceProtocol,
         readStates: ConversationReadStateProviding,
+        memberReads: MemberReadProviding,
         now: @escaping () -> Date = { Date() },
         calendar: @escaping () -> Calendar = { .current },
         sleep: @escaping Sleep = { try await Task.sleep(for: $0) }
@@ -198,6 +208,7 @@ final class ChatViewModel {
         self.timeChangeService = timeChangeService
         self.notifications = notifications
         self.readStates = readStates
+        self.memberReads = memberReads
         self.now = now
         self.calendar = calendar
         self.sleep = sleep
@@ -242,8 +253,9 @@ final class ChatViewModel {
         await task.value
     }
 
-    /// Подписывается на снимки ленты и на изменения времени и запускает ленту.
+    /// Начинает наблюдать прочтение другими, подписывается на снимки ленты и на изменения времени и запускает ленту.
     private func startList() async {
+        memberReads.beginObserving(conversationId: conversation.conversationId)
         let snapshots = await messagesList.snapshots()
         snapshotsTask = Task { [weak self] in
             for await snapshot in snapshots {
@@ -260,8 +272,9 @@ final class ChatViewModel {
         await messagesList.start()
     }
 
-    /// Отписывается от снимков и изменений времени и останавливает ленту.
+    /// Отписывается от снимков и изменений времени, перестаёт наблюдать прочтение другими и останавливает ленту.
     private func stopList() async {
+        memberReads.endObserving(conversationId: conversation.conversationId)
         snapshotsTask?.cancel()
         snapshotsTask = nil
         timeChangesTask?.cancel()
@@ -354,6 +367,7 @@ final class ChatViewModel {
 
     /// Входные данные сборки: читаются на main, и по этим чтениям Observation сообщает об изменениях. Чтение
     /// `language` тоже наблюдается — смена языка пересобирает ленту с форматтером заголовков нового языка.
+    /// Прочтение другими читается порогом `readUpTo`, а не указателями: порог меняется только при росте максимума.
     private func makeBuildInput() -> MessagesBuildInput {
         let outgoing = outgoingMessages
         let senderIds = Set(serverMessages.map(\.senderId) + outgoing.map(\.senderId))
@@ -371,7 +385,9 @@ final class ChatViewModel {
                 calendar: calendar,
                 now: now(),
                 strings: .current,
-                dateHeaderFormatter: dateHeaderFormatterProvider.formatter(locale: locale, calendar: calendar)
+                dateHeaderFormatter: dateHeaderFormatterProvider.formatter(locale: locale, calendar: calendar),
+                conversationType: conversation.type,
+                readUpTo: memberReads.readUpTo(conversationId: conversation.conversationId)
             )
         )
     }
@@ -566,7 +582,7 @@ final class ChatViewModel {
     // MARK: - Редактирование
 
     /// Обработчик пункта меню сообщения: редактирование включает режим, повтор и удаление неотправленного
-    /// передаются очереди отправки.
+    /// передаются очереди отправки, «Кем прочитано» открывает лист.
     /// - Parameters:
     ///   - action: выбранное действие.
     ///   - message: сообщение, у которого открыто меню.
@@ -578,7 +594,27 @@ final class ChatViewModel {
             messageSendQueue.retry(clientId: message.id.clientId)
         case .deleteUnsent:
             messageSendQueue.delete(clientId: message.id.clientId)
+        case .readers:
+            showReaders(of: message)
         }
+    }
+
+    /// Открывает лист «Кем прочитано» для серверного сообщения. Сообщения нет в ленте (пропало, пока закрывалось
+    /// меню) — лист не открывается.
+    /// - Parameter displayModel: сообщение ленты.
+    private func showReaders(of displayModel: MessageDisplayModel) {
+        guard let message = serverMessages.first(where: { $0.clientKey == displayModel.id }) else { return }
+        presentedReaders = MessageReadersRequest(
+            conversationId: conversation.conversationId,
+            messageId: message.messageId,
+            senderId: message.senderId
+        )
+    }
+
+    /// ViewModel листа «Кем прочитано».
+    /// - Parameter request: сообщение листа.
+    func makeReadersViewModel(for request: MessageReadersRequest) -> MessageReadersViewModel {
+        MessageReadersViewModel(request: request, memberReads: memberReads, sessionService: sessionService, userCache: userCache)
     }
 
     /// Включает режим редактирования: черновик уходит в БД (точка сохранения) и остаётся нетронутым, в поле

@@ -1,0 +1,18 @@
+/*
+  MessageReaders.strings
+  Chatik
+
+  Strings of the "Read by" sheet.
+*/
+
+/* Sheet title; %d — how many members have read the message */
+"message_readers.title" = "Read: %d";
+
+/* Sheet title while the list of readers is loading or failed to load */
+"message_readers.title_unknown" = "Read by";
+
+/* The sheet is open but nobody has read the message yet */
+"message_readers.empty" = "No one has read it yet";
+
+/* The list of readers failed to load: no data on the device or from the server */
+"message_readers.failed" = "Couldn't load who has read it";

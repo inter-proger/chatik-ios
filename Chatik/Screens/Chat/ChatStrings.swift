@@ -17,6 +17,8 @@ enum ChatStrings {
     static var messageUnsupported: String { localized("chat.message.unsupported") }
     static var messageSending: String { localized("chat.message.sending") }
     static var messageFailed: String { localized("chat.message.failed") }
+    static var messageDelivered: String { localized("chat.message.delivered") }
+    static var messageRead: String { localized("chat.message.read") }
     static var titleUntitled: String { localized("chat.title.untitled") }
     static var userLoading: String { localized("chat.user.loading") }
     static var userDeleted: String { localized("chat.user.deleted") }
@@ -24,6 +26,7 @@ enum ChatStrings {
     static var messageActionEdit: String { localized("chat.message_actions.edit") }
     static var messageActionRetrySending: String { localized("chat.message_actions.retry_sending") }
     static var messageActionDeleteUnsent: String { localized("chat.message_actions.delete_unsent") }
+    static var messageActionReaders: String { localized("chat.message_actions.readers") }
     static var editTitle: String { localized("chat.edit.title") }
     static var editCancel: String { localized("chat.edit.cancel") }
     static var editSave: String { localized("chat.edit.save") }

@@ -35,6 +35,7 @@ final class DebugLoginServiceTests: XCTestCase {
         let sessionWork = SessionWorkLauncher(
             conversationList: conversationList,
             messageNotifications: MessageNotificationServiceMock(),
+            memberReads: MemberReadServiceMock(),
             messageDelivery: messageSendQueue,
             realtimeService: realtimeService
         )

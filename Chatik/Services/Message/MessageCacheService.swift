@@ -214,7 +214,7 @@ actor MessageCacheService: MessageCacheServiceProtocol, MessageCacheLogoutHandli
             handleMessageEvent(message, isNew: true)
         case let .messageEdited(message, _, _):
             handleMessageEvent(message, isNew: false)
-        case .connected, .conversationCreated, .conversationRead:
+        case .connected, .conversationCreated, .conversationRead, .memberRead:
             break
         }
     }

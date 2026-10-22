@@ -95,6 +95,23 @@ final class WebSocketMessagesTests: XCTestCase {
         XCTAssertEqual(message.event, .unknown)
     }
 
+    /// Кейс: `conversations` / `memberRead` с полным телом.
+    /// Ожидание: событие `.memberRead` с переписокой, участником и указателем; подтверждение требуется.
+    func test_decode_memberRead() throws {
+        let message = try decode(#"{"uid":"1","group":"conversations","event":"memberRead","body":{"conversationId":1,"userId":2,"lastReadMessageId":15}}"#)
+
+        XCTAssertEqual(message.event, .memberRead(conversationId: 1, userId: 2, lastReadMessageId: 15))
+        XCTAssertTrue(message.requiresAcknowledgement)
+    }
+
+    /// Кейс: `conversations` / `memberRead` без обязательного поля `lastReadMessageId`.
+    /// Ожидание: событие `.unknown` — неполный указатель не применяется.
+    func test_decode_memberReadWithoutPointer_isUnknown() throws {
+        let message = try decode(#"{"uid":"1","group":"conversations","event":"memberRead","body":{"conversationId":1,"userId":2}}"#)
+
+        XCTAssertEqual(message.event, .unknown)
+    }
+
     /// Кейс: неизвестное событие и известное событие с неразборчивыми данными.
     /// Ожидание: оба — `.unknown`, разбор не падает, подтверждение требуется.
     func test_decode_unknownOrBrokenBody_isUnknown() throws {

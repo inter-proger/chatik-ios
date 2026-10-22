@@ -16,6 +16,8 @@ enum WebSocketServerEvent: Equatable, Sendable {
     case conversationCreated(Conversation)
     /// `conversations` / `read` — переписка прочитана (на этом или другом устройстве).
     case conversationRead(ReadInfo)
+    /// `conversations` / `memberRead` — другой участник сдвинул указатель прочтения переписки.
+    case memberRead(conversationId: Int, userId: Int, lastReadMessageId: Int)
     /// `messages` / `received` — новое сообщение, новое превью переписки и прочтение для получателя.
     /// `nil` — прочтения в событии нет.
     case messageReceived(Message, LastMessage, ReadInfo?)
@@ -62,6 +64,12 @@ extension WebSocketServerMessage: Decodable {
         let readInfo: ReadInfo
     }
 
+    private struct MemberReadBody: Decodable {
+        let conversationId: Int
+        let userId: Int
+        let lastReadMessageId: Int
+    }
+
     private struct ReceivedBody: Decodable {
         let message: Message
         let lastMessage: LastMessage
@@ -101,6 +109,10 @@ extension WebSocketServerMessage: Decodable {
             return (try? container.decode(ConversationBody.self, forKey: .body)).map { .conversationCreated($0.conversation) }
         case ("conversations", "read"):
             return (try? container.decode(ReadBody.self, forKey: .body)).map { .conversationRead($0.readInfo) }
+        case ("conversations", "memberRead"):
+            return (try? container.decode(MemberReadBody.self, forKey: .body)).map {
+                .memberRead(conversationId: $0.conversationId, userId: $0.userId, lastReadMessageId: $0.lastReadMessageId)
+            }
         case ("messages", "received"):
             return (try? container.decode(ReceivedBody.self, forKey: .body)).map {
                 .messageReceived($0.message, $0.lastMessage, $0.readInfo)

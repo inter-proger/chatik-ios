@@ -19,6 +19,8 @@ final class ChatViewModelTests: XCTestCase {
     private var notifications: InAppNotificationServiceMock!
     /// Прочтение переписок — мок списка чатов.
     private var readStates: ConversationListServiceMock!
+    /// Прочтение переписки другими участниками.
+    private var memberReads: MemberReadServiceMock!
     private var sleeper: ThrottleSleeper!
     private var observation: Task<Void, Never>?
     /// Ожидание исходов запросов правки (`observeEditSubmission`) — как `.task` показанного экрана.
@@ -40,6 +42,7 @@ final class ChatViewModelTests: XCTestCase {
         timeChanges = SignificantTimeChangeServiceMock()
         notifications = InAppNotificationServiceMock()
         readStates = ConversationListServiceMock()
+        memberReads = MemberReadServiceMock()
         sleeper = ThrottleSleeper()
     }
 
@@ -980,6 +983,82 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertEqual(sleeper.requested.count, requestsBefore)
     }
 
+    // MARK: - Прочтение другими
+
+    /// Кейс: экран открыт, затем закрыт.
+    /// Ожидание: прочтение другими наблюдается, пока лента запущена.
+    func test_observeMessages_observesMemberReadsWhileListRuns() async {
+        let sut = makeSUT()
+        await startObserving(sut)
+        XCTAssertEqual(memberReads.beginObservingIds, [Conversation.singleStub.conversationId])
+
+        observation?.cancel()
+        sleeper.releaseAll()
+        await observation?.value
+        observation = nil
+
+        XCTAssertEqual(memberReads.endObservingIds, [Conversation.singleStub.conversationId])
+    }
+
+    /// Кейс: в ленте свои сообщения 6 и 5 без меты прочтения; порог вырос до 5.
+    /// Ожидание: сначала обе с одной галочкой; после роста порога 5 прочитано, 6 — доставлено.
+    func test_readUpToGrowth_rebuildsFeedWithReadState() async {
+        let sut = makeSUT()
+        await startObserving(sut)
+        list.publish(.make(messages: [.make(id: 6), .make(id: 5)], isUrgent: true))
+        await waitUntil { sut.messages.map(\.deliveryState) == [.delivered, .delivered] }
+
+        memberReads.stubbedReadUpTo = [Conversation.singleStub.conversationId: 5]
+        sleeper.releaseAll()
+
+        await waitUntil { sut.messages.map(\.deliveryState) == [.delivered, .read] }
+    }
+
+    /// Кейс: лента показана, пауза прошла; меняются указатели участников, а порог — нет.
+    /// Ожидание: лента не пересобирается — новых пауз обновления нет.
+    func test_memberPointersChangeWithoutReadUpTo_doesNotRebuildFeed() async {
+        let sut = makeSUT()
+        await startObserving(sut)
+        list.publish(.make(messages: [.make(id: 5)], isUrgent: true))
+        await waitUntil { sut.messages.count == 1 }
+        await yieldUntil { [unowned self] in sleeper.isWaiting }
+        sleeper.releaseAll()
+        await yieldTimes()
+        let requestsBefore = sleeper.requested.count
+
+        memberReads.stubbedPointers = [Conversation.singleStub.conversationId: [2: 3]]
+
+        await yieldTimes()
+        XCTAssertEqual(sleeper.requested.count, requestsBefore)
+    }
+
+    /// Кейс: в групповой переписке в меню сообщения собеседника выбрано «Кем прочитано».
+    /// Ожидание: открыт лист этого сообщения — переписка, `messageId` и автор.
+    func test_didSelectReaders_opensSheetForMessage() async throws {
+        let sut = makeSUT(conversation: .groupStub)
+        await startObserving(sut)
+        list.publish(.make(messages: [.make(id: 15, conversationId: 2, senderId: 2)], isUrgent: true))
+        await waitUntil { sut.messages.count == 1 }
+
+        sut.didSelectAction(.readers, for: try XCTUnwrap(sut.messages.first))
+
+        XCTAssertEqual(sut.presentedReaders, MessageReadersRequest(conversationId: 2, messageId: 15, senderId: 2))
+    }
+
+    /// Кейс: «Кем прочитано» выбрано для сообщения, которого уже нет среди серверных сообщений ленты.
+    /// Ожидание: лист не открывается.
+    func test_didSelectReaders_messageMissingFromFeed_doesNotOpenSheet() async throws {
+        let sut = makeSUT(conversation: .groupStub)
+        messageSendQueue.outgoingMessages = [.stub(clientId: "a", conversationId: 2, status: .failed)]
+        await startObserving(sut)
+        list.publish(.make(messages: [], isUrgent: true))
+        await waitUntil { sut.messages.count == 1 }
+
+        sut.didSelectAction(.readers, for: try XCTUnwrap(sut.messages.first))
+
+        XCTAssertNil(sut.presentedReaders)
+    }
+
     // MARK: - Прочтение
 
     /// Кейс: лента с сообщениями собеседника 3, 2, 1 загружена; сцена сначала неактивна, затем активна; затем лента
@@ -1189,6 +1268,7 @@ final class ChatViewModelTests: XCTestCase {
             timeChangeService: timeChanges,
             notifications: notifications,
             readStates: readStates,
+            memberReads: memberReads,
             now: now,
             calendar: { .stub() },
             sleep: { [sleeper] in try await sleeper!.sleep($0) }

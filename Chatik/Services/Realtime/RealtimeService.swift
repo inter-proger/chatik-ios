@@ -16,6 +16,8 @@ enum RealtimeEvent: Equatable, Sendable {
     case conversationCreated(Conversation)
     /// Переписка прочитана — на этом или другом устройстве текущего пользователя.
     case conversationRead(ReadInfo)
+    /// Другой участник прочитал переписку до `lastReadMessageId` включительно. Курсор синхронизации не двигает.
+    case memberRead(conversationId: Int, userId: Int, lastReadMessageId: Int)
     /// Новое сообщение, новое превью его переписки и прочтение для текущего пользователя (`nil` — его нет в событии).
     case messageReceived(Message, LastMessage, ReadInfo?)
     /// Сообщение отредактировано; превью и версия пользователя — только если отредактировано последнее сообщение
@@ -443,6 +445,8 @@ final class RealtimeService: RealtimeServiceProtocol {
         switch event {
         case let .conversationCreated(conversation): return .conversationCreated(conversation)
         case let .conversationRead(readInfo): return .conversationRead(readInfo)
+        case let .memberRead(conversationId, userId, lastReadMessageId):
+            return .memberRead(conversationId: conversationId, userId: userId, lastReadMessageId: lastReadMessageId)
         case let .messageReceived(message, lastMessage, readInfo): return .messageReceived(message, lastMessage, readInfo)
         case let .messageEdited(message, lastMessage, changeVersion): return .messageEdited(message, lastMessage, changeVersion: changeVersion)
         case .connected, .connectionError, .unknown: return nil

@@ -14,6 +14,7 @@ extension MessageAction {
         case .edit: ChatStrings.messageActionEdit
         case .retrySending: ChatStrings.messageActionRetrySending
         case .deleteUnsent: ChatStrings.messageActionDeleteUnsent
+        case .readers: ChatStrings.messageActionReaders
         }
     }
 
@@ -23,13 +24,14 @@ extension MessageAction {
         case .edit: "pencil"
         case .retrySending: "arrow.clockwise"
         case .deleteUnsent: "trash"
+        case .readers: "eye"
         }
     }
 
     /// Действие удаляет данные: пункт выделяется красным, для VoiceOver — роль `.destructive`.
     var isDestructive: Bool {
         switch self {
-        case .edit, .retrySending: false
+        case .edit, .retrySending, .readers: false
         case .deleteUnsent: true
         }
     }

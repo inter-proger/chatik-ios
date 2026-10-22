@@ -133,7 +133,23 @@ enum PreviewDependencies {
             dateHeaderFormatterProvider: MessageDateHeaderFormatterProvider.default,
             timeChangeService: SignificantTimeChangeService(),
             notifications: notificationService,
-            readStates: ConversationReadStatePreviewMock()
+            readStates: ConversationReadStatePreviewMock(),
+            memberReads: MemberReadService(
+                conversationService: ConversationServicePreviewMock(delay: .milliseconds(300)),
+                storage: MemberReadStorageService(container: storageContainer),
+                eventQueue: realtimeEventQueue,
+                sessionService: sessionService
+            )
+        )
+    }
+
+    /// ViewModel листа «Кем прочитано» над моками: двое участников прочитали сообщение, третий — нет.
+    static func messageReadersViewModel() -> MessageReadersViewModel {
+        MessageReadersViewModel(
+            request: MessageReadersRequest(conversationId: 2, messageId: 10, senderId: 1),
+            memberReads: MemberReadPreviewMock(pointers: [2: 12, 3: 10, 4: 5]),
+            sessionService: sessionService,
+            userCache: userCache
         )
     }
 
@@ -334,6 +350,12 @@ final class ConversationServicePreviewMock: ConversationServiceProtocol {
         return ReadInfo(conversationId: conversationId, lastReadMessageId: messageId, unreadCount: 0, totalUnreadCount: 0, changeVersion: 2)
     }
 
+    /// Собеседники прочитали всё: у своих сообщений превью — две галочки.
+    func fetchMembersReadMeta(conversationId: Int) async throws -> [MemberReadMeta] {
+        try await Task.sleep(for: delay)
+        return [MemberReadMeta(userId: 2, lastReadMessageId: .max), MemberReadMeta(userId: 3, lastReadMessageId: .max)]
+    }
+
     /// Переписки списка: личная — с последним сообщением, групповая — без сообщений.
     private var previewConversations: [Conversation] {
         let now = ServerTime.now
@@ -531,6 +553,24 @@ final class ConversationReadStatePreviewMock: ConversationReadStateProviding {
     func readState(conversationId: Int) -> ConversationReadState? { nil }
     func unreadCount(conversationId: Int) -> Int? { nil }
     func markRead(conversationId: Int, messageId: Int) {}
+}
+
+/// Прочтение другими участниками для превью листа «Кем прочитано»: заданные указатели одной переписки.
+@MainActor
+final class MemberReadPreviewMock: MemberReadProviding {
+    private let stubbedPointers: [Int: Int]
+
+    /// - Parameter pointers: указатели участников по `userId`.
+    init(pointers: [Int: Int]) {
+        stubbedPointers = pointers
+    }
+
+    func beginObserving(conversationId: Int) {}
+    func endObserving(conversationId: Int) {}
+    func pointers(conversationId: Int) -> [Int: Int]? { stubbedPointers }
+    func readUpTo(conversationId: Int) -> Int? { stubbedPointers.values.max() }
+    func isRefreshFailed(conversationId: Int) -> Bool { false }
+    func refresh(conversationId: Int) {}
 }
 
 extension ConversationReadState {

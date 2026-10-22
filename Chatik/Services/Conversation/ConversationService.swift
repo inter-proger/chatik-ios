@@ -16,6 +16,8 @@ protocol ConversationServiceProtocol {
     func fetchConversations(ids: [Int]) async throws -> ConversationsBatch
     /// Отмечает прочитанными сообщения переписки до `messageId` включительно.
     func markRead(conversationId: Int, messageId: Int) async throws -> ReadInfo
+    /// Возвращает указатели прочтения участников переписки, кроме текущего пользователя.
+    func fetchMembersReadMeta(conversationId: Int) async throws -> [MemberReadMeta]
 }
 
 final class ConversationService: ConversationServiceProtocol {
@@ -71,5 +73,15 @@ final class ConversationService: ConversationServiceProtocol {
             ConversationEndpoint.markRead(conversationId: conversationId, messageId: messageId)
         )
         return response.readInfo
+    }
+
+    /// Загружает указатели прочтения других участников через `GET /conversations/getMembersReadMeta`.
+    /// - Parameter conversationId: переписка; чужая или несуществующая — ошибка 5002.
+    /// - Returns: указатели всех участников, кроме текущего пользователя, по возрастанию `userId`.
+    func fetchMembersReadMeta(conversationId: Int) async throws -> [MemberReadMeta] {
+        let response: MembersReadMetaResponse = try await networkService.request(
+            ConversationEndpoint.getMembersReadMeta(conversationId: conversationId)
+        )
+        return response.membersReadMeta
     }
 }

@@ -19,6 +19,7 @@ iOS-клиент мессенджера на SwiftUI (iOS 17+): авториза
 
 | Документ | О чём |
 | --- | --- |
+| [Правила разработки](docs/development-rules.md) | git: ветка на задачу от `develop`, pull request в `develop`; порядок по умолчанию: документ → ревью документа → реализация → ревью реализации → коммит и PR |
 | [Архитектура приложения: обзор](docs/app-architecture.md) | слои, `DIContainer` и порядок сборки, структура экрана, навигация и роутеры, жизненный цикл, конкурентность, xcconfig и `AppConfig`, превью, логи |
 | [Сетевой слой: архитектура клиента](docs/networking.md) | `NetworkService` и `Endpoint`, разбор `APIResponse`, глобальный 2003, `actions` и `APIActionDispatcher`, multipart-загрузка из файла, `NetworkError`, `NetworkLogger` |
 | [Авторизация и сессия: архитектура клиента](docs/auth-and-session.md) | `AuthService` и двухфазный выход, `SessionService`, очистка БД, истечение сессии, `SessionWorkLauncher`, фон, экран авторизации и правила валидации |

@@ -19,6 +19,15 @@ iOS-клиент мессенджера на SwiftUI (iOS 17+): авториза
 
 | Документ | О чём |
 | --- | --- |
+| [Архитектура приложения: обзор](docs/app-architecture.md) | слои, `DIContainer` и порядок сборки, структура экрана, навигация и роутеры, жизненный цикл, конкурентность, xcconfig и `AppConfig`, превью, логи |
+| [Сетевой слой: архитектура клиента](docs/networking.md) | `NetworkService` и `Endpoint`, разбор `APIResponse`, глобальный 2003, `actions` и `APIActionDispatcher`, multipart-загрузка из файла, `NetworkError`, `NetworkLogger` |
+| [Авторизация и сессия: архитектура клиента](docs/auth-and-session.md) | `AuthService` и двухфазный выход, `SessionService`, очистка БД, истечение сессии, `SessionWorkLauncher`, фон, экран авторизации и правила валидации |
+| [Соединение реального времени (WebSocket): архитектура клиента](docs/realtime-connection.md) | протокол событий, цикл токен → `auth` → события, исходы закрытия, backoff, heartbeat, `RealtimeConnectionMonitor` |
+| [Пользователи: кэш и выбор собеседника](docs/users-cache.md) | `UserCacheService` / `UserCacheStore` / `UserCacheSnapshot`, устаревание и пачки, `/users/getList`, экран создания личного диалога |
+| [Профиль и аватар: архитектура клиента](docs/profile-and-avatar.md) | профиль из сессии, выбор фото, `ImageFileStore` и лимиты, загрузка с прогрессом, `AvatarView`, `RemoteFile` |
+| [Локальная БД (CoreData): архитектура клиента](docs/local-storage.md) | сущности и их писатели, фоновые контексты, открытие в фоне, пересоздание и миграции, история версий модели |
+| [Язык интерфейса и строки: архитектура клиента](docs/localization.md) | `LocalizationService` и свой bundle языка, перерисовка через Observation, `Localized` и таблицы `XxxStrings`, подстановки и `.stringsdict`, `UserDefaultsService` |
+| [Постраничный список `PaginatedList`](docs/paginated-list.md) | контракт загрузчика, `refresh` с кэшем, подгрузка у конца, `syncFirstPage`, отбрасывание устаревших ответов, дубликаты |
 | [Подъём чатов в списке: архитектура клиента](docs/conversation-list-architecture.md) | `ConversationListService`, очередь WS-событий с приостановкой, стартовая синхронизация списка |
 | [Синхронизация ленты сообщений: архитектура клиента](docs/messages-sync-architecture.md) | `MessageCacheService` — единый писатель сообщений, `MessagesListService`, признак синхронизации, `receivedAfter` и `getBlockBatch` |
 | [Заголовки дат в ленте сообщений](docs/message-date-headers.md) | правила дат «Сегодня / Вчера / день недели / год», сервис `MessageDateHeaderFormatting` с реализацией для русского, секции по дням, в сообщениях только время, плавающая дата при прокрутке |

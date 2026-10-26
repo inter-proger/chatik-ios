@@ -995,6 +995,16 @@ final class ConversationListServiceTests: XCTestCase {
         XCTAssertTrue(storage.replacements.isEmpty)
     }
 
+    /// Кейс: в кэше группа, последнее сообщение которой отправил пользователь 7, и личная переписка с собеседником 2.
+    /// Ожидание: при чтении кэша загружаются и собеседник, и отправитель превью группы.
+    func test_start_loadsGroupPreviewSenders() async {
+        let group = Conversation.make(id: 5).with(position: .stub, lastMessage: LastMessage(messageId: 3, senderId: 7, type: .text, text: "Привет", updatedAt: .stub))
+        await start(cache: [group, Conversation.singleStub], state: loadedState)
+
+        await yieldUntil { [unowned self] in !userCache.loadRequests.isEmpty }
+        XCTAssertEqual(userCache.loadRequests.first.map(Set.init), [2, 7])
+    }
+
     // MARK: - Helpers
 
     /// Создаёт сервис над моками теста.

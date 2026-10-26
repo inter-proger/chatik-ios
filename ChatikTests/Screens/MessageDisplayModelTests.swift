@@ -254,7 +254,7 @@ final class MessageDisplayModelTests: XCTestCase {
             strings: .current,
             dateHeaderFormatter: RussianMessageDateHeaderFormatter(calendar: calendar),
             conversationType: conversationType,
-            readUpTo: readUpTo
+            readCoverage: readUpTo.map(MessageReadCoverage.single(upTo:))
         )
     }
 }

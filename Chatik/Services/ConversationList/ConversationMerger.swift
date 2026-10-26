@@ -21,6 +21,12 @@ enum ConversationUpdate: Equatable {
         case let .read(readInfo): return readInfo.conversationId
         }
     }
+
+    /// Переписка полной версии; `nil` — патч или прочтение.
+    var fullConversation: Conversation? {
+        guard case let .full(conversation) = self else { return nil }
+        return conversation
+    }
 }
 
 /// Итог слияния: новая локальная версия и признак того, что сменилась позиция (строку нужно переместить).
@@ -37,7 +43,7 @@ struct ConversationMergeResult: Equatable {
 /// 2. **Текст последнего сообщения.** `lastMessage.messageId` совпадает с локальным, а `lastMessage.updatedAt`
 ///    больше → берётся `lastMessage`.
 /// 3. **Информация** (только полный объект). `updatedInfoAt` больше локального → берутся `memberIds`, `name`,
-///    `avatar`, `opponentUserId`, `updatedInfoAt`.
+///    `description`, `avatar`, `opponentUserId`, `updatedInfoAt`.
 /// 4. **Прочтение** (полный объект, `read` и патч с `readInfo`). `changeVersion` строго больше локального → берётся
 ///    `readState` целиком. Информацию по `changeVersion` не сливают: события `messages` несут версию, но не информацию.
 ///
@@ -84,6 +90,7 @@ enum ConversationMerger {
             type: base.type,
             memberIds: info.memberIds,
             name: info.name,
+            description: info.description,
             avatar: info.avatar,
             opponentUserId: info.opponentUserId,
             lastMessage: position.lastMessage,

@@ -46,4 +46,14 @@ final class ConversationOpeningMock: ConversationOpening {
         opened.append(conversation)
         openedConversationId = conversation.conversationId
     }
+
+    /// Переписки, закрытые `closeConversation`, по порядку.
+    private(set) var closed: [Int] = []
+
+    func closeConversation(id conversationId: Int) -> Bool {
+        closed.append(conversationId)
+        guard openedConversationId == conversationId else { return false }
+        openedConversationId = nil
+        return true
+    }
 }

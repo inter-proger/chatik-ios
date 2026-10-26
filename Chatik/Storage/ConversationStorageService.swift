@@ -15,6 +15,10 @@ protocol ConversationStorageServiceProtocol {
     func replaceList(with conversations: [Conversation], state: ConversationListState) async throws
     /// Ищет переписку по идентификатору.
     func find(byId id: Int) async throws -> Conversation?
+    /// Удаляет переписку (пользователь перестал в ней состоять) и записывает состояние синхронизации.
+    func delete(conversationId: Int, state: ConversationListState) async throws
+    /// Записывает только состояние синхронизации.
+    func save(state: ConversationListState) async throws
 }
 
 /// Хранилище списка переписок в CoreData. Переписка сохраняется вместе с аватаром — он попадает в хранилище файлов;
@@ -76,6 +80,28 @@ final class ConversationStorageService: ConversationStorageServiceProtocol {
             )
             try context.fetch(request).forEach(context.delete)
             try ConversationEntity.upsert(conversations, mergingWithStored: false, in: context)
+            try ConversationListStateEntity.store(state, in: context)
+            try context.save()
+        }
+    }
+
+    /// Удаляет переписку одним фоновым контекстом вместе с записью состояния синхронизации. Аватар остаётся
+    /// в хранилище файлов. Переписки нет — записывается только состояние.
+    /// - Parameters:
+    ///   - conversationId: удаляемая переписка.
+    ///   - state: состояние синхронизации списка (метки удаления, ожидающие группы).
+    func delete(conversationId: Int, state: ConversationListState) async throws {
+        try await container.performWrite { context in
+            try context.fetch(ConversationEntity.makeFetchRequest(id: conversationId)).forEach(context.delete)
+            try ConversationListStateEntity.store(state, in: context)
+            try context.save()
+        }
+    }
+
+    /// Записывает состояние синхронизации списка.
+    /// - Parameter state: состояние синхронизации.
+    func save(state: ConversationListState) async throws {
+        try await container.performWrite { context in
             try ConversationListStateEntity.store(state, in: context)
             try context.save()
         }

@@ -24,6 +24,14 @@ enum ChatRowLocalPreview: Equatable {
     case draft(String)
 }
 
+/// Отправитель последнего сообщения группы — подпись превью «Имя: текст».
+enum ChatRowPreviewSender: Equatable {
+    /// Своё сообщение — «Вы:».
+    case currentUser
+    /// Сообщение участника из кэша пользователей.
+    case user(CachedUser)
+}
+
 /// Переписка в списке чатов в готовом для отображения виде.
 struct ChatRowDisplayModel: Identifiable, Equatable {
     let id: Int
@@ -33,6 +41,8 @@ struct ChatRowDisplayModel: Identifiable, Equatable {
     let isTitlePlaceholder: Bool
     /// Аватар для списка — уменьшенная копия, если она есть. `nil` — аватар не установлен.
     let avatarURL: URL?
+    /// Изображение по умолчанию: у группы — силуэт двух людей.
+    let avatarPlaceholder: AvatarPlaceholder
     /// Превью: неотправленное сообщение или черновик, если они есть, иначе последнее сообщение.
     let preview: ChatRowPreview
     /// Время, когда переписка последний раз поднялась, в формате ленты сообщений.
@@ -47,6 +57,7 @@ struct ChatRowDisplayModel: Identifiable, Equatable {
         title: String,
         isTitlePlaceholder: Bool = false,
         avatarURL: URL?,
+        avatarPlaceholder: AvatarPlaceholder = .person,
         preview: ChatRowPreview = .message(""),
         time: String = "",
         unreadCountText: String? = nil,
@@ -56,6 +67,7 @@ struct ChatRowDisplayModel: Identifiable, Equatable {
         self.title = title
         self.isTitlePlaceholder = isTitlePlaceholder
         self.avatarURL = avatarURL
+        self.avatarPlaceholder = avatarPlaceholder
         self.preview = preview
         self.time = time
         self.unreadCountText = unreadCountText
@@ -74,6 +86,7 @@ extension ChatRowDisplayModel {
     /// - Parameters:
     ///   - conversation: переписка из ответа сервера или БД.
     ///   - opponent: собеседник из кэша по `opponentUserId`; `nil` — у переписки нет собеседника.
+    ///   - previewSender: отправитель последнего сообщения группы; `nil` — не группа или отправитель неизвестен.
     ///   - localPreview: неотправленное сообщение или черновик переписки; `nil` — нет ни того, ни другого.
     ///   - unreadCount: непрочитанные для показа — с учётом оптимистичной отметки прочтения.
     ///   - timeFormatter: формат времени ленты сообщений.
@@ -81,6 +94,7 @@ extension ChatRowDisplayModel {
     init(
         conversation: Conversation,
         opponent: CachedUser?,
+        previewSender: ChatRowPreviewSender? = nil,
         localPreview: ChatRowLocalPreview?,
         unreadCount: Int,
         timeFormatter: MessageTimeFormatter
@@ -97,11 +111,37 @@ extension ChatRowDisplayModel {
             title: conversation.name ?? Self.opponentTitle(for: opponent) ?? ChatListStrings.rowUntitled,
             isTitlePlaceholder: conversation.name == nil && opponent == .pending,
             avatarURL: avatar.map { $0.smallURL ?? $0.url },
-            preview: localPreview.map { .labeled(Self.localPreview($0)) } ?? .message(Self.preview(for: conversation.lastMessage)),
+            avatarPlaceholder: conversation.type == .group ? .group : .person,
+            preview: localPreview.map { .labeled(Self.localPreview($0)) }
+                ?? Self.preview(for: conversation.lastMessage, sender: previewSender),
             time: timeFormatter.string(from: conversation.positionUpdatedAt.date),
             unreadCountText: UnreadCountFormatter.text(for: unreadCount),
             unreadAccessibilityLabel: UnreadCountFormatter.accessibilityLabel(for: unreadCount)
         )
+    }
+
+    /// Превью последнего сообщения: в группе — с подписью отправителя «Имя:» («Вы:» у своих). Пока отправитель
+    /// не загружен, подписи нет — превью не мигает.
+    /// - Parameters:
+    ///   - lastMessage: последнее сообщение; `nil` — сообщений нет.
+    ///   - sender: отправитель; `nil` — без подписи.
+    @MainActor
+    private static func preview(for lastMessage: LastMessage?, sender: ChatRowPreviewSender?) -> ChatRowPreview {
+        let text = preview(for: lastMessage)
+        guard lastMessage != nil, let prefix = senderPrefix(for: sender) else { return .message(text) }
+        return .labeled(labeledPreview(prefix: prefix, color: .primary, text: text))
+    }
+
+    /// Подпись отправителя: «Вы:», «Имя:» или «Удалённый пользователь:»; `nil` — отправитель не загружен.
+    /// - Parameter sender: отправитель.
+    @MainActor
+    private static func senderPrefix(for sender: ChatRowPreviewSender?) -> String? {
+        switch sender {
+        case .currentUser: return ChatListStrings.rowSenderPrefix(name: ChatListStrings.rowYou)
+        case let .user(.loaded(user)): return ChatListStrings.rowSenderPrefix(name: user.name)
+        case .user(.notFound): return ChatListStrings.rowSenderPrefix(name: ChatListStrings.rowDeletedUser)
+        case .user(.pending), nil: return nil
+        }
     }
 
     /// Превью последнего сообщения.

@@ -35,8 +35,7 @@ extension ProfileViewModel {
     /// Удаляет временный файл изображения, если он есть — выбранный файл не будет загружен.
     /// - Parameter image: изображение, от загрузки которого отказались.
     private func discard(_ image: PickedImage) {
-        guard case .file(let file) = image else { return }
-        imageFileStore.remove(file)
+        avatarUploader.discard(image)
     }
 
     /// Обработчик ситуации, когда выбранный в галерее файл не удалось прочитать как изображение.

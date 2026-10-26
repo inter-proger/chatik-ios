@@ -14,8 +14,10 @@ import os
 protocol MemberReadProviding: AnyObject {
     /// Экран переписки открыт: мета читается из БД и обновляется запросом. Вызовы считаются — одна переписка может
     /// быть открыта в нескольких сценах.
-    /// - Parameter conversationId: переписка.
-    func beginObserving(conversationId: Int)
+    /// - Parameters:
+    ///   - conversationId: переписка.
+    ///   - isGroup: групповая переписка — прочтение учитывает состав из `GroupInfo` и время вступления.
+    func beginObserving(conversationId: Int, isGroup: Bool)
     /// Экран переписки закрыт; мета выгружается из памяти, когда закрыт последний.
     /// - Parameter conversationId: переписка.
     func endObserving(conversationId: Int)
@@ -23,10 +25,17 @@ protocol MemberReadProviding: AnyObject {
     /// - Parameter conversationId: наблюдаемая переписка.
     /// - Returns: `nil` — меты нет ни в памяти, ни в БД или переписка не наблюдается.
     func pointers(conversationId: Int) -> [Int: Int]?
-    /// Порог прочтения хотя бы одним участником — максимум указателей. Наблюдается и меняется только при росте.
+    /// Сообщения, прочитанные хотя бы одним участником. Наблюдается и меняется только вместе с галочками.
     /// - Parameter conversationId: наблюдаемая переписка.
-    /// - Returns: `nil` — меты нет.
-    func readUpTo(conversationId: Int) -> Int?
+    /// - Returns: `nil` — меты нет, а у группы — ещё нет и состава.
+    func coverage(conversationId: Int) -> MessageReadCoverage?
+    /// Последнее сообщение группы на момент вступления каждого участника из текущего состава. Наблюдается.
+    /// - Parameter conversationId: наблюдаемая переписка.
+    /// - Returns: `nil` — не группа (учитываются все участники) или состав неизвестен.
+    func joinedAfterMessageIds(conversationId: Int) -> [Int: Int]?
+    /// Наблюдаемая группа, состав которой ещё неизвестен: кто прочитал, сказать нельзя. Наблюдается.
+    /// - Parameter conversationId: наблюдаемая переписка.
+    func isAwaitingGroupInfo(conversationId: Int) -> Bool
     /// Последний запрос указателей не удался; сбрасывается, когда начинается следующий. Наблюдается.
     /// - Parameter conversationId: наблюдаемая переписка.
     func isRefreshFailed(conversationId: Int) -> Bool
@@ -35,8 +44,16 @@ protocol MemberReadProviding: AnyObject {
     func refresh(conversationId: Int)
 }
 
+extension MemberReadProviding {
+    /// Начинает наблюдение личной переписки.
+    /// - Parameter conversationId: переписка.
+    func beginObserving(conversationId: Int) {
+        beginObserving(conversationId: conversationId, isGroup: false)
+    }
+}
+
 @MainActor
-protocol MemberReadServiceProtocol: MemberReadProviding, AuthServiceObserver {
+protocol MemberReadServiceProtocol: MemberReadProviding, AuthServiceObserver, ConversationRemovalObserver, GroupInfoObserver {
     /// Подписывается на очередь событий и читает из БД переписки с сохранённой метой. Повторный вызов
     /// в той же сессии ничего не делает.
     func start()
@@ -52,8 +69,10 @@ protocol MemberReadServiceProtocol: MemberReadProviding, AuthServiceObserver {
 /// переписок с сохранённой метой: по нему событие решает, нужно ли обновить БД, не читая её. Пока множество
 /// не прочитано, событие уходит в БД с условием «только если мета есть» — хранилище проверит это само.
 ///
-/// **Порог для галочек** (`readUpTo`) — отдельное наблюдаемое свойство, которое меняется только при росте максимума:
-/// лента читает его, а не указатели, и не пересобирается на каждое событие.
+/// **Покрытие для галочек** (`coverage`) — отдельное наблюдаемое свойство, которое присваивается только при изменении:
+/// лента читает его, а не указатели, и не пересобирается на каждое событие. В личной переписке оно только растёт;
+/// в группе считается по участникам текущего `GroupInfo` и их времени вступления (`docs/group-chats.md`, решение 7) —
+/// ушедший участник перестаёт учитываться.
 ///
 /// **Запись в БД** склеивается: изменения копятся по переписке и уходят одной фоновой задачей, следующие ждут
 /// очередную. При выходе из аккаунта несохранённые изменения отбрасываются, идущая запись дожидается.
@@ -63,6 +82,10 @@ final class MemberReadService: MemberReadServiceProtocol {
     private let storage: MemberReadStorageServiceProtocol
     private let eventQueue: RealtimeEventQueueProtocol
     private let sessionService: SessionServiceProtocol
+    /// Проверка членства: ответ `5002` — возможно, пользователя удалили из группы.
+    private weak var membership: ConversationMembershipVerifying?
+    /// Состав групп — кто учитывается в прочтении группы.
+    private weak var groupInfo: GroupInfoProviding?
     private var subscription: RealtimeSubscription?
     /// Наблюдаемые переписки.
     private var observed: [Int: ConversationMemberReads] = [:]
@@ -85,16 +108,22 @@ final class MemberReadService: MemberReadServiceProtocol {
     ///   - storage: хранилище меты.
     ///   - eventQueue: очередь событий WebSocket.
     ///   - sessionService: текущий пользователь — его сообщения не двигают указатели.
+    ///   - membership: проверка членства при ответе `5002`.
+    ///   - groupInfo: состав групп.
     init(
         conversationService: ConversationServiceProtocol,
         storage: MemberReadStorageServiceProtocol,
         eventQueue: RealtimeEventQueueProtocol,
-        sessionService: SessionServiceProtocol
+        sessionService: SessionServiceProtocol,
+        membership: ConversationMembershipVerifying?,
+        groupInfo: GroupInfoProviding?
     ) {
         self.conversationService = conversationService
         self.storage = storage
         self.eventQueue = eventQueue
         self.sessionService = sessionService
+        self.membership = membership
+        self.groupInfo = groupInfo
     }
 
     /// Подписывается на очередь (подписка переживает выход из аккаунта) и читает переписки с сохранённой метой.
@@ -107,14 +136,14 @@ final class MemberReadService: MemberReadServiceProtocol {
         loadStoredConversationIdsIfNeeded()
     }
 
-    func beginObserving(conversationId: Int) {
+    func beginObserving(conversationId: Int, isGroup: Bool) {
         guard !isLoggingOut else { return }
         loadStoredConversationIdsIfNeeded()
         if let state = observed[conversationId] {
             state.observerCount += 1
             return
         }
-        let state = ConversationMemberReads()
+        let state = ConversationMemberReads(isGroup: isGroup)
         observed[conversationId] = state
         let generation = generation
         state.loadTask = Task { [weak self] in
@@ -135,8 +164,36 @@ final class MemberReadService: MemberReadServiceProtocol {
         observed[conversationId]?.pointers
     }
 
-    func readUpTo(conversationId: Int) -> Int? {
-        observed[conversationId]?.readUpTo
+    func coverage(conversationId: Int) -> MessageReadCoverage? {
+        observed[conversationId]?.coverage
+    }
+
+    func isAwaitingGroupInfo(conversationId: Int) -> Bool {
+        guard observed[conversationId]?.isGroup == true else { return false }
+        return groupInfo?.groupInfo(conversationId: conversationId) == nil
+    }
+
+    func joinedAfterMessageIds(conversationId: Int) -> [Int: Int]? {
+        guard observed[conversationId]?.isGroup == true,
+              let info = groupInfo?.groupInfo(conversationId: conversationId) else { return nil }
+        return Dictionary(info.members.map { ($0.userId, $0.joinedAfterMessageId) }, uniquingKeysWith: max)
+    }
+
+    /// Применён новый состав группы: покрытие наблюдаемой группы пересчитывается — новые участники начинают
+    /// учитываться. Участники, которых в составе нет, удаляются из меты (в памяти и в БД) — только по составу из сети
+    /// или события: сохранённый в БД мог устареть, и по нему пропали бы указатели недавно вступивших.
+    /// - Parameters:
+    ///   - info: состав группы.
+    ///   - isAuthoritative: состав из сети или события.
+    func groupInfoDidChange(_ info: GroupInfo, isAuthoritative: Bool) {
+        guard !isLoggingOut else { return }
+        let conversationId = info.conversationId
+        let members = Set(info.members.map(\.userId))
+        if let state = observed[conversationId], let pointers = state.pointers {
+            publish(isAuthoritative ? pointers.filter { members.contains($0.key) } : pointers, in: state, conversationId: conversationId)
+        }
+        guard isAuthoritative, observed[conversationId] != nil || storedConversationIds.contains(conversationId) else { return }
+        enqueueWrite(MemberReadWrite(pointers: [:], members: members, createsMissing: false), conversationId: conversationId)
     }
 
     func isRefreshFailed(conversationId: Int) -> Bool {
@@ -174,6 +231,22 @@ final class MemberReadService: MemberReadServiceProtocol {
         isLoggingOut = false
     }
 
+    /// Пользователь больше не участник переписки: её мета удаляется из памяти и БД после уже начатой записи.
+    /// - Parameter info: удалённая переписка.
+    func conversationWasRemoved(_ info: RemovedConversationInfo) async {
+        let conversationId = info.conversationId
+        observed[conversationId]?.cancelTasks()
+        observed[conversationId] = nil
+        storedConversationIds.remove(conversationId)
+        pendingWrites[conversationId] = nil
+        await writeTask?.value
+        do {
+            try await storage.delete(conversationId: conversationId)
+        } catch {
+            Logger.memberRead.error("Не удалось удалить мету прочтения \(conversationId, privacy: .public): \(String(describing: error), privacy: .public)")
+        }
+    }
+
     // MARK: - События
 
     /// Применяет событие очереди. Ничего не ждёт: запросы и запись идут отдельными задачами.
@@ -191,7 +264,7 @@ final class MemberReadService: MemberReadServiceProtocol {
             // Отправка сдвигает указатель отправителя, отдельного `memberRead` при этом нет.
             guard let currentUserId = sessionService.currentUser?.userId, message.senderId != currentUserId else { return }
             applyEvent(conversationId: message.conversationId, userId: message.senderId, lastReadMessageId: message.messageId)
-        case .conversationCreated, .conversationRead, .messageEdited:
+        case .conversationCreated, .conversationRead, .messageEdited, .group:
             break
         }
     }
@@ -206,7 +279,7 @@ final class MemberReadService: MemberReadServiceProtocol {
     private func applyEvent(conversationId: Int, userId: Int, lastReadMessageId: Int) {
         let pointers = [userId: lastReadMessageId]
         if let state = observed[conversationId] {
-            guard merge(pointers, into: state, addsMembers: true) else { return }
+            guard merge(pointers, into: state, addsMembers: true, conversationId: conversationId) else { return }
             enqueueWrite(MemberReadWrite(pointers: pointers, createsMissing: true), conversationId: conversationId)
             return
         }
@@ -257,7 +330,7 @@ final class MemberReadService: MemberReadServiceProtocol {
             return
         }
         guard let stored, observed[conversationId] === state, generation == self.generation else { return }
-        merge(stored, into: state, addsMembers: !state.isRefreshed)
+        merge(stored, into: state, addsMembers: !state.isRefreshed, conversationId: conversationId)
     }
 
     /// Запрос `getMembersReadMeta`: состав участников — из ответа, указатели — максимум с известными. Ошибка
@@ -275,6 +348,9 @@ final class MemberReadService: MemberReadServiceProtocol {
             guard !Task.isCancelled else { return }
             Logger.memberRead.error("Не удалось загрузить мету прочтения \(conversationId, privacy: .public): \(String(describing: error), privacy: .public)")
             state.isRefreshFailed = true
+            if error.indicatesLostMembership {
+                membership?.verifyMembership(conversationId: conversationId)
+            }
             return
         }
         guard observed[conversationId] === state, generation == self.generation else { return }
@@ -284,7 +360,7 @@ final class MemberReadService: MemberReadServiceProtocol {
             updated[userId] = max(updated[userId] ?? pointer, pointer)
         }
         state.isRefreshed = true
-        publish(updated, in: state)
+        publish(updated, in: state, conversationId: conversationId)
         enqueueWrite(
             MemberReadWrite(pointers: response, members: Set(response.keys), createsMissing: true),
             conversationId: conversationId
@@ -298,30 +374,55 @@ final class MemberReadService: MemberReadServiceProtocol {
     ///   - pointers: указатели по `userId`.
     ///   - state: состояние переписки.
     ///   - addsMembers: `false` — указатели участников, которых ещё нет, пропускаются.
+    ///   - conversationId: переписка.
     /// - Returns: `true` — указатели изменились: участник добавлен или указатель вырос.
     @discardableResult
-    private func merge(_ pointers: [Int: Int], into state: ConversationMemberReads, addsMembers: Bool) -> Bool {
+    private func merge(_ pointers: [Int: Int], into state: ConversationMemberReads, addsMembers: Bool, conversationId: Int) -> Bool {
         var updated = state.pointers ?? [:]
         for (userId, pointer) in pointers {
             guard addsMembers || updated[userId] != nil else { continue }
             updated[userId] = max(updated[userId] ?? pointer, pointer)
         }
         let didChange = updated != state.pointers
-        publish(updated, in: state)
+        publish(updated, in: state, conversationId: conversationId)
         return didChange
     }
 
-    /// Публикует указатели и поднимает порог, если максимум вырос. Присваивает только изменившееся: наблюдатели
-    /// не пересобираются впустую.
+    /// Публикует указатели и покрытие. Присваивает только изменившееся: наблюдатели не пересобираются впустую.
     /// - Parameters:
     ///   - pointers: новые указатели.
     ///   - state: состояние переписки.
-    private func publish(_ pointers: [Int: Int], in state: ConversationMemberReads) {
+    ///   - conversationId: переписка.
+    private func publish(_ pointers: [Int: Int], in state: ConversationMemberReads, conversationId: Int) {
         if state.pointers != pointers {
             state.pointers = pointers
         }
-        guard let newMax = pointers.values.max(), newMax > (state.readUpTo ?? .min) else { return }
-        state.readUpTo = newMax
+        let coverage = makeCoverage(pointers, previous: state.coverage, isGroup: state.isGroup, conversationId: conversationId)
+        guard coverage != state.coverage else { return }
+        state.coverage = coverage
+    }
+
+    /// Покрытие прочтения: в личной переписке — всё до максимума указателей, не меньше прежнего (прочтение
+    /// не отменяется); в группе — по участникам текущего состава, кроме текущего пользователя, с их временем вступления.
+    /// - Parameters:
+    ///   - pointers: указатели по `userId`.
+    ///   - previous: прежнее покрытие.
+    ///   - isGroup: групповая переписка.
+    ///   - conversationId: переписка.
+    /// - Returns: `nil` — указателей нет или состав группы неизвестен.
+    private func makeCoverage(_ pointers: [Int: Int], previous: MessageReadCoverage?, isGroup: Bool, conversationId: Int) -> MessageReadCoverage? {
+        guard isGroup else {
+            let previousMax = previous?.ranges.last?.upTo ?? .min
+            guard let newMax = pointers.values.max() else { return previous }
+            return .single(upTo: max(newMax, previousMax))
+        }
+        guard let info = groupInfo?.currentInfo(conversationId: conversationId) else { return nil }
+        let currentUserId = sessionService.currentUser?.userId
+        let ranges = info.members.compactMap { member -> MessageReadCoverage.Range? in
+            guard member.userId != currentUserId, let pointer = pointers[member.userId] else { return nil }
+            return MessageReadCoverage.Range(after: member.joinedAfterMessageId, upTo: pointer)
+        }
+        return MessageReadCoverage(ranges)
     }
 
     // MARK: - Запись
@@ -368,8 +469,10 @@ final class MemberReadService: MemberReadServiceProtocol {
 private final class ConversationMemberReads {
     /// Указатели по `userId`; `nil` — меты ещё нет.
     var pointers: [Int: Int]?
-    /// Максимум указателей; только растёт.
-    var readUpTo: Int?
+    /// Прочитанные хотя бы одним участником сообщения.
+    var coverage: MessageReadCoverage?
+    /// Групповая переписка.
+    @ObservationIgnored let isGroup: Bool
     /// Последний запрос `getMembersReadMeta` не удался; сбрасывается в начале следующего.
     var isRefreshFailed = false
     /// Сколько экранов наблюдают переписку.
@@ -380,6 +483,11 @@ private final class ConversationMemberReads {
     @ObservationIgnored var loadTask: Task<Void, Never>?
     /// Идущий запрос `getMembersReadMeta`.
     @ObservationIgnored var refreshTask: Task<Void, Never>?
+
+    /// - Parameter isGroup: групповая переписка.
+    init(isGroup: Bool) {
+        self.isGroup = isGroup
+    }
 
     /// Отменяет чтение и запрос.
     func cancelTasks() {

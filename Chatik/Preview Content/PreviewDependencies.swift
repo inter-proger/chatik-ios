@@ -116,7 +116,8 @@ enum PreviewDependencies {
                 storage: MessageStorageService(container: storageContainer),
                 messageService: messageService,
                 eventQueue: realtimeEventQueue,
-                messageSendQueue: messageSendQueue
+                messageSendQueue: messageSendQueue,
+                membership: nil
             ),
             messageSendQueue: messageSendQueue,
             editService: MessageEditService(
@@ -138,8 +139,11 @@ enum PreviewDependencies {
                 conversationService: ConversationServicePreviewMock(delay: .milliseconds(300)),
                 storage: MemberReadStorageService(container: storageContainer),
                 eventQueue: realtimeEventQueue,
-                sessionService: sessionService
-            )
+                sessionService: sessionService,
+                membership: nil,
+                groupInfo: groupInfoService
+            ),
+            groupInfo: groupInfoService
         )
     }
 
@@ -185,7 +189,8 @@ enum PreviewDependencies {
             ),
             outgoingMessageStorage: OutgoingMessageStorageService(container: storageContainer),
             eventQueue: realtimeEventQueue,
-            positionUpdater: ConversationPositionUpdatingPreviewMock()
+            positionUpdater: ConversationPositionUpdatingPreviewMock(),
+            membership: nil
         )
     }
 
@@ -227,6 +232,95 @@ enum PreviewDependencies {
             // Как в приложении: на симуляторе камеры нет, и «Сделать фото» предлагаться не должно —
             // `UIImagePickerController` с `.camera` без камеры падает.
             isCameraAvailable: UIImagePickerController.isSourceTypeAvailable(.camera)
+        )
+    }
+
+    /// Состав групп превью: в группе 2 владелец — текущий пользователь, и ещё два участника.
+    static let groupInfoService: GroupInfoService = {
+        let service = GroupInfoService(
+            groupService: GroupServicePreviewMock(),
+            storage: GroupInfoStorageService(container: storageContainer),
+            eventQueue: realtimeEventQueue,
+            membership: nil,
+            removalMarks: nil
+        )
+        service.apply(GroupServicePreviewMock.groupInfo)
+        return service
+    }()
+
+    /// Список переписок превью над моками.
+    static let conversationList: ConversationListService = {
+        let service = ConversationListService(
+            conversationService: ConversationServicePreviewMock(userCache: userCache),
+            storage: ConversationStorageService(container: storageContainer),
+            eventQueue: realtimeEventQueue,
+            userCache: userCache
+        )
+        service.start()
+        return service
+    }()
+
+    /// ViewModel экрана создания группы над моками.
+    static func createGroupViewModel() -> CreateGroupViewModel {
+        CreateGroupViewModel(
+            groupService: GroupServicePreviewMock(),
+            groupInfo: groupInfoService,
+            conversationList: conversationList,
+            filesService: FilesServicePreviewMock(),
+            imageFileStore: ImageFileStore(),
+            notifications: notificationService,
+            router: CreateGroupRouter(onFinish: { _ in }),
+            isCameraAvailable: UIImagePickerController.isSourceTypeAvailable(.camera)
+        )
+    }
+
+    /// Группа превью: «Команда» с описанием.
+    static let groupConversation = Conversation(
+        conversationId: 2, type: .group, memberIds: nil, name: "Команда", description: "Рабочие вопросы", avatar: nil,
+        opponentUserId: nil, lastMessage: nil, positionUpdatedAt: .now, updatedInfoAt: .now, readState: .previewRead
+    )
+
+    /// ViewModel опций группы над моками: текущий пользователь — владелец.
+    static func groupOptionsViewModel() -> GroupOptionsViewModel {
+        GroupOptionsViewModel(
+            conversation: groupConversation,
+            conversationList: conversationList,
+            groupInfo: groupInfoService,
+            groupService: GroupServicePreviewMock(),
+            sessionService: sessionService,
+            notifications: notificationService,
+            navigator: ChatListRouter()
+        )
+    }
+
+    /// ViewModel участников группы над моками: текущий пользователь — создатель.
+    static func groupMembersViewModel() -> GroupMembersViewModel {
+        groupInfoService.beginObserving(conversationId: groupConversation.conversationId)
+        return GroupMembersViewModel(
+            conversationId: groupConversation.conversationId,
+            groupInfo: groupInfoService,
+            groupService: GroupServicePreviewMock(),
+            conversationService: ConversationServicePreviewMock(userCache: userCache),
+            conversationList: conversationList,
+            sessionService: sessionService,
+            userCache: userCache,
+            notifications: notificationService,
+            navigator: ChatListRouter()
+        )
+    }
+
+    /// ViewModel добавления участников над моками: в группе 3 участника.
+    static func addGroupMembersViewModel() -> AddGroupMembersViewModel {
+        AddGroupMembersViewModel(
+            conversationId: groupConversation.conversationId,
+            groupInfo: groupInfoService,
+            groupService: GroupServicePreviewMock(),
+            usersService: UsersServicePreviewMock(),
+            membership: conversationList,
+            sessionService: sessionService,
+            userCache: userCache,
+            notifications: notificationService,
+            navigator: ChatListRouter()
         )
     }
 
@@ -362,7 +456,7 @@ final class ConversationServicePreviewMock: ConversationServiceProtocol {
         return [
             Conversation(
                 conversationId: 1, type: .single, memberIds: [1, 2], name: nil, avatar: nil, opponentUserId: 2,
-                lastMessage: LastMessage(messageId: 1, type: .text, text: "Привет! Во сколько созвон?", updatedAt: now),
+                lastMessage: LastMessage(messageId: 1, senderId: 1, type: .text, text: "Привет! Во сколько созвон?", updatedAt: now),
                 positionUpdatedAt: now, updatedInfoAt: now,
                 readState: ConversationReadState(unreadCount: 3, lastReadMessageId: 0, changeVersion: 1)
             ),
@@ -378,7 +472,7 @@ final class ConversationServicePreviewMock: ConversationServiceProtocol {
     /// - Parameter conversations: переписки из «ответа».
     private func sendUsersAction(for conversations: [Conversation]) async {
         guard let userCache else { return }
-        let ids = Array(Set(conversations.flatMap(\.memberIds))).sorted()
+        let ids = Array(Set(conversations.flatMap { $0.memberIds ?? [] })).sorted()
         await userCache.loadUsers(ids: ids)
     }
 }
@@ -430,6 +524,60 @@ final class MessageServicePreviewMock: MessageServiceProtocol, Sendable {
 }
 
 /// Мок сервиса профиля для превью: отвечает заданным результатом с задержкой, чтобы было видно состояние загрузки.
+/// Мок `/groups/*` для превью: состав группы 2 и успешные ответы на действия.
+final class GroupServicePreviewMock: GroupServiceProtocol {
+    /// Группа 2: владелец — текущий пользователь (1), участники 2 и 3.
+    static let groupInfo = GroupInfo(conversationId: 2, version: 1, members: [
+        GroupMember(userId: 1, role: .owner, joinedAfterMessageId: 0),
+        GroupMember(userId: 2, role: .member, joinedAfterMessageId: 0),
+        GroupMember(userId: 3, role: .member, joinedAfterMessageId: 0),
+    ])
+
+    func create(name: String, description: String?, avatarFileId: Int?) async throws -> CreatedGroup {
+        try await Task.sleep(for: .seconds(1))
+        let conversation = Conversation(
+            conversationId: 99, type: .group, memberIds: nil, name: name, description: description, avatar: nil,
+            opponentUserId: nil, lastMessage: nil, positionUpdatedAt: .now, updatedInfoAt: .now, readState: .previewRead
+        )
+        let info = GroupInfo(conversationId: 99, version: 1, members: [GroupMember(userId: 1, role: .owner, joinedAfterMessageId: 0)])
+        return CreatedGroup(conversation: conversation, groupInfo: info)
+    }
+
+    func addMembers(conversationId: Int, userIds: [Int]) async throws -> AddMembersResult {
+        try await Task.sleep(for: .seconds(1))
+        let added = userIds.dropLast()
+        let members = Self.groupInfo.members + added.map { GroupMember(userId: $0, role: .member, joinedAfterMessageId: 0) }
+        return AddMembersResult(
+            addedUserIds: Array(added),
+            notAddedUsersInfo: userIds.suffix(1).map { UserErrorInfo(userId: $0, errorCode: NetworkError.Code.groupMemberLimitReached) },
+            groupInfo: GroupInfo(conversationId: conversationId, version: 2, members: members)
+        )
+    }
+
+    func removeMembers(conversationId: Int, userIds: [Int]) async throws -> RemoveMembersResult {
+        try await Task.sleep(for: .seconds(1))
+        let members = Self.groupInfo.members.filter { !userIds.contains($0.userId) }
+        return RemoveMembersResult(removedUserIds: userIds, notRemovedUsersInfo: [], groupInfo: GroupInfo(conversationId: conversationId, version: 2, members: members))
+    }
+
+    func changeOwner(conversationId: Int, newOwnerUserId: Int) async throws -> GroupInfo {
+        try await Task.sleep(for: .seconds(1))
+        let members = Self.groupInfo.members.map { member in
+            GroupMember(userId: member.userId, role: member.userId == newOwnerUserId ? .owner : .member, joinedAfterMessageId: 0)
+        }
+        return GroupInfo(conversationId: conversationId, version: 2, members: members)
+    }
+
+    func fetchInfo(conversationId: Int) async throws -> GroupInfo {
+        Self.groupInfo
+    }
+
+    func leave(conversationId: Int) async throws -> ConversationRemoval {
+        try await Task.sleep(for: .seconds(1))
+        return ConversationRemoval(removedConversation: RemovedConversation(conversationId: conversationId, changeVersion: 2), totalUnreadCount: 0)
+    }
+}
+
 final class ProfileServicePreviewMock: ProfileServiceProtocol {
     private let profileResult: Result<User, Error>
     private let delay: Duration
@@ -565,10 +713,12 @@ final class MemberReadPreviewMock: MemberReadProviding {
         stubbedPointers = pointers
     }
 
-    func beginObserving(conversationId: Int) {}
+    func beginObserving(conversationId: Int, isGroup: Bool) {}
     func endObserving(conversationId: Int) {}
     func pointers(conversationId: Int) -> [Int: Int]? { stubbedPointers }
-    func readUpTo(conversationId: Int) -> Int? { stubbedPointers.values.max() }
+    func coverage(conversationId: Int) -> MessageReadCoverage? { stubbedPointers.values.max().map(MessageReadCoverage.single(upTo:)) }
+    func joinedAfterMessageIds(conversationId: Int) -> [Int: Int]? { nil }
+    func isAwaitingGroupInfo(conversationId: Int) -> Bool { false }
     func isRefreshFailed(conversationId: Int) -> Bool { false }
     func refresh(conversationId: Int) {}
 }

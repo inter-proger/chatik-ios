@@ -107,6 +107,8 @@ final class MessageSendQueue: MessageSendQueueProtocol {
     @ObservationIgnored private var generation = 0
     @ObservationIgnored private var subscribers: [UUID: AsyncStream<Message>.Continuation] = [:]
     private let positionUpdater: ConversationPositionUpdating
+    /// Проверка членства: ответ `5002` на отправку — возможно, пользователя удалили из группы.
+    @ObservationIgnored private weak var membership: ConversationMembershipVerifying?
     /// Подписка на очередь событий WebSocket — подтверждения собственных сообщений. Берётся в `init`: очередь
     /// создаётся раньше соединения, и события не пройдут мимо.
     @ObservationIgnored private var eventSubscription: RealtimeSubscription?
@@ -117,6 +119,7 @@ final class MessageSendQueue: MessageSendQueueProtocol {
     ///   - outgoingMessageStorage: хранилище очереди в БД.
     ///   - eventQueue: очередь событий WebSocket — подтверждения собственных сообщений.
     ///   - positionUpdater: список чатов — поднимает переписку по ответу на отправку.
+    ///   - membership: проверка членства при ответе `5002`.
     ///   - now: текущее время; подменяется в тестах.
     ///   - makeClientId: генератор `clientId` новых сообщений (UUID v4); подменяется в тестах.
     init(
@@ -125,6 +128,7 @@ final class MessageSendQueue: MessageSendQueueProtocol {
         outgoingMessageStorage: OutgoingMessageStorageServiceProtocol,
         eventQueue: RealtimeEventQueueProtocol,
         positionUpdater: ConversationPositionUpdating,
+        membership: ConversationMembershipVerifying?,
         now: @escaping () -> Date = { Date() },
         makeClientId: @escaping () -> String = { UUID().uuidString }
     ) {
@@ -134,6 +138,7 @@ final class MessageSendQueue: MessageSendQueueProtocol {
         self.now = now
         self.makeClientId = makeClientId
         self.positionUpdater = positionUpdater
+        self.membership = membership
         eventSubscription = eventQueue.subscribe { [weak self] event in
             self?.handle(event)
         }
@@ -385,6 +390,9 @@ final class MessageSendQueue: MessageSendQueueProtocol {
         let failedIds = [clientId] + pendingDeliveries
         pendingDeliveries.removeAll()
         markFailed(clientIds: failedIds)
+        if error.indicatesLostMembership, let message = outgoingMessages.first(where: { $0.clientId == clientId }) {
+            membership?.verifyMembership(conversationId: message.conversationId)
+        }
     }
 
     /// Переводит отправляющиеся сообщения в статус «не отправлено» и сохраняет статус в БД. Очередь меняется одним
@@ -409,7 +417,7 @@ final class MessageSendQueue: MessageSendQueueProtocol {
         switch event {
         case let .messageReceived(message, _, _), let .messageEdited(message, _, _):
             removeConfirmed(by: [message])
-        case .connected, .conversationCreated, .conversationRead, .memberRead:
+        case .connected, .conversationCreated, .conversationRead, .memberRead, .group:
             break
         }
     }
@@ -480,5 +488,20 @@ final class MessageSendQueue: MessageSendQueueProtocol {
         }
         lastWrite = task
         return task
+    }
+}
+
+extension MessageSendQueue: ConversationRemovalObserver {
+    /// Пользователь больше не участник переписки: её неотправленные сообщения удаляются из очереди и БД — отправить
+    /// их уже нельзя (`5002`), а экрана, где их видно, больше нет.
+    /// - Parameter info: удалённая переписка.
+    func conversationWasRemoved(_ info: RemovedConversationInfo) async {
+        guard case .active = state else { return }
+        let removed = outgoingMessages.filter { $0.conversationId == info.conversationId }
+        guard !removed.isEmpty else { return }
+        let clientIds = Set(removed.map(\.clientId))
+        outgoingMessages.removeAll { clientIds.contains($0.clientId) }
+        pendingDeliveries.removeAll { clientIds.contains($0) }
+        removed.forEach(removeStored)
     }
 }

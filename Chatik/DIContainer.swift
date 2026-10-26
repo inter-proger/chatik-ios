@@ -59,6 +59,10 @@ final class DIContainer {
     let messageNotificationService: MessageNotificationServiceProtocol
     /// Прочтение переписок другими участниками — единственный, кто пишет его в БД.
     let memberReadService: MemberReadServiceProtocol
+    /// Запросы `/groups/*`.
+    let groupService: GroupServiceProtocol
+    /// Состав групп — единственный, кто пишет его в БД.
+    let groupInfoService: GroupInfoServiceProtocol
     /// Держит наблюдение за сетью, пока жив контейнер: при появлении сети WebSocket переподключается сразу.
     private let networkPathMonitor: NetworkPathMonitor
     /// Подписка кэша сообщений на очередь событий — живёт, пока жив контейнер.
@@ -67,6 +71,8 @@ final class DIContainer {
     private let messageCacheLogoutObserver: MessageCacheLogoutObserver
     /// Передаёт сервису черновиков выход из аккаунта; `AuthService` держит наблюдателей слабо.
     private let messageDraftLogoutObserver: MessageDraftLogoutObserver
+    /// Передаёт кэшу сообщений удаление переписки; список держит наблюдателей слабо.
+    private let messageCacheRemovalObserver: MessageCacheRemovalObserver
 
     private init() {
         // Хранилище открывается в фоне: открытие SQLite и возможная миграция не задерживают первый кадр.
@@ -138,7 +144,8 @@ final class DIContainer {
             messageCache: messageCache,
             outgoingMessageStorage: OutgoingMessageStorageService(container: storageContainer),
             eventQueue: realtimeEventQueue,
-            positionUpdater: conversationListService
+            positionUpdater: conversationListService,
+            membership: conversationListService
         )
         self.messageSendQueue = messageSendQueue
         let messageEditService = MessageEditService(
@@ -182,17 +189,41 @@ final class DIContainer {
             notifications: notificationService
         )
         self.messageNotificationService = messageNotificationService
+        let groupService = GroupService(networkService: networkService)
+        self.groupService = groupService
+        let groupInfoService = GroupInfoService(
+            groupService: groupService,
+            storage: GroupInfoStorageService(container: storageContainer),
+            eventQueue: realtimeEventQueue,
+            membership: conversationListService,
+            removalMarks: conversationListService
+        )
+        self.groupInfoService = groupInfoService
         let memberReadService = MemberReadService(
             conversationService: conversationService,
             storage: MemberReadStorageService(container: storageContainer),
             eventQueue: realtimeEventQueue,
-            sessionService: sessionService
+            sessionService: sessionService,
+            membership: conversationListService,
+            groupInfo: groupInfoService
         )
         self.memberReadService = memberReadService
+        groupInfoService.addObserver(memberReadService)
+        let messageCacheRemovalObserver = MessageCacheRemovalObserver(messageCache: messageCache)
+        self.messageCacheRemovalObserver = messageCacheRemovalObserver
+        // Каскад удаления переписки: каждый удаляет только свои данные о ней (`docs/group-chats.md`, решение 6).
+        // Навигатор первым: экраны переписки закрываются до того, как остальные удалят её данные.
+        conversationListService.addRemovalObserver(conversationNavigator)
+        conversationListService.addRemovalObserver(messageCacheRemovalObserver)
+        conversationListService.addRemovalObserver(memberReadService)
+        conversationListService.addRemovalObserver(groupInfoService)
+        conversationListService.addRemovalObserver(messageSendQueue)
+        conversationListService.addRemovalObserver(messageDraftService)
         let sessionWorkLauncher = SessionWorkLauncher(
             conversationList: conversationListService,
             messageNotifications: messageNotificationService,
             memberReads: memberReadService,
+            groupInfo: groupInfoService,
             messageDelivery: messageSendQueue,
             realtimeService: realtimeService
         )
@@ -226,6 +257,7 @@ final class DIContainer {
         authService.addObserver(notificationService)
         authService.addObserver(messageNotificationService)
         authService.addObserver(memberReadService)
+        authService.addObserver(groupInfoService)
         authService.addObserver(sessionService)
         self.networkPathMonitor = NetworkPathMonitor { [weak realtimeService] in
             realtimeService?.networkDidBecomeAvailable()
@@ -241,7 +273,8 @@ final class DIContainer {
             storage: messageStorage,
             messageService: messageService,
             eventQueue: realtimeEventQueue,
-            messageSendQueue: messageSendQueue
+            messageSendQueue: messageSendQueue,
+            membership: conversationListService
         )
     }
 }

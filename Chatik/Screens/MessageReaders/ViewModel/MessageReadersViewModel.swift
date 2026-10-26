@@ -40,7 +40,9 @@ final class MessageReadersViewModel {
     /// Содержимое листа: заголовок «Прочитано: X», строки и заглушка. Без указателей — загрузка или ошибка
     /// с заголовком без числа: сколько прочитали, ещё неизвестно.
     var content: MessageReadersContent {
-        guard let pointers = memberReads.pointers(conversationId: request.conversationId) else {
+        // В группе без известного состава прочитавших не определить: галочек нет, и список был бы неверным.
+        guard let pointers = memberReads.pointers(conversationId: request.conversationId),
+              !memberReads.isAwaitingGroupInfo(conversationId: request.conversationId) else {
             let isFailed = memberReads.isRefreshFailed(conversationId: request.conversationId)
             return MessageReadersContent(
                 title: MessageReadersStrings.titleUnknown,
@@ -88,8 +90,11 @@ final class MessageReadersViewModel {
     /// - Parameter pointers: указатели прочтения участников по `userId`.
     private func readerIds(in pointers: [Int: Int]) -> [Int] {
         let currentUserId = sessionService.currentUser?.userId
+        // В группе учитываются только участники текущего состава, вступившие до сообщения.
+        let joinedAfter = memberReads.joinedAfterMessageIds(conversationId: request.conversationId)
         return pointers
             .filter { $0.value >= request.messageId && $0.key != currentUserId && $0.key != request.senderId }
+            .filter { reader in joinedAfter.map { $0[reader.key].map { $0 < request.messageId } ?? false } ?? true }
             .map(\.key)
             .sorted()
     }

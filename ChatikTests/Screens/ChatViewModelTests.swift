@@ -1232,6 +1232,84 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertNil(other.unreadBadgeText)
     }
 
+
+    // MARK: - Группа
+
+    /// Кейс: группа, в которой только текущий пользователь-владелец; затем панель скрыта крестиком.
+    /// Ожидание: панель видна; после крестика — нет; «Добавить» и шестерёнка открывают экраны группы.
+    func test_emptyGroupPanel_visibleForLoneOwnerAndDismissable() {
+        let groupInfo = GroupInfoServiceMock()
+        let navigator = GroupNavigatingMock()
+        groupInfo.infos[2] = .make(ownerId: 1)
+        let sut = makeGroupSUT(groupInfo: groupInfo, navigator: navigator)
+
+        XCTAssertTrue(sut.isEmptyGroupPanelVisible)
+        XCTAssertTrue(sut.isGroupOptionsButtonVisible)
+        sut.didTapAddMembersOnPanel()
+        sut.didTapGroupOptions()
+        sut.didDismissEmptyGroupPanel()
+
+        XCTAssertFalse(sut.isEmptyGroupPanelVisible)
+        XCTAssertEqual(navigator.calls, ["add 2", "options 2"])
+    }
+
+    /// Кейс: состав неизвестен; в группе есть другие участники; личная переписка.
+    /// Ожидание: панели нет ни в одном случае, у личной переписки нет и шестерёнки.
+    func test_emptyGroupPanel_hiddenOtherwise() {
+        let groupInfo = GroupInfoServiceMock()
+        let sut = makeGroupSUT(groupInfo: groupInfo, navigator: GroupNavigatingMock())
+        XCTAssertFalse(sut.isEmptyGroupPanelVisible)
+
+        groupInfo.infos[2] = .make(ownerId: 1, memberIds: [5])
+        XCTAssertFalse(sut.isEmptyGroupPanelVisible)
+
+        let single = makeSUT()
+        XCTAssertFalse(single.isEmptyGroupPanelVisible)
+        XCTAssertFalse(single.isGroupOptionsButtonVisible)
+    }
+
+    /// Кейс: экран группы запускает и останавливает ленту.
+    /// Ожидание: состав группы наблюдается, пока лента запущена; прочтение наблюдается как групповое.
+    func test_groupObservation_followsList() async {
+        let groupInfo = GroupInfoServiceMock()
+        let sut = makeGroupSUT(groupInfo: groupInfo, navigator: GroupNavigatingMock())
+
+        let observing = Task { await sut.observeMessages() }
+        await yieldUntil { groupInfo.beginObservingIds == [2] }
+        XCTAssertEqual(memberReads.observedGroupIds, [2])
+        observing.cancel()
+        await observing.value
+
+        XCTAssertEqual(groupInfo.endObservingIds, [2])
+    }
+
+    /// Экран группы `groupStub` с составом и переходами.
+    /// - Parameters:
+    ///   - groupInfo: состав групп.
+    ///   - navigator: переходы к экранам группы.
+    private func makeGroupSUT(groupInfo: GroupInfoServiceMock, navigator: GroupNavigatingMock) -> ChatViewModel {
+        ChatViewModel(
+            conversation: .groupStub,
+            messagesList: list,
+            messageSendQueue: messageSendQueue,
+            editService: editService,
+            sessionService: sessionService,
+            draftService: draftService,
+            userCache: userCache,
+            localizationService: localizationService,
+            messageTextValidator: MessageTextValidator(),
+            dateHeaderFormatterProvider: MessageDateHeaderFormatterProvider.default,
+            timeChangeService: timeChanges,
+            notifications: notifications,
+            readStates: readStates,
+            memberReads: memberReads,
+            groupInfo: groupInfo,
+            groupNavigator: navigator,
+            calendar: { .stub() },
+            sleep: { [sleeper] in try await sleeper!.sleep($0) }
+        )
+    }
+
     // MARK: - Helpers
 
     /// ViewModel с запущенной лентой, в которой своё доставленное сообщение 15 с текстом «Привет».

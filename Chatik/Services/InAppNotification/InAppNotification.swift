@@ -44,12 +44,18 @@ struct InAppNotification: Identifiable {
         case error(message: String)
         /// Новое сообщение в неоткрытой переписке.
         case message(MessageNotificationDisplayModel)
+        /// Нейтральное или успешное событие: «Вы покинули группу», «Права создателя переданы».
+        case info(message: String)
+        /// Частичный неуспех с подробностями по нажатию: «2 участника не было добавлено».
+        case warning(message: String)
 
         /// Тактильный отклик вида по умолчанию. У сообщений отклика нет: они приходят часто.
         var defaultFeedback: SensoryFeedback? {
             switch self {
             case .error: .error
             case .message: nil
+            case .info: .success
+            case .warning: .warning
             }
         }
     }

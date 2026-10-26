@@ -9,6 +9,9 @@ import Foundation
 /// Время отправки в него не входит — это `positionUpdatedAt` переписки.
 struct LastMessage: Hashable, Sendable, Decodable {
     let messageId: Int
+    /// Отправитель — для подписи превью в группе. `0` — неизвестен: только у переписок из кэша до модели `Chatik 13`
+    /// (id пользователей начинаются с 1).
+    let senderId: Int
     let type: MessageType
     /// Текст; `nil` для будущих типов без текста.
     let text: String?
@@ -20,6 +23,6 @@ extension LastMessage {
     /// Превью из сообщения — например, из ответа `/messages/send`.
     /// - Parameter message: сообщение, ставшее последним в переписке.
     init(message: Message) {
-        self.init(messageId: message.messageId, type: message.type, text: message.text, updatedAt: message.updatedAt)
+        self.init(messageId: message.messageId, senderId: message.senderId, type: message.type, text: message.text, updatedAt: message.updatedAt)
     }
 }

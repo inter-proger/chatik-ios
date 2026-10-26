@@ -9,11 +9,25 @@ import SwiftUI
 enum ChatListRoute: Hashable {
     case profile
     case conversation(Conversation)
+    /// Опции группы; переписка — запасной источник названия, описания и аватара, если её нет в списке.
+    case groupOptions(Conversation)
+    case groupMembers(conversationId: Int)
+    case addGroupMembers(conversationId: Int)
+
+    /// Переписка, к которой относится экран; `nil` — экран не переписки.
+    var conversationId: Int? {
+        switch self {
+        case .profile: nil
+        case let .conversation(conversation), let .groupOptions(conversation): conversation.conversationId
+        case let .groupMembers(conversationId), let .addGroupMembers(conversationId): conversationId
+        }
+    }
 }
 
 /// Экраны, показываемые модально поверх списка чатов.
 enum ChatListSheet: Identifiable {
     case createSingleConversation
+    case createGroup
 
     var id: Self { self }
 }
@@ -21,7 +35,7 @@ enum ChatListSheet: Identifiable {
 /// Роутер экрана списка чатов. Возврат к авторизации происходит через смену состояния сессии (`AppRouter`).
 @MainActor
 @Observable
-final class ChatListRouter: ConversationOpening {
+final class ChatListRouter: ConversationOpening, GroupNavigating {
     /// Стек экранов поверх списка. Типизированный массив, а не `NavigationPath`: по нему список узнаёт,
     /// какая переписка сейчас открыта.
     var path: [ChatListRoute] = []
@@ -54,9 +68,48 @@ final class ChatListRouter: ConversationOpening {
         path = [.conversation(conversation)]
     }
 
+    /// Закрывает экраны переписки, если они есть в стеке: стек сбрасывается к списку — вместе с ним закрываются
+    /// листы, показанные с этих экранов.
+    /// - Parameter conversationId: переписка.
+    /// - Returns: `true` — экраны переписки были открыты.
+    @discardableResult
+    func closeConversation(id conversationId: Int) -> Bool {
+        guard path.contains(where: { $0.conversationId == conversationId }) else { return false }
+        path = []
+        return true
+    }
+
     /// Открывает экран создания личного диалога.
     func showCreateSingleConversation() {
         presentedSheet = .createSingleConversation
+    }
+
+    /// Открывает экран создания группы.
+    func showCreateGroup() {
+        presentedSheet = .createGroup
+    }
+
+    // MARK: - GroupNavigating
+
+    func showGroupOptions(_ conversation: Conversation) {
+        path.append(.groupOptions(conversation))
+    }
+
+    func showGroupMembers(conversationId: Int) {
+        path.append(.groupMembers(conversationId: conversationId))
+    }
+
+    func showAddGroupMembers(conversationId: Int) {
+        path.append(.addGroupMembers(conversationId: conversationId))
+    }
+
+    func pop() {
+        guard !path.isEmpty else { return }
+        path.removeLast()
+    }
+
+    func popToRoot() {
+        path = []
     }
 
     /// Закрывает модальный экран.

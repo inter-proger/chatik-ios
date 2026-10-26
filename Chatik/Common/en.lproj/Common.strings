@@ -29,3 +29,24 @@
 "common.error.api.message_edit_forbidden" = "You can only edit your own messages";
 
 "common.error.api.internal_server" = "Server error. Please try again later";
+
+/* Ошибка API 1007 */
+"common.error.api.invalid_description" = "The group description is longer than 1024 characters";
+
+/* Ошибка API 5003 */
+"common.error.api.not_group" = "The conversation is not a group";
+
+/* Ошибка API 5004 */
+"common.error.api.group_owner_only" = "Only the group owner can do this";
+
+/* Ошибка API 5005 */
+"common.error.api.group_member_limit" = "The 100-member limit is reached";
+
+/* Ошибка API 5006 */
+"common.error.api.already_group_member" = "The user is already in the group";
+
+/* Ошибка API 5007 */
+"common.error.api.not_group_member" = "The user is not a member of the group";
+
+/* Ошибка API 5008 */
+"common.error.api.group_owner_not_applicable" = "This action can’t be applied to the group owner";

@@ -17,6 +17,8 @@ enum InAppNotificationTiming {
     static let maxDuration: Duration = .seconds(6)
     /// Время показа уведомления о сообщении: текст в одну строку, от длины время не зависит.
     static let messageDuration: Duration = .seconds(4)
+    /// Наименьшее время показа предупреждения: по нажатию на него раскрываются подробности.
+    static let warningMinDuration: Duration = .seconds(5)
     /// Время показа с VoiceOver: объявление должны успеть дослушать.
     static let voiceOverDuration: Duration = .seconds(10)
 
@@ -34,8 +36,10 @@ enum InAppNotificationTiming {
     static func duration(for content: InAppNotification.Content, isVoiceOverRunning: Bool) -> Duration {
         guard !isVoiceOverRunning else { return voiceOverDuration }
         switch content {
-        case .error(let message):
+        case .error(let message), .info(let message):
             return textDuration(length: message.count)
+        case .warning(let message):
+            return max(textDuration(length: message.count), warningMinDuration)
         case .message:
             return messageDuration
         }

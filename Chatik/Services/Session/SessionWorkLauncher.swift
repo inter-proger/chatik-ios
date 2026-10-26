@@ -18,7 +18,8 @@ protocol SessionWorkStarting: AnyObject {
 /// 1. Список переписок читает кэш и подписывается на события: очередь событий не хранит их для будущих подписчиков.
 /// 2. Уведомления о новых сообщениях подписываются после списка: к их обработке событие уже применено к списку,
 ///    и переписка из события есть в нём.
-/// 3. Прочтение другими участниками подписывается на события до соединения: иначе пропустило бы первые `memberRead`.
+/// 3. Прочтение другими участниками и состав групп подписываются на события до соединения: иначе пропустили бы первые
+///    `memberRead` и события `groups`.
 /// 4. Очередь отправки отправляет сообщения, прерванные прошлой сессией или закрытием приложения: ответ на отправку
 ///    поднимает переписку в списке, поэтому список должен быть запущен.
 /// 5. `/global/start` выдаёт токен WebSocket для пользователя сессии.
@@ -27,6 +28,7 @@ final class SessionWorkLauncher: SessionWorkStarting {
     private let conversationList: ConversationListServiceProtocol
     private let messageNotifications: MessageNotificationServiceProtocol
     private let memberReads: MemberReadServiceProtocol
+    private let groupInfo: GroupInfoServiceProtocol
     private let messageDelivery: MessageDeliveryResuming
     private let realtimeService: RealtimeServiceProtocol
 
@@ -34,28 +36,32 @@ final class SessionWorkLauncher: SessionWorkStarting {
     ///   - conversationList: список переписок; повторный запуск (вход после выхода) ничего не делает.
     ///   - messageNotifications: уведомления о новых сообщениях; повторный запуск ничего не делает.
     ///   - memberReads: прочтение другими участниками; повторный запуск в той же сессии ничего не делает.
+    ///   - groupInfo: состав групп; повторный запуск в той же сессии ничего не делает.
     ///   - messageDelivery: отправка очереди — очередь загружена `SessionService` при открытии сессии.
     ///   - realtimeService: соединение с WebSocket.
     init(
         conversationList: ConversationListServiceProtocol,
         messageNotifications: MessageNotificationServiceProtocol,
         memberReads: MemberReadServiceProtocol,
+        groupInfo: GroupInfoServiceProtocol,
         messageDelivery: MessageDeliveryResuming,
         realtimeService: RealtimeServiceProtocol
     ) {
         self.conversationList = conversationList
         self.messageNotifications = messageNotifications
         self.memberReads = memberReads
+        self.groupInfo = groupInfo
         self.messageDelivery = messageDelivery
         self.realtimeService = realtimeService
     }
 
-    /// Запускает список переписок, уведомления о сообщениях, прочтение другими участниками, отправку очереди
+    /// Запускает список переписок, уведомления о сообщениях, прочтение другими участниками, состав групп, отправку очереди
     /// и работу с сервером — в этом порядке.
     func startSessionWork() {
         conversationList.start()
         messageNotifications.start()
         memberReads.start()
+        groupInfo.start()
         messageDelivery.resumeDeliveries()
         realtimeService.start()
     }

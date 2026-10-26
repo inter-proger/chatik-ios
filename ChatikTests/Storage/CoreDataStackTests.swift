@@ -278,6 +278,29 @@ final class CoreDataStackTests: XCTestCase {
         XCTAssertEqual(stored.state.totalUnreadCount, 0)
     }
 
+    /// Кейс: хранилище создано двенадцатой версией модели; в нём группа с последним сообщением и загруженный список.
+    /// Ожидание: лёгкая миграция без очистки: переписка и курсор на месте, отправитель последнего сообщения
+    /// неизвестен (0), меток удаления и ожидающих групп нет.
+    func test_makeContainer_twelfthModelVersion_keepsListWithUnknownSender() async throws {
+        try makeStore(modelVersion: "Chatik 12") { context in
+            let conversation = try self.insertConversation(id: 7, into: context)
+            conversation.setValue(15, forKey: "lastMessageId")
+            conversation.setValue("text", forKey: "lastMessageType")
+            conversation.setValue(1_790_846_400_000, forKey: "lastMessageUpdatedAt")
+            let state = NSEntityDescription.insertNewObject(forEntityName: "ConversationListStateEntity", into: context)
+            state.setValue(true, forKey: "isLoaded")
+            state.setValue(42, forKey: "syncedChangeVersion")
+        }
+
+        let stored = try await ConversationStorageService(container: CoreDataStack.makeContainer(storeURL: storeURL)).fetchList()
+
+        XCTAssertEqual(stored.conversations.map(\.conversationId), [7])
+        XCTAssertEqual(stored.conversations.first?.lastMessage?.senderId, 0)
+        XCTAssertEqual(stored.state.syncedChangeVersion, 42)
+        XCTAssertTrue(stored.state.removedVersions.isEmpty)
+        XCTAssertTrue(stored.state.pendingConversations.isEmpty)
+    }
+
     // MARK: - Helpers
 
     /// Создаёт по адресу `storeURL` хранилище указанной прежней версии модели, заполняет его и закрывает.

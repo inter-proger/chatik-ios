@@ -35,6 +35,14 @@ final class ConversationListServiceMock: ConversationListServiceProtocol {
     private(set) var sentMessages: [Message] = []
     private(set) var sentReadInfos: [ReadInfo?] = []
     private(set) var editedMessages: [(message: Message, lastMessage: LastMessage?)] = []
+    /// Метки удаления по `conversationId`.
+    var removedVersions: [Int: Int] = [:]
+    /// Переписки, для которых запрошена проверка членства, по порядку.
+    private(set) var verifiedConversationIds: [Int] = []
+    /// Вызовы `beginLeaving` / `endLeaving` по порядку: `"begin 12"`, `"end 12"`.
+    private(set) var leavingCalls: [String] = []
+    /// Применённые ответы `leave` по порядку.
+    private(set) var appliedLeaves: [ConversationRemoval] = []
     /// Вызывается в `start()` — чтобы проверить, что к этому моменту уже сделано.
     var onStart: (() -> Void)?
 
@@ -84,5 +92,34 @@ final class ConversationListServiceMock: ConversationListServiceProtocol {
 
     func applyEditedMessage(_ message: Message, lastMessage: LastMessage?) {
         editedMessages.append((message, lastMessage))
+    }
+}
+
+/// Группы: метки удаления, выход и проверка членства — состояние задаёт тест, вызовы запоминаются.
+extension ConversationListServiceMock {
+    func addRemovalObserver(_ observer: ConversationRemovalObserver) {}
+
+    func conversation(id conversationId: Int) -> Conversation? {
+        conversations.first { $0.conversationId == conversationId }
+    }
+
+    func isRemoved(conversationId: Int, changeVersion: Int) -> Bool {
+        removedVersions[conversationId].map { changeVersion <= $0 } ?? false
+    }
+
+    func verifyMembership(conversationId: Int) {
+        verifiedConversationIds.append(conversationId)
+    }
+
+    func beginLeaving(conversationId: Int) {
+        leavingCalls.append("begin \(conversationId)")
+    }
+
+    func endLeaving(conversationId: Int) {
+        leavingCalls.append("end \(conversationId)")
+    }
+
+    func applyLeave(_ removal: ConversationRemoval) {
+        appliedLeaves.append(removal)
     }
 }

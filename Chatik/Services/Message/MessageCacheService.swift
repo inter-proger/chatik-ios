@@ -214,7 +214,7 @@ actor MessageCacheService: MessageCacheServiceProtocol, MessageCacheLogoutHandli
             handleMessageEvent(message, isNew: true)
         case let .messageEdited(message, _, _):
             handleMessageEvent(message, isNew: false)
-        case .connected, .conversationCreated, .conversationRead, .memberRead:
+        case .connected, .conversationCreated, .conversationRead, .memberRead, .group:
             break
         }
     }
@@ -485,6 +485,23 @@ actor MessageCacheService: MessageCacheServiceProtocol, MessageCacheLogoutHandli
         await lastWrite?.value
     }
 
+    // MARK: - Удаление переписки
+
+    /// Пользователь больше не участник переписки: признак, синхронизации и подписчики переписки сбрасываются,
+    /// сообщения и состояние кэша удаляются — через цепочку записей, после записей, поставленных раньше: иначе пачка
+    /// событий, поставленная до удаления, дописала бы сообщения после него.
+    /// - Parameter conversationId: переписка.
+    func removeConversation(_ conversationId: Int) async {
+        guard !isLoggingOut else { return }
+        syncedIn[conversationId] = nil
+        syncs = syncs.filter { $0.value.token.conversationId != conversationId }
+        subscribers[conversationId]?.values.forEach { $0.finish() }
+        subscribers[conversationId] = nil
+        var changes = MessageStorageChanges()
+        changes.removedConversationId = conversationId
+        _ = await enqueueWrite { [changes] in try await self.storage.write(changes) }.result
+    }
+
     // MARK: - Выход из аккаунта
 
     /// Начало выхода: признаки, синхронизации и подписки сбрасываются, поставленные записи отменяются, начатые
@@ -504,6 +521,32 @@ actor MessageCacheService: MessageCacheServiceProtocol, MessageCacheLogoutHandli
     /// Выход завершён: кэш снова принимает записи.
     func finishLogout() {
         isLoggingOut = false
+    }
+}
+
+/// Удаление переписки из кэша сообщений — всё, что о нём знает `MessageCacheRemovalObserver`.
+protocol MessageCacheRemovalHandling: Sendable {
+    /// Удаляет сообщения и состояние кэша переписки после уже поставленных записей.
+    func removeConversation(_ conversationId: Int) async
+}
+
+extension MessageCacheService: MessageCacheRemovalHandling {}
+
+/// Наблюдатель удаления переписки для `MessageCacheService`: актор не может реализовать протокол, изолированный
+/// на main. `ConversationListService` держит наблюдателей слабо, поэтому адаптер хранит владелец (`DIContainer`).
+@MainActor
+final class MessageCacheRemovalObserver: ConversationRemovalObserver {
+    private let messageCache: MessageCacheRemovalHandling
+
+    /// - Parameter messageCache: кэш сообщений.
+    init(messageCache: MessageCacheRemovalHandling) {
+        self.messageCache = messageCache
+    }
+
+    /// Удаляет сообщения переписки, в которой пользователь больше не состоит.
+    /// - Parameter info: удалённая переписка.
+    func conversationWasRemoved(_ info: RemovedConversationInfo) async {
+        await messageCache.removeConversation(info.conversationId)
     }
 }
 

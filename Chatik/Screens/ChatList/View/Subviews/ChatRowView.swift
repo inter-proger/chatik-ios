@@ -12,7 +12,7 @@ struct ChatRowView: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            AvatarView(url: conversation.avatarURL)
+            AvatarView(url: conversation.avatarURL, placeholder: conversation.avatarPlaceholder)
                 .frame(width: 48, height: 48)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .firstTextBaseline) {

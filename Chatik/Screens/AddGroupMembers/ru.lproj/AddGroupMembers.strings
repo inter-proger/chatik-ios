@@ -1,0 +1,47 @@
+/*
+  AddGroupMembers.strings
+  Chatik
+
+  Строки экрана добавления участников группы.
+*/
+
+
+/* Заголовок, пока никто не выбран */
+"add_group_members.title" = "Добавить участников";
+
+/* Заголовок с числом выбранных */
+"add_group_members.title_selected" = "Добавить: %d";
+
+/* Кнопка добавления */
+"add_group_members.add" = "Добавить";
+"add_group_members.search_prompt" = "Поиск";
+
+/* Фильтр */
+"add_group_members.filter.all" = "Все пользователи";
+"add_group_members.filter.not_in_group" = "Не в группе";
+
+/* Отметка у пользователя, который уже в группе */
+"add_group_members.in_group" = "В группе";
+
+/* Подсказка, когда выбрано столько, сколько помещается */
+"add_group_members.limit_reached" = "Достигнут лимит в 100 участников";
+
+/* Пустой список */
+"add_group_members.empty.title" = "Нет пользователей";
+"add_group_members.empty_search.title" = "Никого не нашлось";
+
+/* Состав группы не загрузился */
+"add_group_members.load_failed" = "Не удалось загрузить участников группы";
+"add_group_members.retry" = "Повторить";
+
+/* Уведомление, когда добавлены все выбранные */
+"add_group_members.all_added" = "Участники добавлены";
+
+/* Попап не добавленных */
+"add_group_members.not_added.title" = "Не добавлены";
+"add_group_members.not_added.close" = "Закрыть";
+
+/* Причины, по которым пользователь не добавлен */
+"add_group_members.reason.user_not_found" = "Пользователь не найден";
+"add_group_members.reason.limit_reached" = "Достигнут лимит в 100 участников";
+"add_group_members.reason.already_member" = "Уже в группе";

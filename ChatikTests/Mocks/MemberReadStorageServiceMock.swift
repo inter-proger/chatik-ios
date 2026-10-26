@@ -42,6 +42,14 @@ final class MemberReadStorageServiceMock: MemberReadStorageServiceProtocol {
         return stored[conversationId]
     }
 
+    /// Переписки, указатели которых удалены, по порядку.
+    private(set) var deletedConversationIds: [Int] = []
+
+    func delete(conversationId: Int) async throws {
+        deletedConversationIds.append(conversationId)
+        stored[conversationId] = nil
+    }
+
     func apply(_ writes: [Int: MemberReadWrite]) async throws {
         applied.append(writes)
         if let gate = nextApplyGate {

@@ -121,6 +121,12 @@ final class ChatViewModel {
     let readStates: ConversationReadStateProviding
     /// Прочтение переписки другими участниками: галочки и «Кем прочитано».
     private let memberReads: MemberReadProviding
+    /// Состав группы — плавающая панель «В группе нет других участников»; `nil` — не группа или превью.
+    let groupInfo: GroupInfoProviding?
+    /// Переходы к экранам группы; нужен `ChatViewModel+Group`, поэтому не `private`.
+    let groupNavigator: GroupNavigating?
+    /// Панель «В группе нет других участников» скрыта крестиком — до следующего входа в переписку.
+    var isEmptyGroupPanelDismissed = false
     private let sleep: Sleep
 
     /// Сообщения с сервера из последнего снимка ленты. Не наблюдается: об изменении `observeMessages()` узнаёт
@@ -173,6 +179,8 @@ final class ChatViewModel {
     ///   - notifications: показ ошибок ленты и правки.
     ///   - readStates: прочтение переписки — граница непрочитанных, счётчик кнопки «вниз» и отметка прочтения.
     ///   - memberReads: прочтение переписки другими участниками — галочки и «Кем прочитано».
+    ///   - groupInfo: состав группы; `nil` — не группа.
+    ///   - groupNavigator: переходы к экранам группы; `nil` — не группа.
     ///   - now: текущее время; подменяется в тестах форматирования.
     ///   - calendar: календарь устройства; подменяется в тестах, чтобы деление на дни не зависело от устройства.
     ///   - sleep: ожидание между обновлениями ленты; подменяется в тестах.
@@ -191,6 +199,8 @@ final class ChatViewModel {
         notifications: InAppNotificationServiceProtocol,
         readStates: ConversationReadStateProviding,
         memberReads: MemberReadProviding,
+        groupInfo: GroupInfoProviding? = nil,
+        groupNavigator: GroupNavigating? = nil,
         now: @escaping () -> Date = { Date() },
         calendar: @escaping () -> Calendar = { .current },
         sleep: @escaping Sleep = { try await Task.sleep(for: $0) }
@@ -209,6 +219,8 @@ final class ChatViewModel {
         self.notifications = notifications
         self.readStates = readStates
         self.memberReads = memberReads
+        self.groupInfo = groupInfo
+        self.groupNavigator = groupNavigator
         self.now = now
         self.calendar = calendar
         self.sleep = sleep
@@ -255,7 +267,10 @@ final class ChatViewModel {
 
     /// Начинает наблюдать прочтение другими, подписывается на снимки ленты и на изменения времени и запускает ленту.
     private func startList() async {
-        memberReads.beginObserving(conversationId: conversation.conversationId)
+        memberReads.beginObserving(conversationId: conversation.conversationId, isGroup: conversation.type == .group)
+        if conversation.type == .group {
+            groupInfo?.beginObserving(conversationId: conversation.conversationId)
+        }
         let snapshots = await messagesList.snapshots()
         snapshotsTask = Task { [weak self] in
             for await snapshot in snapshots {
@@ -275,6 +290,9 @@ final class ChatViewModel {
     /// Отписывается от снимков и изменений времени, перестаёт наблюдать прочтение другими и останавливает ленту.
     private func stopList() async {
         memberReads.endObserving(conversationId: conversation.conversationId)
+        if conversation.type == .group {
+            groupInfo?.endObserving(conversationId: conversation.conversationId)
+        }
         snapshotsTask?.cancel()
         snapshotsTask = nil
         timeChangesTask?.cancel()
@@ -367,7 +385,7 @@ final class ChatViewModel {
 
     /// Входные данные сборки: читаются на main, и по этим чтениям Observation сообщает об изменениях. Чтение
     /// `language` тоже наблюдается — смена языка пересобирает ленту с форматтером заголовков нового языка.
-    /// Прочтение другими читается порогом `readUpTo`, а не указателями: порог меняется только при росте максимума.
+    /// Прочтение другими читается покрытием `coverage`, а не указателями: оно меняется только вместе с галочками.
     private func makeBuildInput() -> MessagesBuildInput {
         let outgoing = outgoingMessages
         let senderIds = Set(serverMessages.map(\.senderId) + outgoing.map(\.senderId))
@@ -387,7 +405,7 @@ final class ChatViewModel {
                 strings: .current,
                 dateHeaderFormatter: dateHeaderFormatterProvider.formatter(locale: locale, calendar: calendar),
                 conversationType: conversation.type,
-                readUpTo: memberReads.readUpTo(conversationId: conversation.conversationId)
+                readCoverage: memberReads.coverage(conversationId: conversation.conversationId)
             )
         )
     }

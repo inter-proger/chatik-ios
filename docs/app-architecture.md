@@ -73,7 +73,11 @@ flowchart LR
     Chats -->|path| Profile[".profile<br/>ProfileView"]
     Chats -->|path| Chat[".conversation<br/>ChatView"]
     Chats -->|sheet| Create[".createSingleConversation<br/>CreateSingleConversationRootView"]
+    Chats -->|sheet| CreateGroup[".createGroup<br/>CreateGroupRootView"]
     Chat -->|sheet| Readers["«Кем прочитано»<br/>MessageReadersView"]
+    Chat -->|path| Options[".groupOptions<br/>GroupOptionsView"]
+    Options -->|path| Members[".groupMembers<br/>GroupMembersView"]
+    Options -->|path| Add[".addGroupMembers<br/>AddGroupMembersView"]
 ```
 
 - **Корень выводится из состояния, а не переключается командами.** `AppRouter.root` вычисляется из `isSplashFinished` и `SessionService.isLoggedIn` (в Debug — ещё из `debugLoginState`). Вход, выход и истечение сессии меняют `SessionService`, и корень переключается сам: ни экран профиля с кнопкой «Выйти», ни сетевой слой о корне не знают.

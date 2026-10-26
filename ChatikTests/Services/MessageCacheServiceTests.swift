@@ -22,6 +22,27 @@ final class MessageCacheServiceTests: XCTestCase {
         sut = MessageCacheService(storage: storage, connectionMonitor: monitor)
     }
 
+    // MARK: - Удаление переписки
+
+    /// Кейс: переписка синхронизирована; событие новой переписки поставлено в запись, следом — удаление переписки.
+    /// Ожидание: удаление выполнено после записи события — сообщений и состояния переписки в БД не осталось,
+    /// признак синхронизации снят.
+    func test_removeConversation_afterQueuedWrites_leavesNothing() async throws {
+        try await makeSynced(page: [.make(id: 1)])
+        let message = Message.make(id: 2, createdAt: .stub(5000))
+
+        await sut.handle(.messageReceived(message, LastMessage(message: message), nil))
+        await sut.removeConversation(1)
+
+        let stored = try await storage.fetchLatestBlocks(conversationId: 1, minCount: 10)
+        let state = try await storage.fetchState(conversationId: 1)
+        let isSynced = await sut.isSynced(conversationId: 1)
+        XCTAssertTrue(stored.isEmpty)
+        XCTAssertNil(state)
+        XCTAssertFalse(isSynced)
+    }
+
+
     // MARK: - События
 
     /// Кейс: синхронизированная переписка получила `received`.

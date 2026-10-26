@@ -1,0 +1,50 @@
+/*
+  GroupMembers.strings
+  Chatik
+
+  Строки экрана участников группы.
+*/
+
+"group_members.title" = "Members";
+
+/* Секции */
+"group_members.section.owner" = "Owner";
+"group_members.section.members" = "Members";
+
+/* Подпись текущего пользователя в списке */
+"group_members.you" = "You";
+
+/* Состав не загрузился */
+"group_members.load_failed" = "Couldn’t load members";
+"group_members.retry" = "Retry";
+
+/* Пункт меню по долгому нажатию на участника */
+"group_members.transfer" = "Transfer Ownership";
+
+/* Подтверждение передачи прав */
+"group_members.transfer.title" = "Transfer ownership?";
+
+/* Подстановка — имя будущего создателя */
+"group_members.transfer.message" = "“%@” will become the owner. You will lose the right to invite members to the group.";
+"group_members.transfer.confirm" = "OK";
+"group_members.cancel" = "Cancel";
+
+/* Уведомление после передачи прав */
+"group_members.transferred" = "Ownership transferred";
+
+/* Пункт меню участника: личная переписка с ним */
+"group_members.direct_chat" = "Direct Message";
+
+/* Индикатор в строке участника, пока создаётся личный диалог */
+"group_members.direct_chat.opening" = "Opening direct message";
+
+/* Пункт меню участника для создателя */
+"group_members.remove" = "Remove from Group";
+
+/* Подтверждение исключения; подстановка — имя участника */
+"group_members.remove.title" = "Remove member?";
+"group_members.remove.message" = "“%@” will no longer be able to read or write in the group.";
+"group_members.remove.confirm" = "Remove";
+
+/* Уведомление после исключения */
+"group_members.removed" = "Member removed from the group";

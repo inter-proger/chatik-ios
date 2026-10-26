@@ -62,9 +62,45 @@ struct ChatListRootView: View {
                             timeChangeService: DIContainer.shared.significantTimeChangeService,
                             notifications: DIContainer.shared.notificationService,
                             readStates: DIContainer.shared.conversationListService,
-                            memberReads: DIContainer.shared.memberReadService
+                            memberReads: DIContainer.shared.memberReadService,
+                            groupInfo: DIContainer.shared.groupInfoService,
+                            groupNavigator: router
                         ))
                         .id(conversation.id)
+                    case let .groupOptions(conversation):
+                        GroupOptionsView(viewModel: GroupOptionsViewModel(
+                            conversation: conversation,
+                            conversationList: DIContainer.shared.conversationListService,
+                            groupInfo: DIContainer.shared.groupInfoService,
+                            groupService: DIContainer.shared.groupService,
+                            sessionService: DIContainer.shared.sessionService,
+                            notifications: DIContainer.shared.notificationService,
+                            navigator: router
+                        ))
+                    case let .groupMembers(conversationId):
+                        GroupMembersView(viewModel: GroupMembersViewModel(
+                            conversationId: conversationId,
+                            groupInfo: DIContainer.shared.groupInfoService,
+                            groupService: DIContainer.shared.groupService,
+                            conversationService: DIContainer.shared.conversationService,
+                            conversationList: DIContainer.shared.conversationListService,
+                            sessionService: DIContainer.shared.sessionService,
+                            userCache: DIContainer.shared.userCache,
+                            notifications: DIContainer.shared.notificationService,
+                            navigator: router
+                        ))
+                    case let .addGroupMembers(conversationId):
+                        AddGroupMembersView(viewModel: AddGroupMembersViewModel(
+                            conversationId: conversationId,
+                            groupInfo: DIContainer.shared.groupInfoService,
+                            groupService: DIContainer.shared.groupService,
+                            usersService: DIContainer.shared.usersService,
+                            membership: DIContainer.shared.conversationListService,
+                            sessionService: DIContainer.shared.sessionService,
+                            userCache: DIContainer.shared.userCache,
+                            notifications: DIContainer.shared.notificationService,
+                            navigator: router
+                        ))
                     }
                 }
         }
@@ -82,6 +118,14 @@ struct ChatListRootView: View {
                         viewModel.didCreateConversation(conversation)
                     }
                     router.dismissSheet()
+                })
+            case .createGroup:
+                // Созданную группу экран уже добавил в список; она открывается — там панель «Добавить участников».
+                CreateGroupRootView(onFinish: { conversation in
+                    router.dismissSheet()
+                    if let conversation {
+                        router.openConversation(conversation)
+                    }
                 })
             }
         }

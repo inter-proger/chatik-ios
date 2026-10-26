@@ -13,6 +13,11 @@ protocol ConversationOpening: AnyObject {
     /// Открывает переписку с любого экрана: закрывает лист и заменяет стек.
     /// - Parameter conversation: переписка.
     func openConversation(_ conversation: Conversation)
+    /// Закрывает экраны переписки (и листы поверх них), если они есть в стеке: стек сбрасывается к списку.
+    /// - Parameter conversationId: переписка.
+    /// - Returns: `true` — экраны переписки были открыты.
+    @discardableResult
+    func closeConversation(id conversationId: Int) -> Bool
 }
 
 /// Реестр роутеров списка чатов по сценам: какая переписка где открыта и где открыть переписку из уведомления.
@@ -41,7 +46,7 @@ protocol ConversationNavigating: AnyObject {
 /// открывает переписку в сцене, где уведомление показано. Свёрнутая сцена остаётся зарегистрированной (`onDisappear`
 /// при уходе в фон не вызывается), но переписка в ней пользователю не видна — уведомления о ней не глушит.
 @MainActor
-final class ConversationNavigator: ConversationNavigating {
+final class ConversationNavigator: ConversationNavigating, ConversationRemovalObserver {
     /// Зарегистрированный роутер.
     private struct Registration {
         let token: UUID
@@ -96,5 +101,21 @@ final class ConversationNavigator: ConversationNavigating {
         let alive = registrations.filter { $0.router != nil }
         let presenting = alive.last { $0.sceneId != nil && $0.sceneId == notifications.presentingSceneId }
         (presenting ?? alive.last)?.router?.openConversation(conversation)
+    }
+}
+
+extension ConversationNavigator {
+    /// Пользователь больше не участник переписки: её экраны закрываются во всех сценах. Если они были открыты,
+    /// а пользователь не выходил сам на этом устройстве, — уведомление «Вы больше не участник группы». Для личной
+    /// переписки уведомления нет: текст про группу к ней не подходит.
+    /// - Parameter info: удалённая переписка.
+    func conversationWasRemoved(_ info: RemovedConversationInfo) async {
+        var wasOpen = false
+        for registration in registrations {
+            wasOpen = (registration.router?.closeConversation(id: info.conversationId) ?? false) || wasOpen
+        }
+        guard wasOpen, info.reason != .left, info.type != .single else { return }
+        let message = info.name.map(InAppNotificationStrings.noLongerMember(groupName:)) ?? InAppNotificationStrings.noLongerMemberUntitled
+        notifications.showInfo(message)
     }
 }

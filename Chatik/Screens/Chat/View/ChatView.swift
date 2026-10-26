@@ -73,6 +73,14 @@ struct ChatView: View {
             ToolbarItem(placement: .principal) {
                 titleView
             }
+            if viewModel.isGroupOptionsButtonVisible {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(action: viewModel.didTapGroupOptions) {
+                        Image(systemName: "gearshape")
+                    }
+                    .accessibilityLabel(ChatStrings.groupOptions)
+                }
+            }
         }
         // Правка не сохранилась: клавиатура пряталась на время запроса и возвращается, чтобы исправить текст.
         .onChange(of: viewModel.inputFocusRequest) {
@@ -117,6 +125,7 @@ struct ChatView: View {
         )
         .onTapGesture { isInputFocused = false }
         .overlay(alignment: .top) { navigationBarBackground }
+        .overlay(alignment: .top) { emptyGroupPanel }
         // Заглушка не перехватывает касания: потянуть ленту для обновления можно и в пустой переписке.
         .overlay { stateOverlay.allowsHitTesting(false) }
         .safeAreaInset(edge: .bottom) {
@@ -126,6 +135,16 @@ struct ChatView: View {
         // до её конца. Анимация здесь, а не в панели: иначе анимировалась бы только панель. Секции ленты смена режима
         // не меняет (действия скрывает `areActionsEnabled`), поэтому в анимацию попадают только отступ и плашка.
         .animation(.default, value: viewModel.isEditing)
+        .animation(.default, value: viewModel.isEmptyGroupPanelVisible)
+    }
+
+    /// Панель «В группе нет других участников» поверх ленты: лента под ней не сдвигается.
+    @ViewBuilder
+    private var emptyGroupPanel: some View {
+        if viewModel.isEmptyGroupPanelVisible {
+            EmptyGroupPanel(onAdd: viewModel.didTapAddMembersOnPanel, onDismiss: viewModel.didDismissEmptyGroupPanel)
+                .transition(.move(edge: .top).combined(with: .opacity))
+        }
     }
 
     /// Подложка под панелью навигации. У ленты скрыты эффекты краёв прокрутки (см. `MessagesListView`), а на iOS 26

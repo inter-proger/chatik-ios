@@ -1,0 +1,27 @@
+/*
+  CreateGroup.strings
+  Chatik
+
+  Строки экрана создания группы.
+*/
+
+"create_group.title" = "Новая группа";
+"create_group.create" = "Создать";
+"create_group.cancel" = "Отмена";
+"create_group.name_placeholder" = "Название группы";
+"create_group.description_placeholder" = "Описание (необязательно)";
+
+/* Диалог выбора аватара группы */
+"create_group.avatar.title" = "Аватар группы";
+"create_group.avatar.choose_from_gallery" = "Выбрать из галереи";
+"create_group.avatar.take_photo" = "Сделать фото";
+"create_group.avatar.remove" = "Удалить";
+
+/* Подпись VoiceOver кнопки аватара */
+"create_group.avatar.accessibility_label" = "Аватар группы";
+
+/* Выбранное изображение не удалось подготовить или сервер его не принял */
+"create_group.avatar.load_failed" = "Не удалось установить аватар. Выберите другое изображение";
+
+/* Сервер отклонил название (1003) */
+"create_group.error.invalid_name" = "Название — от 1 до 128 символов";

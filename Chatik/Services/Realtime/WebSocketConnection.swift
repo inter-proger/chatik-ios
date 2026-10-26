@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import os
 
 /// Коды закрытия WebSocket-соединения, на которые клиент реагирует по-особому.
 enum WebSocketCloseCode {
@@ -106,14 +107,53 @@ final class URLSessionWebSocketConnection: WebSocketConnectionProtocol, @uncheck
         return message
     }
 
-    /// Отправляет ping и ждёт pong; ошибка — соединение уже закрыто.
+    /// Отправляет ping и ждёт pong; ошибка — соединение уже закрыто или задача отменена.
+    @concurrent
     func sendPing() async throws {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            task.sendPing { error in
-                guard let error else { return continuation.resume() }
-                continuation.resume(throwing: error)
+        try await Self.awaitPong { [task] handler in task.sendPing(pongReceiveHandler: handler) }
+    }
+
+    /// Ожидание pong: продолжение забирает первый ответ обработчика ping или отмена задачи.
+    private struct PongWaiting: Sendable {
+        var continuation: CheckedContinuation<Void, Error>?
+        var isCancelled = false
+    }
+
+    /// Ждёт первый ответ обработчика ping. `URLSessionWebSocketTask.sendPing` при обрыве соединения может вызвать
+    /// обработчик повторно, а продолжение возобновляется ровно один раз — поэтому повторные вызовы игнорируются.
+    /// При отмене задачи ожидание сразу завершается, не дожидаясь обработчика; если задача отменена до начала,
+    /// ping не отправляется. Не `private` — для тестов.
+    /// - Parameter sendPing: отправляет ping и передаёт ответ в обработчик: `nil` — pong пришёл, иначе — ошибка.
+    /// - Throws: ошибку из первого ответа обработчика; `CancellationError`, если задача отменена раньше.
+    static func awaitPong(_ sendPing: (@escaping @Sendable (Error?) -> Void) -> Void) async throws {
+        let waiting = OSAllocatedUnfairLock(initialState: PongWaiting())
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                let isCancelled = waiting.withLock { waiting in
+                    waiting.continuation = continuation
+                    return waiting.isCancelled
+                }
+                guard !isCancelled else { return resumePong(waiting, with: CancellationError()) }
+                sendPing { error in resumePong(waiting, with: error) }
             }
+        } onCancel: {
+            waiting.withLock { $0.isCancelled = true }
+            resumePong(waiting, with: CancellationError())
         }
+    }
+
+    /// Возобновляет ожидание pong, если оно ещё не возобновлено; повторные вызовы ничего не делают.
+    /// - Parameters:
+    ///   - waiting: ожидание pong.
+    ///   - error: `nil` — pong пришёл, иначе — ошибка, с которой завершается ожидание.
+    private static func resumePong(_ waiting: OSAllocatedUnfairLock<PongWaiting>, with error: Error?) {
+        let continuation = waiting.withLock { waiting in
+            defer { waiting.continuation = nil }
+            return waiting.continuation
+        }
+        guard let continuation else { return }
+        guard let error else { return continuation.resume() }
+        continuation.resume(throwing: error)
     }
 
     /// Закрывает соединение. Клиент закрывает соединения только нормально, поэтому неизвестный код

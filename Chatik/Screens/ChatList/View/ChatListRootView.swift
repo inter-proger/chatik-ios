@@ -82,10 +82,12 @@ struct ChatListRootView: View {
                             conversationId: conversationId,
                             groupInfo: DIContainer.shared.groupInfoService,
                             groupService: DIContainer.shared.groupService,
-                            membership: DIContainer.shared.conversationListService,
+                            conversationService: DIContainer.shared.conversationService,
+                            conversationList: DIContainer.shared.conversationListService,
                             sessionService: DIContainer.shared.sessionService,
                             userCache: DIContainer.shared.userCache,
-                            notifications: DIContainer.shared.notificationService
+                            notifications: DIContainer.shared.notificationService,
+                            navigator: router
                         ))
                     case let .addGroupMembers(conversationId):
                         AddGroupMembersView(viewModel: AddGroupMembersViewModel(

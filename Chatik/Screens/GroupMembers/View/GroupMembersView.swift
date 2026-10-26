@@ -5,8 +5,8 @@
 
 import SwiftUI
 
-/// Участники группы: секции «Создатель» и «Участники». Создатель долгим нажатием на участника открывает меню
-/// с «Передать права создателя».
+/// Участники группы: секции «Создатель» и «Участники». Долгое нажатие на участника открывает меню: «Личный диалог»,
+/// а у создателя ещё «Передать права создателя» и «Исключить из группы».
 struct GroupMembersView: View {
     @State private var viewModel: GroupMembersViewModel
 
@@ -45,26 +45,54 @@ struct GroupMembersView: View {
             isPresented: $viewModel.isTransferConfirmationPresented,
             presenting: viewModel.pendingTransfer
         ) { member in
-            Button(GroupMembersStrings.transferCancel, role: .cancel) {}
+            Button(GroupMembersStrings.cancel, role: .cancel) {}
             Button(GroupMembersStrings.transferConfirm, role: .destructive) { viewModel.didConfirmTransfer(to: member) }
         } message: { member in
             Text(GroupMembersStrings.transferMessage(name: member.name))
         }
+        .alert(
+            GroupMembersStrings.removeTitle,
+            isPresented: $viewModel.isRemoveConfirmationPresented,
+            presenting: viewModel.pendingRemoval
+        ) { member in
+            Button(GroupMembersStrings.cancel, role: .cancel) {}
+            Button(GroupMembersStrings.removeConfirm, role: .destructive) { viewModel.didConfirmRemoval(of: member) }
+        } message: { member in
+            Text(GroupMembersStrings.removeMessage(name: member.name))
+        }
     }
 
-    /// Строка участника; меню по долгому нажатию — только если права можно передать.
+    /// Строка участника; меню по долгому нажатию — из действий для участника (пустое меню не показывается).
+    /// Пока создаётся личный диалог с участником, в его строке индикатор.
     /// - Parameter member: участник.
-    @ViewBuilder
     private func row(_ member: GroupMemberDisplayModel) -> some View {
-        let rowView = GroupMemberRowView(member: member, trailingText: member.isCurrentUser ? GroupMembersStrings.you : nil)
-        if viewModel.canTransferOwnership(to: member) {
-            rowView.contextMenu {
-                Button(GroupMembersStrings.transferOwnership, systemImage: "crown") {
-                    viewModel.didSelectTransferOwnership(to: member)
-                }
+        GroupMemberRowView(
+            member: member,
+            trailingText: member.isCurrentUser ? GroupMembersStrings.you : nil,
+            isLoading: viewModel.openingChatMemberId == member.id
+        )
+        .contextMenu {
+            ForEach(viewModel.actions(for: member), id: \.self) { action in
+                menuButton(action, for: member)
             }
-        } else {
-            rowView
+        }
+    }
+
+    /// Пункт меню участника.
+    /// - Parameters:
+    ///   - action: действие.
+    ///   - member: участник.
+    @ViewBuilder
+    private func menuButton(_ action: GroupMemberAction, for member: GroupMemberDisplayModel) -> some View {
+        switch action {
+        case .directChat:
+            Button(GroupMembersStrings.directChat, systemImage: "bubble.left") { viewModel.didSelect(action, for: member) }
+        case .transferOwnership:
+            Button(GroupMembersStrings.transferOwnership, systemImage: "crown") { viewModel.didSelect(action, for: member) }
+        case .remove:
+            Button(GroupMembersStrings.remove, systemImage: "person.badge.minus", role: .destructive) {
+                viewModel.didSelect(action, for: member)
+            }
         }
     }
 

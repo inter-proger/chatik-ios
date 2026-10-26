@@ -10,6 +10,8 @@ struct GroupMemberRowView: View {
     let member: GroupMemberDisplayModel
     /// Подпись справа; `nil` — без подписи.
     var trailingText: String?
+    /// Индикатор справа — идёт действие с участником.
+    var isLoading = false
 
     var body: some View {
         HStack(spacing: 12) {
@@ -19,7 +21,10 @@ struct GroupMemberRowView: View {
                 .lineLimit(1)
                 .redacted(reason: member.isPlaceholder ? .placeholder : [])
             Spacer()
-            if let trailingText {
+            if isLoading {
+                ProgressView()
+                    .accessibilityLabel(GroupMembersStrings.openingChat)
+            } else if let trailingText {
                 Text(trailingText)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)

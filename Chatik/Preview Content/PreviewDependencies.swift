@@ -300,10 +300,12 @@ enum PreviewDependencies {
             conversationId: groupConversation.conversationId,
             groupInfo: groupInfoService,
             groupService: GroupServicePreviewMock(),
-            membership: conversationList,
+            conversationService: ConversationServicePreviewMock(userCache: userCache),
+            conversationList: conversationList,
             sessionService: sessionService,
             userCache: userCache,
-            notifications: notificationService
+            notifications: notificationService,
+            navigator: ChatListRouter()
         )
     }
 
@@ -550,6 +552,12 @@ final class GroupServicePreviewMock: GroupServiceProtocol {
             notAddedUsersInfo: userIds.suffix(1).map { UserErrorInfo(userId: $0, errorCode: NetworkError.Code.groupMemberLimitReached) },
             groupInfo: GroupInfo(conversationId: conversationId, version: 2, members: members)
         )
+    }
+
+    func removeMembers(conversationId: Int, userIds: [Int]) async throws -> RemoveMembersResult {
+        try await Task.sleep(for: .seconds(1))
+        let members = Self.groupInfo.members.filter { !userIds.contains($0.userId) }
+        return RemoveMembersResult(removedUserIds: userIds, notRemovedUsersInfo: [], groupInfo: GroupInfo(conversationId: conversationId, version: 2, members: members))
     }
 
     func changeOwner(conversationId: Int, newOwnerUserId: Int) async throws -> GroupInfo {

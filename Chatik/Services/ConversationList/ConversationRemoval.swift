@@ -37,6 +37,13 @@ protocol ConversationRemovalObserver: AnyObject {
     func conversationWasRemoved(_ info: RemovedConversationInfo) async
 }
 
+/// Применение переписки, полученной из REST, — для экранов, которые создают переписку и открывают её.
+@MainActor
+protocol ConversationApplying: AnyObject {
+    /// Применяет полную версию переписки из REST (`createSingle`, `/groups/create`).
+    func apply(_ conversation: Conversation)
+}
+
 /// Проверка «пропущенного удаления»: метод по известной группе ответил `5002` (или `6002`).
 @MainActor
 protocol ConversationMembershipVerifying: AnyObject {

@@ -11,6 +11,8 @@ enum GroupEndpoint: Endpoint {
     case create(name: String, description: String?, avatarFileId: Int?)
     /// POST /groups/addMembers — добавление участников (только владелец), от 1 до 100. Ответ: `AddMembersResult`.
     case addMembers(conversationId: Int, userIds: [Int])
+    /// POST /groups/removeMembers — исключение участников (только владелец), от 1 до 100. Ответ: `RemoveMembersResult`.
+    case removeMembers(conversationId: Int, userIds: [Int])
     /// POST /groups/changeOwner — передача владения участнику (только владелец). Ответ: `GroupInfoResponse`.
     case changeOwner(conversationId: Int, newOwnerUserId: Int)
     /// GET /groups/getInfo — состав и роли группы. Ответ: `GroupInfoResponse`.
@@ -22,6 +24,7 @@ enum GroupEndpoint: Endpoint {
         switch self {
         case .create: return "/groups/create"
         case .addMembers: return "/groups/addMembers"
+        case .removeMembers: return "/groups/removeMembers"
         case .changeOwner: return "/groups/changeOwner"
         case .getInfo: return "/groups/getInfo"
         case .leave: return "/groups/leave"
@@ -30,7 +33,7 @@ enum GroupEndpoint: Endpoint {
 
     var method: HTTPMethod {
         switch self {
-        case .create, .addMembers, .changeOwner, .leave: return .post
+        case .create, .addMembers, .removeMembers, .changeOwner, .leave: return .post
         case .getInfo: return .get
         }
     }
@@ -42,7 +45,7 @@ enum GroupEndpoint: Endpoint {
             parameters["description"] = description
             parameters["avatarFileId"] = avatarFileId.map(String.init)
             return parameters
-        case let .addMembers(conversationId, userIds):
+        case let .addMembers(conversationId, userIds), let .removeMembers(conversationId, userIds):
             return ["conversationId": String(conversationId), "userIds": userIds.map(String.init).joined(separator: ",")]
         case let .changeOwner(conversationId, newOwnerUserId):
             return ["conversationId": String(conversationId), "newOwnerUserId": String(newOwnerUserId)]

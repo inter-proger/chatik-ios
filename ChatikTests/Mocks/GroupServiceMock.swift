@@ -11,6 +11,8 @@ final class GroupServiceMock: GroupServiceProtocol {
     var stubbedCreate: Result<CreatedGroup, Error> = .failure(NetworkError.missingResponse)
     var stubbedAddMembers: [Result<AddMembersResult, Error>] = []
     var stubbedChangeOwner: Result<GroupInfo, Error> = .failure(NetworkError.missingResponse)
+    var stubbedRemoveMembers: Result<RemoveMembersResult, Error> = .failure(NetworkError.missingResponse)
+    private(set) var removeMembersRequests: [(conversationId: Int, userIds: [Int])] = []
     /// Ответы `fetchInfo` по порядку; кончились — `missingResponse`.
     var stubbedInfos: [Result<GroupInfo, Error>] = []
     var stubbedLeave: Result<ConversationRemoval, Error> = .failure(NetworkError.missingResponse)
@@ -35,6 +37,12 @@ final class GroupServiceMock: GroupServiceProtocol {
         await actionGate?.wait()
         let result = stubbedAddMembers.isEmpty ? .failure(NetworkError.missingResponse) : stubbedAddMembers.removeFirst()
         return try result.get()
+    }
+
+    func removeMembers(conversationId: Int, userIds: [Int]) async throws -> RemoveMembersResult {
+        removeMembersRequests.append((conversationId, userIds))
+        await actionGate?.wait()
+        return try stubbedRemoveMembers.get()
     }
 
     func changeOwner(conversationId: Int, newOwnerUserId: Int) async throws -> GroupInfo {

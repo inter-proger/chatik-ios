@@ -56,6 +56,11 @@ enum GroupRole: String, Codable, Hashable, Sendable {
     var canTransferOwnership: Bool {
         self == .owner
     }
+
+    /// Может ли исключать участников из группы.
+    var canRemoveMembers: Bool {
+        self == .owner
+    }
 }
 
 /// Объект `RemovedConversation` из API — метка: текущий пользователь перестал быть участником переписки (удалён
@@ -84,6 +89,16 @@ struct AddMembersResult: Decodable, Equatable, Sendable {
     let addedUserIds: [Int]
     /// Не добавленные с причиной, в порядке запроса.
     let notAddedUsersInfo: [UserErrorInfo]
+    /// Состав после изменения.
+    let groupInfo: GroupInfo
+}
+
+/// Ответ `/groups/removeMembers`.
+struct RemoveMembersResult: Decodable, Equatable, Sendable {
+    /// Исключённые, в порядке запроса.
+    let removedUserIds: [Int]
+    /// Не исключённые с причиной (`5007` — не участник, `5008` — владелец), в порядке запроса.
+    let notRemovedUsersInfo: [UserErrorInfo]
     /// Состав после изменения.
     let groupInfo: GroupInfo
 }

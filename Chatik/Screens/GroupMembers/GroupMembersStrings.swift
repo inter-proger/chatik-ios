@@ -19,8 +19,20 @@ enum GroupMembersStrings {
     static var transferOwnership: String { localized("group_members.transfer") }
     static var transferTitle: String { localized("group_members.transfer.title") }
     static var transferConfirm: String { localized("group_members.transfer.confirm") }
-    static var transferCancel: String { localized("group_members.transfer.cancel") }
+    static var cancel: String { localized("group_members.cancel") }
     static var ownershipTransferred: String { localized("group_members.transferred") }
+    static var directChat: String { localized("group_members.direct_chat") }
+    static var openingChat: String { localized("group_members.direct_chat.opening") }
+    static var remove: String { localized("group_members.remove") }
+    static var removeTitle: String { localized("group_members.remove.title") }
+    static var removeConfirm: String { localized("group_members.remove.confirm") }
+    static var memberRemoved: String { localized("group_members.removed") }
+
+    /// Текст подтверждения исключения.
+    /// - Parameter name: имя исключаемого.
+    static func removeMessage(name: String) -> String {
+        String(format: localized("group_members.remove.message"), name)
+    }
 
     /// Текст подтверждения передачи прав.
     /// - Parameter name: имя будущего создателя.

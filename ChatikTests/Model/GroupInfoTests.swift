@@ -39,12 +39,14 @@ final class GroupInfoTests: XCTestCase {
     }
 
     /// Кейс: права ролей.
-    /// Ожидание: добавлять участников и передавать права может только владелец.
+    /// Ожидание: добавлять и исключать участников и передавать права может только владелец.
     func test_roleRights_onlyOwner() {
         XCTAssertTrue(GroupRole.owner.canAddMembers)
         XCTAssertTrue(GroupRole.owner.canTransferOwnership)
+        XCTAssertTrue(GroupRole.owner.canRemoveMembers)
         XCTAssertFalse(GroupRole.member.canAddMembers)
         XCTAssertFalse(GroupRole.member.canTransferOwnership)
+        XCTAssertFalse(GroupRole.member.canRemoveMembers)
     }
 
     /// Кейс: ответ `/groups/addMembers` из документации.
@@ -61,6 +63,21 @@ final class GroupInfoTests: XCTestCase {
         XCTAssertEqual(result.addedUserIds, [2, 5])
         XCTAssertEqual(result.notAddedUsersInfo, [UserErrorInfo(userId: 1, errorCode: 5006), UserErrorInfo(userId: 999, errorCode: 4001)])
         XCTAssertEqual(result.groupInfo.version, 2)
+    }
+
+    /// Кейс: ответ `/groups/removeMembers` из документации.
+    /// Ожидание: исключённые, не исключённые с кодами и новый состав разобраны.
+    func test_decode_removeMembersResult() throws {
+        let json = """
+        {"removedUserIds": [5], "notRemovedUsersInfo": [{"userId": 1, "errorCode": 5008}],
+         "groupInfo": {"conversationId": 12, "version": 3, "members": [{"userId": 1, "role": "owner", "joinedAfterMessageId": 0}]}}
+        """
+
+        let result = try decoder.decode(RemoveMembersResult.self, from: Data(json.utf8))
+
+        XCTAssertEqual(result.removedUserIds, [5])
+        XCTAssertEqual(result.notRemovedUsersInfo, [UserErrorInfo(userId: 1, errorCode: 5008)])
+        XCTAssertEqual(result.groupInfo.version, 3)
     }
 
     /// Кейс: ответ `/groups/leave`.

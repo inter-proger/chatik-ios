@@ -24,6 +24,10 @@ final class GroupNavigatingMock: GroupNavigating {
         calls.append("add \(conversationId)")
     }
 
+    func openConversation(_ conversation: Conversation) {
+        calls.append("open \(conversation.conversationId)")
+    }
+
     func pop() {
         calls.append("pop")
     }

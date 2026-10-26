@@ -54,7 +54,7 @@ protocol GroupLeaving: AnyObject {
 
 @MainActor
 protocol ConversationListServiceProtocol: ConversationPositionUpdating, UnreadCountProviding, ConversationReadStateProviding,
-    ConversationMembershipVerifying, ConversationRemovalMarks, GroupLeaving, AuthServiceObserver {
+    ConversationApplying, ConversationMembershipVerifying, ConversationRemovalMarks, GroupLeaving, AuthServiceObserver {
     /// Переписки по позиции: `positionUpdatedAt` ↓, `conversationId` ↓.
     var conversations: [Conversation] { get }
     /// Идёт ли стартовая синхронизация — для индикатора «Обновление…».
@@ -79,8 +79,6 @@ protocol ConversationListServiceProtocol: ConversationPositionUpdating, UnreadCo
     func refresh() async throws
     /// Начинает загрузку следующей страницы, если показана одна из последних переписок.
     func loadNextPageIfNeeded(currentConversationId: Int)
-    /// Применяет полную версию переписки из REST (`createSingle`, `/groups/create`).
-    func apply(_ conversation: Conversation)
     /// Переписка из списка по id — без перебора; `nil` — её нет в загруженном списке.
     /// - Parameter conversationId: переписка.
     func conversation(id conversationId: Int) -> Conversation?

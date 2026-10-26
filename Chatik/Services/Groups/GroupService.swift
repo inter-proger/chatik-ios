@@ -10,6 +10,8 @@ protocol GroupServiceProtocol {
     func create(name: String, description: String?, avatarFileId: Int?) async throws -> CreatedGroup
     /// Добавляет пользователей в группу; кого добавить нельзя — в `notAddedUsersInfo`, это не ошибка.
     func addMembers(conversationId: Int, userIds: [Int]) async throws -> AddMembersResult
+    /// Исключает участников из группы; кого исключить нельзя — в `notRemovedUsersInfo`, это не ошибка.
+    func removeMembers(conversationId: Int, userIds: [Int]) async throws -> RemoveMembersResult
     /// Передаёт владение участнику группы.
     func changeOwner(conversationId: Int, newOwnerUserId: Int) async throws -> GroupInfo
     /// Возвращает состав и роли группы.
@@ -43,6 +45,16 @@ final class GroupService: GroupServiceProtocol {
     /// - Returns: добавленные, не добавленные с причиной и состав после изменения.
     func addMembers(conversationId: Int, userIds: [Int]) async throws -> AddMembersResult {
         try await networkService.request(GroupEndpoint.addMembers(conversationId: conversationId, userIds: userIds))
+    }
+
+    /// Исключает участников через `POST /groups/removeMembers`. Только владелец (иначе 5004). Исключённый сразу теряет
+    /// доступ к группе, его сообщения остаются.
+    /// - Parameters:
+    ///   - conversationId: группа.
+    ///   - userIds: участники, от 1 до 100.
+    /// - Returns: исключённые, не исключённые с причиной и состав после изменения.
+    func removeMembers(conversationId: Int, userIds: [Int]) async throws -> RemoveMembersResult {
+        try await networkService.request(GroupEndpoint.removeMembers(conversationId: conversationId, userIds: userIds))
     }
 
     /// Передаёт владение через `POST /groups/changeOwner`. Только владелец (иначе 5004).

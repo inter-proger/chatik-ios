@@ -388,7 +388,8 @@ final class RealtimeService: RealtimeServiceProtocol {
     }
 
     /// Heartbeat: ping каждые `pingInterval`; если pong не пришёл за `pongTimeout`, соединение закрывается
-    /// как потерянное. Ошибка ping — соединение уже закрыто, это обработает чтение.
+    /// как потерянное. Ошибка ping — соединение уже закрыто, это обработает чтение. Ожидание pong не переживает
+    /// свою итерацию: при выходе из heartbeat оно отменяется и не держит соединение.
     /// - Parameters:
     ///   - connection: пингуемое соединение.
     ///   - state: куда отметить таймаут pong.
@@ -397,10 +398,11 @@ final class RealtimeService: RealtimeServiceProtocol {
         while true {
             guard (try? await sleep(wait)) != nil, !Task.isCancelled else { return }
             let pingState = PingState()
-            Task {
+            let ping = Task {
                 try? await connection.sendPing()
                 pingState.isAnswered = true
             }
+            defer { ping.cancel() }
             guard (try? await sleep(pongTimeout)) != nil, !Task.isCancelled else { return }
             guard pingState.isAnswered else {
                 state.isPongTimedOut = true

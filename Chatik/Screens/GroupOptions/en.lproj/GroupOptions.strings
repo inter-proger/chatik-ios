@@ -1,0 +1,33 @@
+/*
+  GroupOptions.strings
+  Chatik
+
+  Строки экрана опций группы.
+*/
+
+"group_options.title" = "Group Options";
+
+/* Название группы, если его нет */
+"group_options.untitled" = "Untitled";
+
+/* Строка с числом участников */
+"group_options.members" = "Members";
+"group_options.add_members" = "Add Members";
+"group_options.leave" = "Leave Group";
+
+/* Алерт подтверждения выхода */
+"group_options.leave.confirm_title" = "Leave the group?";
+"group_options.leave.confirm_button" = "Leave";
+"group_options.leave.cancel" = "Cancel";
+
+/* Текст алерта выхода для участника */
+"group_options.leave.message" = "Do you really want to leave the group? You will no longer have access to the conversation.";
+
+/* Текст алерта выхода для создателя, если в группе есть другие участники */
+"group_options.leave.message_owner" = "Do you really want to leave the group? You will no longer have access to the conversation. Owner rights will pass to the member who joined earliest.";
+
+/* Текст алерта выхода для единственного участника */
+"group_options.leave.message_last_member" = "Do you really want to leave the group? You will no longer have access to the conversation. No members will remain in the group.";
+
+/* Уведомление после выхода */
+"group_options.left" = "You left the group";

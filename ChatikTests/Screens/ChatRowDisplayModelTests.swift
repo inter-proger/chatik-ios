@@ -109,8 +109,8 @@ final class ChatRowDisplayModelTests: XCTestCase {
     /// Ожидание: превью — «Сообщение».
     func test_init_lastMessageWithoutDisplayableText_previewIsPlaceholder() {
         let lastMessages = [
-            LastMessage(messageId: 1, type: .unknown, text: "что-то", updatedAt: .stub),
-            LastMessage(messageId: 2, type: .text, text: nil, updatedAt: .stub),
+            LastMessage(messageId: 1, senderId: 1, type: .unknown, text: "что-то", updatedAt: .stub),
+            LastMessage(messageId: 2, senderId: 1, type: .text, text: nil, updatedAt: .stub),
         ]
 
         for lastMessage in lastMessages {
@@ -248,6 +248,42 @@ final class ChatRowDisplayModelTests: XCTestCase {
 
         XCTAssertEqual(runs.map(\.0), [ChatListStrings.rowFailedPrefix, " Привет"])
         XCTAssertEqual(runs.map(\.1), [Color.chatListFailedLabel, nil])
+    }
+
+
+    // MARK: - Группы
+
+    /// Кейс: превью группы со своим последним сообщением, с сообщением загруженного участника, удалённого
+    /// и не загруженного.
+    /// Ожидание: «Вы: текст», «Имя: текст», «Удалённый пользователь: текст»; пока отправитель грузится — без подписи.
+    func test_init_groupPreview_prefixesSender() {
+        let cases: [(sender: ChatRowPreviewSender, prefix: String?)] = [
+            (.currentUser, ChatListStrings.rowSenderPrefix(name: ChatListStrings.rowYou)),
+            (.user(.loaded(User(userId: 5, login: "anna", name: "Анна", avatar: nil))), ChatListStrings.rowSenderPrefix(name: "Анна")),
+            (.user(.notFound), ChatListStrings.rowSenderPrefix(name: ChatListStrings.rowDeletedUser)),
+            (.user(.pending), nil),
+        ]
+
+        for (sender, prefix) in cases {
+            let model = ChatRowDisplayModel(conversation: .groupStub, opponent: nil, previewSender: sender, localPreview: nil, unreadCount: 0, timeFormatter: timeFormatter)
+            switch model.preview {
+            case let .labeled(text):
+                XCTAssertEqual(String(text.characters), "\(prefix ?? "") Привет!", "\(sender)")
+            case let .message(text):
+                XCTAssertNil(prefix, "\(sender)")
+                XCTAssertEqual(text, "Привет!")
+            }
+        }
+    }
+
+    /// Кейс: группа и личная переписка без аватара.
+    /// Ожидание: у группы заглушка — силуэт группы, у личной — человека.
+    func test_init_avatarPlaceholder_byType() {
+        let group = ChatRowDisplayModel(conversation: .groupStub, opponent: nil, localPreview: nil, unreadCount: 0, timeFormatter: timeFormatter)
+        let single = ChatRowDisplayModel(conversation: .singleStub, opponent: .pending, localPreview: nil, unreadCount: 0, timeFormatter: timeFormatter)
+
+        XCTAssertEqual(group.avatarPlaceholder, .group)
+        XCTAssertEqual(single.avatarPlaceholder, .person)
     }
 
     // MARK: - Helpers

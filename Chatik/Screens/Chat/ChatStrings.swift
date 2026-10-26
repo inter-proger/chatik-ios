@@ -32,6 +32,10 @@ enum ChatStrings {
     static var editSave: String { localized("chat.edit.save") }
     static var unreadHeader: String { localized("chat.unread_header") }
     static var scrollToBottom: String { localized("chat.scroll_to_bottom") }
+    static var groupOptions: String { localized("chat.group_options") }
+    static var emptyGroupTitle: String { localized("chat.empty_group.title") }
+    static var emptyGroupAdd: String { localized("chat.empty_group.add") }
+    static var emptyGroupDismiss: String { localized("chat.empty_group.dismiss") }
 
     /// Подсказка о превышении длины сообщения.
     /// - Parameter maxLength: лимит длины на стороне сервера.

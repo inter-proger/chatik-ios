@@ -14,7 +14,7 @@ final class WebSocketMessagesTests: XCTestCase {
       "isEdited": false, "createdAt": 1790846400000, "updatedAt": 1790846400000 }
     """
 
-    private let lastMessageJSON = #"{ "messageId": 15, "type": "text", "text": "Привет!", "updatedAt": 1790846400000 }"#
+    private let lastMessageJSON = #"{ "messageId": 15, "senderId": 1, "type": "text", "text": "Привет!", "updatedAt": 1790846400000 }"#
 
     /// Разбирает сообщение сервера из JSON.
     private func decode(_ json: String) throws -> WebSocketServerMessage {
@@ -160,5 +160,72 @@ final class WebSocketMessagesTests: XCTestCase {
         let secondUid = try XCTUnwrap((JSONSerialization.jsonObject(with: Data(second.utf8)) as? [String: Any])?["uid"] as? String)
         XCTAssertNotNil(UUID(uuidString: firstUid))
         XCTAssertNotEqual(firstUid, secondUid)
+    }
+
+    // MARK: - Группы
+
+    private let groupInfoJSON = #"{"conversationId":12,"version":2,"members":[{"userId":1,"role":"owner","joinedAfterMessageId":0},{"userId":5,"role":"member","joinedAfterMessageId":318}]}"#
+
+    /// Кейс: `groups` / `membersAdded` для добавленного (`changeVersion: 74`) и для остальных (`null`).
+    /// Ожидание: оба разобраны: у добавленного версия есть, у остальных — `nil`; состав разобран.
+    func test_decode_groupMembersAdded_forAddedAndOthers() throws {
+        let added = try decode(#"{"uid":"1","group":"groups","event":"membersAdded","body":{"conversationId":12,"addedUserIds":[5],"groupInfo":\#(groupInfoJSON),"changeVersion":74},"userIds":[5]}"#)
+        let others = try decode(#"{"uid":"2","group":"groups","event":"membersAdded","body":{"conversationId":12,"addedUserIds":[5],"groupInfo":\#(groupInfoJSON),"changeVersion":null}}"#)
+
+        guard case let .group(.membersAdded(conversationId, addedUserIds, info, changeVersion)) = added.event else { return XCTFail("\(added.event)") }
+        XCTAssertEqual(conversationId, 12)
+        XCTAssertEqual(addedUserIds, [5])
+        XCTAssertEqual(info.members.count, 2)
+        XCTAssertEqual(changeVersion, 74)
+        guard case let .group(.membersAdded(_, _, _, othersVersion)) = others.event else { return XCTFail("\(others.event)") }
+        XCTAssertNil(othersVersion)
+        XCTAssertTrue(added.requiresAcknowledgement)
+    }
+
+    /// Кейс: `groups` / `membersRemoved` удалённому (метка и счётчик, без состава) и оставшимся (состав, без метки).
+    /// Ожидание: у удалённого есть `removal`, у оставшихся — `groupInfo`.
+    func test_decode_groupMembersRemoved_forRemovedAndRemaining() throws {
+        let removed = try decode(#"{"uid":"1","group":"groups","event":"membersRemoved","body":{"conversationId":12,"removedUserIds":[5],"groupInfo":null,"removedConversation":{"conversationId":12,"changeVersion":81},"totalUnreadCount":3}}"#)
+        let remaining = try decode(#"{"uid":"2","group":"groups","event":"membersRemoved","body":{"conversationId":12,"removedUserIds":[5],"groupInfo":\#(groupInfoJSON),"removedConversation":null,"totalUnreadCount":null}}"#)
+
+        guard case let .group(event) = removed.event else { return XCTFail("\(removed.event)") }
+        XCTAssertEqual(event.removal, ConversationRemoval(removedConversation: RemovedConversation(conversationId: 12, changeVersion: 81), totalUnreadCount: 3))
+        XCTAssertNil(event.groupInfo)
+        guard case let .group(remainingEvent) = remaining.event else { return XCTFail("\(remaining.event)") }
+        XCTAssertNil(remainingEvent.removal)
+        XCTAssertEqual(remainingEvent.groupInfo?.version, 2)
+    }
+
+    /// Кейс: `groups` / `memberLeft`, `created` и `ownerChanged` из документации.
+    /// Ожидание: все три разобраны в свои случаи с нужными полями.
+    func test_decode_groupLeftCreatedOwnerChanged() throws {
+        let left = try decode(#"{"uid":"1","group":"groups","event":"memberLeft","body":{"conversationId":12,"leftUserId":1,"groupInfo":\#(groupInfoJSON),"removedConversation":null,"totalUnreadCount":null}}"#)
+        let created = try decode(#"{"uid":"2","group":"groups","event":"created","body":{"conversation":{"conversationId":12,"type":"group","memberIds":null,"name":"Команда","description":null,"avatar":null,"opponentUserId":null,"lastMessage":null,"positionUpdatedAt":1790846400123,"updatedInfoAt":1790846400123,"unreadCount":0,"lastReadMessageId":0,"changeVersion":57},"groupInfo":\#(groupInfoJSON)}}"#)
+        let owner = try decode(#"{"uid":"3","group":"groups","event":"ownerChanged","body":{"conversationId":12,"newOwnerUserId":5,"groupInfo":\#(groupInfoJSON)}}"#)
+
+        guard case let .group(.memberLeft(_, leftUserId, _, _)) = left.event else { return XCTFail("\(left.event)") }
+        XCTAssertEqual(leftUserId, 1)
+        guard case let .group(.created(conversation, _)) = created.event else { return XCTFail("\(created.event)") }
+        XCTAssertEqual(conversation.conversationId, 12)
+        XCTAssertNil(conversation.memberIds)
+        guard case let .group(.ownerChanged(_, newOwner, _)) = owner.event else { return XCTFail("\(owner.event)") }
+        XCTAssertEqual(newOwner, 5)
+    }
+
+    /// Кейс: событие `groups` с неполным телом — `membersRemoved` без состава и без метки, `ownerChanged` без
+    /// `groupInfo`; неизвестное событие `groups`.
+    /// Ожидание: все три — `.unknown`: разбор не ломается, событие подтверждается.
+    func test_decode_groupInvalidBodies_areUnknown() throws {
+        let jsons = [
+            #"{"uid":"1","group":"groups","event":"membersRemoved","body":{"conversationId":12,"removedUserIds":[5],"groupInfo":null,"removedConversation":null,"totalUnreadCount":null}}"#,
+            #"{"uid":"2","group":"groups","event":"ownerChanged","body":{"conversationId":12,"newOwnerUserId":5}}"#,
+            #"{"uid":"3","group":"groups","event":"renamed","body":{}}"#,
+        ]
+
+        for json in jsons {
+            let message = try decode(json)
+            XCTAssertEqual(message.event, .unknown, json)
+            XCTAssertTrue(message.requiresAcknowledgement, json)
+        }
     }
 }

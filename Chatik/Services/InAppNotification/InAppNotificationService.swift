@@ -48,6 +48,14 @@ extension InAppNotificationServiceProtocol {
     func showError(_ message: String) -> Bool {
         show(InAppNotification(content: .error(message: message)))
     }
+
+    /// Показывает нейтральное или успешное уведомление.
+    /// - Parameter message: текст, готовый к показу.
+    /// - Returns: `false` — приложение неактивно, уведомление отброшено.
+    @discardableResult
+    func showInfo(_ message: String) -> Bool {
+        show(InAppNotification(content: .info(message: message)))
+    }
 }
 
 /// Уведомления поверх приложения. Очереди нет: новое заменяет показанное сразу, повтор того же содержимого только

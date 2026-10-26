@@ -223,7 +223,7 @@ final class MessageMenuControllerTests: XCTestCase {
             strings: .current,
             dateHeaderFormatter: RussianMessageDateHeaderFormatter(calendar: calendar),
             conversationType: .single,
-            readUpTo: nil
+            readCoverage: nil
         )
         return MessageDisplayModel(outgoing: .stub(clientId: "f", status: status), sender: nil, context: context)
     }

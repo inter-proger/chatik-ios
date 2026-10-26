@@ -10,14 +10,18 @@ import CoreData
 final class ConversationEntity: NSManagedObject, StorageEntity {
     @NSManaged var conversationId: Int64
     @NSManaged var type: String?
-    /// Идентификаторы участников в JSON-массиве.
+    /// Идентификаторы участников в JSON-массиве; `nil` — у группы.
     @NSManaged var memberIds: Data?
     @NSManaged var name: String?
+    /// `Conversation.description`; имя `description` занято свойством `NSObject`.
+    @NSManaged var groupDescription: String?
     @NSManaged var avatar: FileEntity?
     /// Id собеседника; `nil` — собеседника нет (группа).
     @NSManaged var opponentUserId: NSNumber?
     /// Поля `LastMessage`; `lastMessageId == nil` — последнего сообщения нет.
     @NSManaged var lastMessageId: NSNumber?
+    /// `LastMessage.senderId`; 0 — неизвестен (запись из модели до `Chatik 13`).
+    @NSManaged var lastMessageSenderId: Int64
     @NSManaged var lastMessageType: String?
     @NSManaged var lastMessageText: String?
     /// `LastMessage.updatedAt` в миллисекундах.
@@ -43,11 +47,13 @@ final class ConversationEntity: NSManagedObject, StorageEntity {
     func update(from conversation: Conversation, avatar: FileEntity?) {
         conversationId = Int64(conversation.conversationId)
         type = conversation.type.rawValue
-        memberIds = try? JSONEncoder().encode(conversation.memberIds)
+        memberIds = conversation.memberIds.flatMap { try? JSONEncoder().encode($0) }
         name = conversation.name
+        groupDescription = conversation.description
         self.avatar = avatar
         opponentUserId = conversation.opponentUserId.map { NSNumber(value: $0) }
         lastMessageId = conversation.lastMessage.map { NSNumber(value: $0.messageId) }
+        lastMessageSenderId = Int64(conversation.lastMessage?.senderId ?? 0)
         lastMessageType = conversation.lastMessage?.type.rawValue
         lastMessageText = conversation.lastMessage?.text
         lastMessageUpdatedAt = conversation.lastMessage.map { NSNumber(value: $0.updatedAt.milliseconds) }
@@ -82,9 +88,15 @@ extension Conversation {
     /// - Parameter entity: запись CoreData.
     /// - Returns: `nil`, если в записи или в связанной записи аватара нет обязательных полей.
     init?(entity: ConversationEntity) {
-        guard let rawType = entity.type,
-              let memberIdsData = entity.memberIds,
-              let memberIds = try? JSONDecoder().decode([Int].self, from: memberIdsData) else { return nil }
+        guard let rawType = entity.type else { return nil }
+        let type = ConversationType(rawValue: rawType) ?? .unknown
+        var memberIds: [Int]?
+        if let memberIdsData = entity.memberIds {
+            guard let ids = try? JSONDecoder().decode([Int].self, from: memberIdsData) else { return nil }
+            memberIds = ids
+        }
+        // У личной переписки участники обязательны; у группы их нет — состав в `GroupInfo`.
+        guard memberIds != nil || type != .single else { return nil }
         var avatar: RemoteFile?
         if let avatarEntity = entity.avatar {
             guard let file = RemoteFile(entity: avatarEntity) else { return nil }
@@ -97,9 +109,10 @@ extension Conversation {
         }
         self.init(
             conversationId: Int(entity.conversationId),
-            type: ConversationType(rawValue: rawType) ?? .unknown,
+            type: type,
             memberIds: memberIds,
             name: entity.name,
+            description: entity.groupDescription,
             avatar: avatar,
             opponentUserId: entity.opponentUserId?.intValue,
             lastMessage: lastMessage,
@@ -124,6 +137,7 @@ private extension LastMessage {
         guard let rawType = entity.lastMessageType, let updatedAt = entity.lastMessageUpdatedAt else { return nil }
         self.init(
             messageId: id.intValue,
+            senderId: Int(entity.lastMessageSenderId),
             type: MessageType(rawValue: rawType) ?? .unknown,
             text: entity.lastMessageText,
             updatedAt: ServerTime(milliseconds: updatedAt.int64Value)

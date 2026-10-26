@@ -56,7 +56,7 @@ final class ConversationStorageServiceTests: XCTestCase {
     /// Кейс: последнее сообщение неизвестного типа без текста.
     /// Ожидание: читается из БД как есть — тип `.unknown`, текст `nil`.
     func test_save_lastMessageWithoutText_roundTrips() async throws {
-        let conversation = Conversation.make(id: 1).with(position: .stub, lastMessage: LastMessage(messageId: 3, type: .unknown, text: nil, updatedAt: .stub(7)))
+        let conversation = Conversation.make(id: 1).with(position: .stub, lastMessage: LastMessage(messageId: 3, senderId: 1, type: .unknown, text: nil, updatedAt: .stub(7)))
 
         try await sut.save(conversations: [conversation], state: ConversationListState())
 
@@ -79,6 +79,44 @@ final class ConversationStorageServiceTests: XCTestCase {
         }
         XCTAssertEqual(stored.state, second)
         XCTAssertEqual(records, 1)
+    }
+
+    /// Кейс: состояние с метками удаления и ожидающими группами записано и прочитано.
+    /// Ожидание: оба словаря восстановлены без потерь.
+    func test_save_state_roundTripsRemovedAndPending() async throws {
+        var state = ConversationListState(isLoaded: true, syncedChangeVersion: 7)
+        state.removedVersions = [12: 131, 3: 9]
+        state.pendingConversations = [20: 74]
+
+        try await sut.save(state: state)
+
+        let stored = try await sut.fetchList()
+        XCTAssertEqual(stored.state, state)
+    }
+
+    /// Кейс: группа и личная переписка в БД; группа удаляется вместе с записью нового состояния.
+    /// Ожидание: остаётся личная переписка; состояние записано.
+    func test_delete_removesConversationAndStoresState() async throws {
+        try await sut.save(conversations: [Conversation.make(id: 1), Conversation.make(id: 2)], state: ConversationListState())
+        var state = ConversationListState()
+        state.removedVersions = [2: 10]
+
+        try await sut.delete(conversationId: 2, state: state)
+
+        let stored = try await sut.fetchList()
+        XCTAssertEqual(stored.conversations.map(\.id), [1])
+        XCTAssertEqual(stored.state.removedVersions, [2: 10])
+    }
+
+    /// Кейс: группа (`memberIds == nil`) с описанием и отправителем последнего сообщения сохранена и прочитана.
+    /// Ожидание: переписка восстановлена без изменений.
+    func test_save_groupWithoutMembers_roundTrips() async throws {
+        let conversation = Conversation.groupStub
+
+        try await sut.save(conversations: [conversation], state: nil)
+
+        let found = try await sut.find(byId: conversation.id)
+        XCTAssertEqual(found, conversation)
     }
 
     /// Кейс: в БД нет записи состояния синхронизации (первый запуск).

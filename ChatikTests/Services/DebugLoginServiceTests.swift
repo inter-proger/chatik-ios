@@ -36,6 +36,7 @@ final class DebugLoginServiceTests: XCTestCase {
             conversationList: conversationList,
             messageNotifications: MessageNotificationServiceMock(),
             memberReads: MemberReadServiceMock(),
+            groupInfo: GroupInfoServiceMock(),
             messageDelivery: messageSendQueue,
             realtimeService: realtimeService
         )

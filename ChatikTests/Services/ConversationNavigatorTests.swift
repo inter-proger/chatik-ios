@@ -115,4 +115,51 @@ final class ConversationNavigatorTests: XCTestCase {
 
         XCTAssertTrue(router.opened.isEmpty)
     }
+
+    // MARK: - Удаление переписки
+
+    /// Кейс: удалили из группы 2, она открыта в одной из двух сцен.
+    /// Ожидание: экраны группы закрыты в обеих сценах (закрытие запрошено у каждого роутера); показано уведомление
+    /// «больше не участник» с названием группы.
+    func test_conversationWasRemoved_openGroup_closesAndNotifies() async {
+        let first = ConversationOpeningMock()
+        let second = ConversationOpeningMock()
+        second.openedConversationId = 2
+        _ = sut.register(first, sceneId: UUID())
+        _ = sut.register(second, sceneId: UUID())
+
+        await sut.conversationWasRemoved(RemovedConversationInfo(conversationId: 2, name: "Команда", type: .group, reason: .removed, changeVersion: 1))
+
+        XCTAssertEqual(first.closed, [2])
+        XCTAssertEqual(second.closed, [2])
+        XCTAssertNil(second.openedConversationId)
+        XCTAssertEqual(notifications.shown.map(\.content), [.info(message: InAppNotificationStrings.noLongerMember(groupName: "Команда"))])
+    }
+
+    /// Кейс: открыта личная переписка, и проверка членства её удалила.
+    /// Ожидание: экран закрыт, уведомления нет — текст про группу к ней не подходит.
+    func test_conversationWasRemoved_single_closesWithoutNotification() async {
+        let router = ConversationOpeningMock()
+        router.openedConversationId = 1
+        _ = sut.register(router, sceneId: UUID())
+
+        await sut.conversationWasRemoved(RemovedConversationInfo(conversationId: 1, name: nil, type: .single, reason: .lostAccess, changeVersion: 1))
+
+        XCTAssertEqual(router.closed, [1])
+        XCTAssertTrue(notifications.shown.isEmpty)
+    }
+
+
+    /// Кейс: группа открыта, но пользователь вышел сам (`.left`); другая группа удалена, но нигде не открыта.
+    /// Ожидание: уведомлений нет — о своём выходе сообщает экран опций, о неоткрытой группе — не нужно.
+    func test_conversationWasRemoved_leftOrNotOpen_doesNotNotify() async {
+        let router = ConversationOpeningMock()
+        router.openedConversationId = 2
+        _ = sut.register(router, sceneId: UUID())
+
+        await sut.conversationWasRemoved(RemovedConversationInfo(conversationId: 2, name: "Команда", type: .group, reason: .left, changeVersion: 1))
+        await sut.conversationWasRemoved(RemovedConversationInfo(conversationId: 3, name: nil, type: .group, reason: .removed, changeVersion: 1))
+
+        XCTAssertTrue(notifications.shown.isEmpty)
+    }
 }

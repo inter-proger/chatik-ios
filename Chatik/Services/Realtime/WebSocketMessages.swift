@@ -24,6 +24,8 @@ enum WebSocketServerEvent: Equatable, Sendable {
     /// `messages` / `edited` — сообщение отредактировано; превью и версия пользователя — только если отредактировано
     /// последнее сообщение.
     case messageEdited(Message, LastMessage?, changeVersion: Int?)
+    /// `groups` / `*` — создание группы, изменение состава или владельца.
+    case group(GroupEvent)
     /// Событие, которого клиент не знает, или известное событие с неразборчивыми данными: игнорируется,
     /// но подтверждается — сервер будет добавлять новые события.
     case unknown
@@ -121,6 +123,8 @@ extension WebSocketServerMessage: Decodable {
             return (try? container.decode(EditedBody.self, forKey: .body)).map {
                 .messageEdited($0.message, $0.lastMessage, changeVersion: $0.changeVersion)
             }
+        case ("groups", _):
+            return GroupEventDecoding.decode(event: event) { type in try? container.decode(type, forKey: .body) }.map { .group($0) }
         default:
             return nil
         }

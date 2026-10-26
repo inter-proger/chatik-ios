@@ -23,6 +23,8 @@ enum RealtimeEvent: Equatable, Sendable {
     /// Сообщение отредактировано; превью и версия пользователя — только если отредактировано последнее сообщение
     /// переписки.
     case messageEdited(Message, LastMessage?, changeVersion: Int?)
+    /// Событие группы: создание, состав, владелец.
+    case group(GroupEvent)
 }
 
 @MainActor
@@ -449,6 +451,7 @@ final class RealtimeService: RealtimeServiceProtocol {
             return .memberRead(conversationId: conversationId, userId: userId, lastReadMessageId: lastReadMessageId)
         case let .messageReceived(message, lastMessage, readInfo): return .messageReceived(message, lastMessage, readInfo)
         case let .messageEdited(message, lastMessage, changeVersion): return .messageEdited(message, lastMessage, changeVersion: changeVersion)
+        case let .group(event): return .group(event)
         case .connected, .connectionError, .unknown: return nil
         }
     }

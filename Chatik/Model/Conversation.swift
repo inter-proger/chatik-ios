@@ -30,10 +30,12 @@ enum ConversationType: String, Decodable, Hashable {
 struct Conversation: Hashable, Identifiable {
     let conversationId: Int
     let type: ConversationType
-    /// Идентификаторы участников по возрастанию.
-    let memberIds: [Int]
+    /// Идентификаторы участников личной переписки по возрастанию; у `group` — `nil`: состав группы — в `GroupInfo`.
+    let memberIds: [Int]?
     /// Название — только у `group`; у `single` всегда `nil`.
     let name: String?
+    /// Описание — только у `group`, необязательное; у `single` всегда `nil`.
+    let description: String?
     /// Аватар — файл типа `image`; только у `group`, у `single` всегда `nil`.
     let avatar: RemoteFile?
     /// Id собеседника — второго участника относительно текущего пользователя; только у `single`,
@@ -53,6 +55,33 @@ struct Conversation: Hashable, Identifiable {
 
     var id: Int { conversationId }
 
+    /// - Parameter description: описание группы; по умолчанию нет — у личных переписок его не бывает.
+    init(
+        conversationId: Int,
+        type: ConversationType,
+        memberIds: [Int]?,
+        name: String?,
+        description: String? = nil,
+        avatar: RemoteFile?,
+        opponentUserId: Int?,
+        lastMessage: LastMessage?,
+        positionUpdatedAt: ServerTime,
+        updatedInfoAt: ServerTime,
+        readState: ConversationReadState
+    ) {
+        self.conversationId = conversationId
+        self.type = type
+        self.memberIds = memberIds
+        self.name = name
+        self.description = description
+        self.avatar = avatar
+        self.opponentUserId = opponentUserId
+        self.lastMessage = lastMessage
+        self.positionUpdatedAt = positionUpdatedAt
+        self.updatedInfoAt = updatedInfoAt
+        self.readState = readState
+    }
+
     /// Версия позиции — для правила 1 слияния.
     var position: ConversationPosition {
         ConversationPosition(positionUpdatedAt: positionUpdatedAt, messageId: lastMessage?.messageId ?? 0)
@@ -61,18 +90,18 @@ struct Conversation: Hashable, Identifiable {
 
 extension Conversation: Decodable {
     private enum CodingKeys: String, CodingKey {
-        case conversationId, type, memberIds, name, avatar, opponentUserId, lastMessage, positionUpdatedAt, updatedInfoAt
+        case conversationId, type, memberIds, name, description, avatar, opponentUserId, lastMessage, positionUpdatedAt, updatedInfoAt
         case unreadCount, lastReadMessageId, changeVersion
     }
 
-    /// Разбирает переписку; время приходит Unix timestamp в миллисекундах.
-    /// Объявлен в extension, чтобы у структуры остался memberwise init.
+    /// Разбирает переписку; время приходит Unix timestamp в миллисекундах. У группы `memberIds` — `null`.
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         conversationId = try container.decode(Int.self, forKey: .conversationId)
         type = try container.decode(ConversationType.self, forKey: .type)
-        memberIds = try container.decode([Int].self, forKey: .memberIds)
+        memberIds = try container.decodeIfPresent([Int].self, forKey: .memberIds)
         name = try container.decodeIfPresent(String.self, forKey: .name)
+        description = try container.decodeIfPresent(String.self, forKey: .description)
         avatar = try container.decodeIfPresent(RemoteFile.self, forKey: .avatar)
         opponentUserId = try container.decodeIfPresent(Int.self, forKey: .opponentUserId)
         lastMessage = try container.decodeIfPresent(LastMessage.self, forKey: .lastMessage)
@@ -87,6 +116,13 @@ extension Conversation: Decodable {
 }
 
 extension Conversation {
+    /// Отправитель последнего сообщения группы для подписи превью; `nil` — не группа, сообщений нет или отправитель
+    /// неизвестен (кэш до модели `Chatik 13`).
+    var groupPreviewSenderId: Int? {
+        guard type == .group, let senderId = lastMessage?.senderId, senderId > 0 else { return nil }
+        return senderId
+    }
+
     /// `true`, если переписка стоит в списке выше `other`: порядок — `positionUpdatedAt` по убыванию,
     /// при равенстве — `conversationId` по убыванию.
     /// - Parameter other: переписка, с которой сравнивается порядок.

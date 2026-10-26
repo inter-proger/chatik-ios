@@ -27,4 +27,10 @@ struct ConversationListState: Equatable {
     var totalUnreadCount = 0
     /// Версия, на которой снят `totalUnreadCount`; сливается отдельно от переписок.
     var totalUnreadVersion = 0
+    /// Метки удаления: переписка → версия, на которой пользователь перестал в ней состоять. Версии переписки не
+    /// новее метки отбрасываются; хранится и для незагруженных переписок.
+    var removedVersions: [Int: Int] = [:]
+    /// Группы, в которые пользователя добавили, но которые ещё не загружены через `getBatch`: группа → версия
+    /// события `membersAdded`.
+    var pendingConversations: [Int: Int] = [:]
 }

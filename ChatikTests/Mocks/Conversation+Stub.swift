@@ -36,11 +36,12 @@ extension Conversation {
     static let groupStub = Conversation(
         conversationId: 2,
         type: .group,
-        memberIds: [1, 2, 3],
+        memberIds: nil,
         name: "Команда",
+        description: "Рабочие вопросы",
         avatar: .stub,
         opponentUserId: nil,
-        lastMessage: LastMessage(messageId: 15, type: .text, text: "Привет!", updatedAt: .stub),
+        lastMessage: LastMessage(messageId: 15, senderId: 1, type: .text, text: "Привет!", updatedAt: .stub),
         positionUpdatedAt: .stub,
         updatedInfoAt: .stub,
         readState: .stub
@@ -61,7 +62,7 @@ extension Conversation {
         Conversation(
             conversationId: id,
             type: .group,
-            memberIds: [1, 2],
+            memberIds: nil,
             name: "Чат \(id)",
             avatar: nil,
             opponentUserId: nil,
@@ -143,6 +144,6 @@ extension LastMessage {
     ///   - text: текст.
     ///   - updatedAt: версия текста; по умолчанию — `ServerTime.stub`.
     static func make(id: Int, text: String = "Привет!", updatedAt: ServerTime = .stub) -> LastMessage {
-        LastMessage(messageId: id, type: .text, text: text, updatedAt: updatedAt)
+        LastMessage(messageId: id, senderId: 1, type: .text, text: text, updatedAt: updatedAt)
     }
 }

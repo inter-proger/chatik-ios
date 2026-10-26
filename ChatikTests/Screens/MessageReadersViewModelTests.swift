@@ -189,6 +189,30 @@ final class MessageReadersViewModelTests: XCTestCase {
         XCTAssertEqual(userCache.loadRequests, [[4]])
     }
 
+
+    /// Кейс: группа, указатели есть, а состав ещё неизвестен.
+    /// Ожидание: загрузка вместо списка — без состава прочитавших не определить.
+    func test_content_groupWithoutInfo_isLoading() {
+        memberReads.stubbedPointers = [7: [3: 10]]
+        memberReads.awaitingGroupInfoIds = [7]
+        let sut = makeSUT(messageId: 10, senderId: 1)
+
+        XCTAssertEqual(sut.content.placeholder, .loading)
+        XCTAssertTrue(sut.content.readers.isEmpty)
+    }
+
+
+    /// Кейс: группа; сообщение 10; участник 3 вступил после сообщения 8 (до 10), участник 4 — после 15 (его указатель
+    /// новичка — 20); участника 5 нет в составе.
+    /// Ожидание: прочитал только 3 — вступивший после сообщения и не состоящий в группе не считаются.
+    func test_content_group_excludesJoinedLaterAndNonMembers() {
+        memberReads.stubbedPointers = [7: [3: 10, 4: 20, 5: 30]]
+        memberReads.stubbedJoinedAfter = [7: [1: 0, 3: 8, 4: 15]]
+        let sut = makeSUT(messageId: 10, senderId: 1)
+
+        XCTAssertEqual(sut.content.readers.map(\.id), [3])
+    }
+
     // MARK: - Helpers
 
     /// ViewModel листа сообщения переписки 7.

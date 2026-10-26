@@ -29,3 +29,24 @@
 "common.error.api.message_edit_forbidden" = "Редактировать можно только свои сообщения";
 
 "common.error.api.internal_server" = "Ошибка на сервере. Попробуйте позже";
+
+/* Ошибка API 1007 */
+"common.error.api.invalid_description" = "Описание группы длиннее 1024 символов";
+
+/* Ошибка API 5003 */
+"common.error.api.not_group" = "Переписка не является группой";
+
+/* Ошибка API 5004 */
+"common.error.api.group_owner_only" = "Это действие доступно только создателю группы";
+
+/* Ошибка API 5005 */
+"common.error.api.group_member_limit" = "Достигнут лимит в 100 участников";
+
+/* Ошибка API 5006 */
+"common.error.api.already_group_member" = "Пользователь уже в группе";
+
+/* Ошибка API 5007 */
+"common.error.api.not_group_member" = "Пользователь не состоит в группе";
+
+/* Ошибка API 5008 */
+"common.error.api.group_owner_not_applicable" = "Это действие нельзя применить к создателю группы";

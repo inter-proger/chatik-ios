@@ -48,6 +48,8 @@ protocol MemberReadStorageServiceProtocol {
     func fetchPointers(conversationId: Int) async throws -> [Int: Int]?
     /// Применяет изменения нескольких переписок одним фоновым контекстом.
     func apply(_ writes: [Int: MemberReadWrite]) async throws
+    /// Удаляет указатели переписки.
+    func delete(conversationId: Int) async throws
 }
 
 /// Хранилище указателей прочтения других участников (`MemberReadEntity`). Это кэш сервера: при выходе из аккаунта
@@ -81,6 +83,15 @@ final class MemberReadStorageService: MemberReadStorageServiceProtocol {
             guard !entities.isEmpty else { return nil }
             let pairs = entities.map { (Int($0.userId), Int($0.lastReadMessageId)) }
             return Dictionary(pairs, uniquingKeysWith: max)
+        }
+    }
+
+    /// Удаляет все указатели переписки; их нет — ничего не делает.
+    /// - Parameter conversationId: переписка.
+    func delete(conversationId: Int) async throws {
+        try await container.performWrite { context in
+            try context.fetch(MemberReadEntity.makeFetchRequest(conversationIds: [conversationId])).forEach(context.delete)
+            try context.save()
         }
     }
 

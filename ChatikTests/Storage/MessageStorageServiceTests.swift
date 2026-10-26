@@ -260,6 +260,34 @@ final class MessageStorageServiceTests: XCTestCase {
         XCTAssertEqual(messages.map(\.type), [.unknown])
     }
 
+
+    // MARK: - Удаление переписки
+
+    /// Кейс: в БД сообщения и состояние кэша переписок 1 и 2; записано удаление переписки 1.
+    /// Ожидание: сообщения и состояние переписки 1 удалены, переписки 2 — на месте.
+    func test_write_removedConversation_deletesMessagesAndState() async throws {
+        let state = MessageCacheState(syncMark: .stub, nextBlockId: nil, hasMorePages: false)
+        var fill = MessageStorageChanges(upserts: [.make(id: 1, conversationId: 1), .make(id: 2, conversationId: 2)])
+        fill.stateChanges = [
+            MessageCacheStateChange(conversationId: 1, kind: .replace(state)),
+            MessageCacheStateChange(conversationId: 2, kind: .replace(state)),
+        ]
+        _ = try await sut.write(fill)
+        var removal = MessageStorageChanges()
+        removal.removedConversationId = 1
+
+        _ = try await sut.write(removal)
+
+        let first = try await sut.fetchLatestBlocks(conversationId: 1, minCount: 10)
+        let second = try await sut.fetchLatestBlocks(conversationId: 2, minCount: 10)
+        let firstState = try await sut.fetchState(conversationId: 1)
+        let secondState = try await sut.fetchState(conversationId: 2)
+        XCTAssertTrue(first.isEmpty)
+        XCTAssertEqual(second.map(\.messageId), [2])
+        XCTAssertNil(firstState)
+        XCTAssertNotNil(secondState)
+    }
+
     // MARK: - Helpers
 
     /// Сообщения переписки 1: блок 1 — 1, 2; блок 2 — 3, 4; блок 3 — 5, 6.

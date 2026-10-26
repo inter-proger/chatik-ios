@@ -55,7 +55,7 @@ final class ChatListViewModel {
     typealias Sleep = @MainActor (Duration) async throws -> Void
     /// Собирает строку списка из переписки, собеседника, локального состояния (неотправленное или черновик),
     /// непрочитанных для показа и формата времени.
-    typealias RowBuilder = @MainActor (Conversation, CachedUser?, ChatRowLocalPreview?, Int, MessageTimeFormatter) -> ChatRowDisplayModel
+    typealias RowBuilder = @MainActor (Conversation, CachedUser?, ChatRowPreviewSender?, ChatRowLocalPreview?, Int, MessageTimeFormatter) -> ChatRowDisplayModel
 
     /// - Parameters:
     ///   - conversationList: список переписок.
@@ -84,7 +84,7 @@ final class ChatListViewModel {
         router: ChatListRouter,
         now: @escaping () -> Date = { Date() },
         makeRow: @escaping RowBuilder = {
-            ChatRowDisplayModel(conversation: $0, opponent: $1, localPreview: $2, unreadCount: $3, timeFormatter: $4)
+            ChatRowDisplayModel(conversation: $0, opponent: $1, previewSender: $2, localPreview: $3, unreadCount: $4, timeFormatter: $5)
         },
         sleep: @escaping Sleep = { try await Task.sleep(for: $0) }
     ) {
@@ -142,16 +142,26 @@ final class ChatListViewModel {
         cache.reserveCapacity(conversationList.conversations.count)
         let rows = conversationList.conversations.map { conversation in
             let opponent = conversation.opponentUserId.map(userCache.user(id:))
+            let sender = previewSender(for: conversation)
             let localPreview = localPreview(for: conversation.id)
             let unreadCount = conversationList.unreadCount(conversationId: conversation.id) ?? 0
-            let key = CachedRow.Key(conversation: conversation, opponent: opponent, localPreview: localPreview, unreadCount: unreadCount)
-            let row = rowCache[conversation.id]?.row(for: key) ?? makeRow(conversation, opponent, localPreview, unreadCount, timeFormatter)
+            let key = CachedRow.Key(conversation: conversation, opponent: opponent, sender: sender, localPreview: localPreview, unreadCount: unreadCount)
+            let row = rowCache[conversation.id]?.row(for: key) ?? makeRow(conversation, opponent, sender, localPreview, unreadCount, timeFormatter)
             cache[conversation.id] = CachedRow(key: key, row: row)
             return row
         }
         // Кэш держит только строки текущего списка — ушедшие переписки (выход, pull-to-refresh) не копятся.
         rowCache = cache
         return rows
+    }
+
+    /// Отправитель последнего сообщения группы для подписи превью.
+    /// - Parameter conversation: переписка.
+    /// - Returns: `nil` — не группа, сообщений нет или отправитель неизвестен.
+    private func previewSender(for conversation: Conversation) -> ChatRowPreviewSender? {
+        guard let senderId = conversation.groupPreviewSenderId else { return nil }
+        guard senderId != sessionService.currentUser?.userId else { return .currentUser }
+        return .user(userCache.user(id: senderId))
     }
 
     /// Локальное состояние переписки для превью: незавершённое редактирование важнее неотправленного сообщения,
@@ -283,6 +293,11 @@ final class ChatListViewModel {
         router.showCreateSingleConversation()
     }
 
+    /// Обработчик пункта «Группа» меню создания: открывает экран создания группы.
+    func didTapCreateGroup() {
+        router.showCreateGroup()
+    }
+
     // MARK: - Уведомления о сообщениях
 
     /// Экран появился: роутер регистрируется в навигаторе — уведомления о сообщениях узнают открытую переписку
@@ -314,6 +329,7 @@ private struct CachedRow {
     struct Key: Equatable {
         let conversation: Conversation
         let opponent: CachedUser?
+        let sender: ChatRowPreviewSender?
         let localPreview: ChatRowLocalPreview?
         let unreadCount: Int
     }

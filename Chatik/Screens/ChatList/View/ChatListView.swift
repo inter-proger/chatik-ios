@@ -89,6 +89,7 @@ struct ChatListView: View {
     private var createMenu: some View {
         Menu {
             Button(ChatListStrings.createSingle, systemImage: "person", action: viewModel.didTapCreateSingleConversation)
+            Button(ChatListStrings.createGroup, systemImage: "person.2", action: viewModel.didTapCreateGroup)
         } label: {
             Image(systemName: "plus")
         }

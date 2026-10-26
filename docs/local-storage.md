@@ -21,7 +21,7 @@
 | `LocalStorageCleaner` | очистка при входе и выходе ([авторизация и сессия](auth-and-session.md)) |
 | `Logger.storage` | ошибки БД: пользователю не показываются, но логируются |
 
-## Сущности (версия `Chatik 12`)
+## Сущности (версия `Chatik 13`)
 
 | Entity | Ключ (unique) | Писатель | Документ |
 | --- | --- | --- | --- |
@@ -32,6 +32,7 @@
 | `OutgoingMessageEntity` | `senderId, clientId` | `MessageSendQueue` | [unsent-messages.md](unsent-messages.md) |
 | `MessageDraftEntity` | `userId, conversationId` | `MessageDraftService` | [message-drafts.md](message-drafts.md), [message-editing.md](message-editing.md) |
 | `MemberReadEntity` | `conversationId, userId` | `MemberReadService` | [read-receipts.md](read-receipts.md) |
+| `GroupInfoEntity` | `conversationId` | `GroupInfoService` | [group-chats.md](group-chats.md) |
 | `UserEntity` | `userId` | `UserCacheStore` | [users-cache.md](users-cache.md) |
 | `FileEntity` | `fileId` | вместе с владельцем (аватар пользователя или переписки) | [profile-and-avatar.md](profile-and-avatar.md) |
 
@@ -69,6 +70,7 @@
 | 10 | режим редактирования в черновике |
 | 11 | прочтение и счётчики непрочитанных; курсор изменений — следующая синхронизация списка полная |
 | 12 | прочтение другими участниками (`MemberReadEntity`) |
+| 13 | группы: `GroupInfoEntity`, описание и отправитель последнего сообщения у переписки, метки удаления и ожидающие группы в состоянии списка; кэш не очищается |
 
 ## Тесты
 

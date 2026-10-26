@@ -38,9 +38,23 @@ protocol ConversationReadStateProviding: AnyObject {
     func markRead(conversationId: Int, messageId: Int)
 }
 
+/// Выход из группы — узкий протокол для экрана опций группы (`docs/group-chats.md`, решение 6, «Выход в полёте»).
+@MainActor
+protocol GroupLeaving: AnyObject {
+    /// Запрос выхода начинается: удаление группы, с какой бы стороны оно ни пришло, получает причину `.left`.
+    /// - Parameter conversationId: группа.
+    func beginLeaving(conversationId: Int)
+    /// Запрос выхода закончился (ответом или ошибкой).
+    /// - Parameter conversationId: группа.
+    func endLeaving(conversationId: Int)
+    /// Применяет ответ `/groups/leave`: группа удаляется по метке, курсор не двигается.
+    /// - Parameter removal: метка и общий счётчик из ответа.
+    func applyLeave(_ removal: ConversationRemoval)
+}
+
 @MainActor
 protocol ConversationListServiceProtocol: ConversationPositionUpdating, UnreadCountProviding, ConversationReadStateProviding,
-    AuthServiceObserver {
+    ConversationMembershipVerifying, ConversationRemovalMarks, GroupLeaving, AuthServiceObserver {
     /// Переписки по позиции: `positionUpdatedAt` ↓, `conversationId` ↓.
     var conversations: [Conversation] { get }
     /// Идёт ли стартовая синхронизация — для индикатора «Обновление…».
@@ -65,8 +79,14 @@ protocol ConversationListServiceProtocol: ConversationPositionUpdating, UnreadCo
     func refresh() async throws
     /// Начинает загрузку следующей страницы, если показана одна из последних переписок.
     func loadNextPageIfNeeded(currentConversationId: Int)
-    /// Применяет полную версию переписки из REST (`createSingle`).
+    /// Применяет полную версию переписки из REST (`createSingle`, `/groups/create`).
     func apply(_ conversation: Conversation)
+    /// Переписка из списка по id — без перебора; `nil` — её нет в загруженном списке.
+    /// - Parameter conversationId: переписка.
+    func conversation(id conversationId: Int) -> Conversation?
+    /// Добавляет наблюдателя удаления переписок; хранится слабо.
+    /// - Parameter observer: наблюдатель каскада.
+    func addRemovalObserver(_ observer: ConversationRemovalObserver)
 }
 
 /// Список переписок уровня приложения: хранит упорядоченный список дольше любого экрана и публикует его через
@@ -177,6 +197,18 @@ final class ConversationListService: ConversationListServiceProtocol {
     private var lookupTasks: [UUID: Task<Void, Never>] = [:]
     /// Последняя запись в БД: следующая начинается только после неё — записи идут в порядке изменений в памяти.
     private var lastWrite: Task<Void, Never>?
+    /// Группы, из которых идёт запрос выхода.
+    @ObservationIgnored private var leavingConversationIds: Set<Int> = []
+    /// Проверки членства в полёте — по одной на переписку.
+    @ObservationIgnored private var verifyTasks: [Int: Task<Void, Never>] = [:]
+    /// Повтор загрузки ожидающих групп после основной фазы синхронизации.
+    @ObservationIgnored private var pendingRetryTask: Task<Void, Never>?
+    /// Последний вызов наблюдателей удаления: каскады идут по порядку.
+    @ObservationIgnored private var lastCascade: Task<Void, Never>?
+    @ObservationIgnored private var removalObservers: [WeakRemovalObserver] = []
+    /// Версии повторного добавления по переписке: каскад удаления, поставленный раньше, для неё уже не выполняется —
+    /// иначе он стёр бы данные, сохранённые после возвращения в группу.
+    @ObservationIgnored private var rejoinVersions: [Int: Int] = [:]
 
     /// - Parameters:
     ///   - conversationService: источник `/conversations/*`.
@@ -226,8 +258,9 @@ final class ConversationListService: ConversationListServiceProtocol {
         upsert(applied.map(ConversationUpdate.full), insertIfMissing: true)
         listState = stored.state
         serverLoadedCount = stored.conversations.count
-        let opponentIds = stored.conversations.compactMap(\.opponentUserId)
-        Task { await userCache.loadUsers(ids: opponentIds) }
+        // Собеседники и отправители последних сообщений групп: action `users` при чтении кэша нет.
+        let userIds = stored.conversations.compactMap(\.opponentUserId) + stored.conversations.compactMap(\.groupPreviewSenderId)
+        Task { await userCache.loadUsers(ids: userIds) }
     }
 
     // MARK: - События
@@ -257,6 +290,8 @@ final class ConversationListService: ConversationListServiceProtocol {
                 noteChangeVersion(changeVersion)
             }
             persist(changed)
+        case let .group(groupEvent):
+            await applyGroupEvent(groupEvent)
         }
     }
 
@@ -468,6 +503,7 @@ final class ConversationListService: ConversationListServiceProtocol {
         guard isCurrent(generation) else { return }
         isSyncing = false
         pendingLocalUpdates = nil
+        retryPendingConversations()
         guard let deferredPrefetchId else { return }
         self.deferredPrefetchId = nil
         loadNextPageIfNeeded(currentConversationId: deferredPrefetchId)
@@ -534,10 +570,9 @@ final class ConversationListService: ConversationListServiceProtocol {
     /// изменения переписок за её пределами клиенту не нужны, а сделанные позже получат версию больше. Изменения мимо
     /// очереди, пришедшие за время запроса, сливаются со страницей заново.
     /// - Parameter page: первая страница списка — без фильтра или с `positionUpdatedAfter`.
+    /// Метки удаления не новее версии страницы снимаются — страница их уже учитывает; более новые (ответ `leave`
+    /// или проверка членства мимо очереди, пока страница была в полёте) остаются и фильтруют страницу.
     private func replaceList(with page: ConversationsPage) {
-        setConversations(page.conversations.sorted { $0.isOrderedBefore($1) })
-        upsert(pendingLocalUpdates ?? [], insertIfMissing: true)
-        serverLoadedCount = page.conversations.count
         listState = ConversationListState(
             isLoaded: true,
             hasMorePages: page.hasNext,
@@ -545,8 +580,15 @@ final class ConversationListService: ConversationListServiceProtocol {
             positionWatermarkCeiling: nil,
             syncedChangeVersion: page.changeVersion,
             totalUnreadCount: listState.totalUnreadCount,
-            totalUnreadVersion: listState.totalUnreadVersion
+            totalUnreadVersion: listState.totalUnreadVersion,
+            removedVersions: listState.removedVersions.filter { $0.value > page.changeVersion },
+            pendingConversations: listState.pendingConversations
         )
+        let pageConversations = admitted(page.conversations.map(ConversationUpdate.full)).compactMap(\.fullConversation)
+        setConversations(pageConversations.sorted { $0.isOrderedBefore($1) })
+        upsert(pendingLocalUpdates ?? [], insertIfMissing: true)
+        // Отброшенных меткой переписок на сервере уже нет: сдвиг считается без них — недобор безопасен, пропуск нет.
+        serverLoadedCount = pageConversations.count
         applyTotalUnread(of: page)
         advanceCursor()
         persistReplacement()
@@ -601,27 +643,30 @@ final class ConversationListService: ConversationListServiceProtocol {
             guard let page = try? await conversationService.fetchConversations(filter: .changedAfter(cursor), count: Self.changesPageSize),
                   isCurrent(generation), !Task.isCancelled else { return }
             applyChangePage(page)
-            guard page.hasNext, let last = page.conversations.last else {
+            guard page.hasNext, let next = page.maxItemChangeVersion else {
                 finishChangeSync(page)
                 return
             }
-            cursor = last.readState.changeVersion
+            cursor = next
         }
     }
 
     /// Сливает страницу сверки с известными переписками (неизвестные отбрасываются — иначе в список попал бы чат
-    /// с далёкой позиции) и применяет общий счётчик.
+    /// с далёкой позиции), применяет метки удаления и общий счётчик.
     /// - Parameter page: страница `changedAfter`.
     private func applyChangePage(_ page: ConversationsPage) {
         let changed = upsert(page.conversations.map(ConversationUpdate.full), insertIfMissing: false)
         applyTotalUnread(of: page)
         persist(changed)
+        for removed in page.removedConversations {
+            applyRemoval(removed, totalUnreadCount: nil, reason: .lostAccess, notesCursor: false)
+        }
     }
 
     /// Ставит курсор после последней страницы сверки — в максимум из `changeVersion` ответа и переписок.
     /// - Parameter page: последняя страница `changedAfter`.
     private func finishChangeSync(_ page: ConversationsPage) {
-        raiseCursor(to: ([page.changeVersion] + page.conversations.map(\.readState.changeVersion)).max() ?? page.changeVersion)
+        raiseCursor(to: max(page.changeVersion, page.maxItemChangeVersion ?? page.changeVersion))
         persist(nil)
     }
 
@@ -677,7 +722,8 @@ final class ConversationListService: ConversationListServiceProtocol {
     func authServiceWillLogout() async {
         sessionGeneration += 1
         syncGeneration += 1
-        let tasks: [Task<Void, Never>?] = [changeSyncTask, nextPageTask] + lookupTasks.values.map { $0 } + readTasks.values.map { $0 }
+        let tasks: [Task<Void, Never>?] = [changeSyncTask, nextPageTask, pendingRetryTask]
+            + lookupTasks.values.map { $0 } + readTasks.values.map { $0 } + verifyTasks.values.map { $0 }
         let mainTask = mainTask
         mainTask?.cancel()
         tasks.forEach { $0?.cancel() }
@@ -686,6 +732,7 @@ final class ConversationListService: ConversationListServiceProtocol {
             await task?.value
         }
         await lastWrite?.value
+        await lastCascade?.value
         resetState()
     }
 
@@ -708,6 +755,11 @@ final class ConversationListService: ConversationListServiceProtocol {
         confirmedReadStates = [:]
         readTasks = [:]
         queuedReads = [:]
+        leavingConversationIds = []
+        verifyTasks = [:]
+        pendingRetryTask = nil
+        lastCascade = nil
+        rejoinVersions = [:]
     }
 
     // MARK: - Водяные знаки
@@ -832,6 +884,9 @@ final class ConversationListService: ConversationListServiceProtocol {
             } catch {
                 guard session == sessionGeneration else { return }
                 Logger.conversationList.error("markRead не удался: \(String(describing: error), privacy: .public)")
+                if error.indicatesLostMembership {
+                    verifyMembership(conversationId: conversationId)
+                }
                 if queuedReads[conversationId] == nil, pendingReads[conversationId] == messageId {
                     pendingReads[conversationId] = nil
                 }
@@ -897,6 +952,7 @@ final class ConversationListService: ConversationListServiceProtocol {
     /// - Returns: изменённая переписка; `nil` — список не изменился.
     @discardableResult
     private func upsert(_ update: ConversationUpdate, insertIfMissing: Bool) -> Conversation? {
+        guard let update = admitted([update]).first else { return nil }
         guard let index = indexById[update.conversationId] else {
             return upsert([update], insertIfMissing: insertIfMissing).first
         }
@@ -924,7 +980,7 @@ final class ConversationListService: ConversationListServiceProtocol {
     @discardableResult
     private func upsert(_ updates: [ConversationUpdate], insertIfMissing: Bool) -> [Conversation] {
         var batch = MergeBatch(conversations: conversations, indexById: indexById)
-        for update in updates {
+        for update in admitted(updates) {
             batch.apply(update, insertIfMissing: insertIfMissing)
         }
         guard !batch.changedIds.isEmpty else { return [] }
@@ -1011,6 +1067,252 @@ final class ConversationListService: ConversationListServiceProtocol {
             }
         }
     }
+}
+
+// MARK: - Группы
+
+extension ConversationListService {
+    func addRemovalObserver(_ observer: ConversationRemovalObserver) {
+        removalObservers.removeAll { $0.value == nil }
+        removalObservers.append(WeakRemovalObserver(value: observer))
+    }
+
+    func conversation(id conversationId: Int) -> Conversation? {
+        indexById[conversationId].map { conversations[$0] }
+    }
+
+    func isRemoved(conversationId: Int, changeVersion: Int) -> Bool {
+        listState.removedVersions[conversationId].map { changeVersion <= $0 } ?? false
+    }
+
+    func beginLeaving(conversationId: Int) {
+        leavingConversationIds.insert(conversationId)
+    }
+
+    func endLeaving(conversationId: Int) {
+        leavingConversationIds.remove(conversationId)
+    }
+
+    func applyLeave(_ removal: ConversationRemoval) {
+        applyRemoval(removal.removedConversation, totalUnreadCount: removal.totalUnreadCount, reason: .left, notesCursor: false)
+    }
+
+    /// Проверяет, состоит ли пользователь в переписке, по которой метод ответил `5002`: переписки нет в ответе
+    /// `getBatch` — она удаляется с меткой на своей локальной версии. Найдена — сливается как полная версия.
+    /// - Parameter conversationId: переписка.
+    func verifyMembership(conversationId: Int) {
+        guard verifyTasks[conversationId] == nil else { return }
+        let session = sessionGeneration
+        verifyTasks[conversationId] = Task {
+            defer { if session == sessionGeneration { verifyTasks[conversationId] = nil } }
+            let batch: ConversationsBatch
+            do {
+                batch = try await conversationService.fetchConversations(ids: [conversationId])
+            } catch {
+                Logger.conversationList.error("Проверка членства не удалась: \(String(describing: error), privacy: .public)")
+                return
+            }
+            guard session == sessionGeneration else { return }
+            if let found = batch.conversations.first(where: { $0.conversationId == conversationId }) {
+                // Только слияние: переписка вне загруженного префикса (открыта из уведомления) не вставляется за хвост.
+                persist(upsert(.full(found), insertIfMissing: false))
+            } else if batch.notFoundIds.contains(conversationId) {
+                let localVersion = indexById[conversationId].map { conversations[$0].readState.changeVersion } ?? 0
+                let removed = RemovedConversation(conversationId: conversationId, changeVersion: localVersion)
+                applyRemoval(removed, totalUnreadCount: nil, reason: .lostAccess, notesCursor: false, ignoresLocalVersion: true)
+            }
+        }
+    }
+
+    /// Применяет событие группы: создание — как `singleCreated`, добавление текущего пользователя — загрузка группы,
+    /// его удаление или выход — метка. Остальное (состав для других участников) применяет `GroupInfoService`.
+    /// - Parameter event: событие группы.
+    fileprivate func applyGroupEvent(_ event: GroupEvent) async {
+        switch event {
+        case let .created(conversation, _):
+            applyCreated(conversation)
+        case let .membersAdded(conversationId, _, _, changeVersion?):
+            await applyAddedToGroup(conversationId: conversationId, changeVersion: changeVersion)
+        case let .membersRemoved(_, _, _, removal?):
+            applyRemoval(removal.removedConversation, totalUnreadCount: removal.totalUnreadCount, reason: .removed, notesCursor: true)
+        case let .memberLeft(_, _, _, removal?):
+            applyRemoval(removal.removedConversation, totalUnreadCount: removal.totalUnreadCount, reason: .leftOnOtherDevice, notesCursor: true)
+        case .membersAdded, .membersRemoved, .memberLeft, .ownerChanged:
+            break
+        }
+    }
+
+    /// Текущего пользователя добавили в группу: ссылка записывается в БД до запроса, затем группа загружается.
+    /// Устаревшее событие (версия не новее метки удаления) только отмечается для курсора.
+    /// - Parameters:
+    ///   - conversationId: группа.
+    ///   - changeVersion: версия пользователя из события.
+    private func applyAddedToGroup(conversationId: Int, changeVersion: Int) async {
+        guard !isRemoved(conversationId: conversationId, changeVersion: changeVersion), indexById[conversationId] == nil else {
+            noteChangeVersion(changeVersion)
+            persist(nil)
+            return
+        }
+        listState.pendingConversations[conversationId] = changeVersion
+        noteRejoin(conversationId: conversationId, changeVersion: changeVersion)
+        persist(nil)
+        await lastWrite?.value
+        await resolvePendingConversations([conversationId: changeVersion])
+    }
+
+    /// Повторяет загрузку ожидающих групп после основной фазы синхронизации; один повтор за раз.
+    fileprivate func retryPendingConversations() {
+        let pending = listState.pendingConversations
+        guard !pending.isEmpty, pendingRetryTask == nil else { return }
+        let session = sessionGeneration
+        pendingRetryTask = Task {
+            await resolvePendingConversations(pending)
+            if session == sessionGeneration {
+                pendingRetryTask = nil
+            }
+        }
+    }
+
+    /// Загружает ожидающие группы через `getBatch`. Найденная вставляется мимо очереди (`applyLocal` переживает замену
+    /// списка), если не нарушает инвариант префикса; ссылка снимается после записи переписки, версия отмечается
+    /// для курсора. Ненайденная — ссылка снимается. Сбой — ссылки остаются до следующей синхронизации.
+    /// - Parameter pending: группа → версия события.
+    private func resolvePendingConversations(_ pending: [Int: Int]) async {
+        let session = sessionGeneration
+        let batch: ConversationsBatch
+        do {
+            batch = try await conversationService.fetchConversations(ids: Array(pending.keys))
+        } catch {
+            Logger.conversationList.error("getBatch добавленной группы не удался: \(String(describing: error), privacy: .public)")
+            return
+        }
+        guard session == sessionGeneration else { return }
+        for fetched in batch.conversations where pending[fetched.conversationId] != nil && canInsertAddedGroup(fetched) {
+            applyLocal(.full(fetched))
+        }
+        for (conversationId, version) in pending where listState.pendingConversations[conversationId] == version {
+            listState.pendingConversations[conversationId] = nil
+            noteChangeVersion(version)
+        }
+        persist(nil)
+    }
+
+    /// Можно ли вставить добавленную группу, не нарушив инвариант префикса: хвоста за загруженным нет, или группа
+    /// по позиции выше последней загруженной переписки. Иначе её принесёт пагинация.
+    /// - Parameter group: загруженная группа.
+    private func canInsertAddedGroup(_ group: Conversation) -> Bool {
+        guard listState.hasMorePages, let last = conversations.last else { return true }
+        return indexById[group.conversationId] != nil || group.isOrderedBefore(last)
+    }
+
+    /// Применяет метку удаления: сохраняет её (и для незагруженной переписки), снимает ожидание группы, удаляет
+    /// переписку из списка, её состояние прочтения и запись в БД и запускает каскад. Устаревшая метка (локальная версия
+    /// новее) игнорируется; повтор той же метки только отмечает версию для курсора и счётчик.
+    /// - Parameters:
+    ///   - removed: метка.
+    ///   - totalUnreadCount: общий счётчик на версии метки; `nil` — его нет.
+    ///   - reason: причина — для уведомления; пока идёт выход из группы, причина всегда `.left`.
+    ///   - notesCursor: отметить версию для курсора (событие).
+    ///   - ignoresLocalVersion: метка поставлена на локальной версии (проверка членства) — не сравнивать с ней.
+    fileprivate func applyRemoval(
+        _ removed: RemovedConversation,
+        totalUnreadCount: Int?,
+        reason: ConversationRemovalReason,
+        notesCursor: Bool,
+        ignoresLocalVersion: Bool = false
+    ) {
+        let id = removed.conversationId
+        if notesCursor {
+            noteChangeVersion(removed.changeVersion)
+        }
+        if let totalUnreadCount {
+            applyTotalUnread(totalUnreadCount, version: removed.changeVersion)
+        }
+        let local = indexById[id].map { conversations[$0] }
+        let isStale = !ignoresLocalVersion && (local?.readState.changeVersion ?? .min) > removed.changeVersion
+        let isRepeat = (listState.removedVersions[id] ?? .min) >= removed.changeVersion && local == nil
+        guard !isStale, !isRepeat else {
+            persist(nil)
+            return
+        }
+        listState.removedVersions[id] = max(listState.removedVersions[id] ?? .min, removed.changeVersion)
+        listState.pendingConversations[id] = nil
+        // Изменения переписки, отложенные на время основной фазы, после замены списка вернули бы её — даже если
+        // страница снимет метку.
+        pendingLocalUpdates?.removeAll { $0.conversationId == id }
+        removeFromList(conversationId: id)
+        let info = RemovedConversationInfo(
+            conversationId: id,
+            name: local?.name,
+            type: local?.type,
+            reason: leavingConversationIds.contains(id) ? .left : reason,
+            changeVersion: removed.changeVersion
+        )
+        let state = listState
+        write("удалить переписку") { [storage] in
+            try await storage.delete(conversationId: id, state: state)
+        }
+        runCascade(info)
+    }
+
+    /// Убирает переписку из списка в памяти вместе с её состоянием прочтения и запросом `markRead` в полёте.
+    /// - Parameter conversationId: переписка.
+    private func removeFromList(conversationId: Int) {
+        if let index = indexById[conversationId] {
+            var remaining = conversations
+            remaining.remove(at: index)
+            setConversations(remaining)
+            // Удалённая переписка освободила место в серверном списке: недобор сдвига безопасен.
+            serverLoadedCount = max(0, serverLoadedCount - 1)
+        }
+        pendingReads[conversationId] = nil
+        confirmedReadStates[conversationId] = nil
+        queuedReads[conversationId] = nil
+        readTasks.removeValue(forKey: conversationId)?.cancel()
+    }
+
+    /// Вызывает наблюдателей удаления по очереди, после предыдущего каскада.
+    /// - Parameter info: удалённая переписка.
+    private func runCascade(_ info: RemovedConversationInfo) {
+        let previous = lastCascade
+        let observers = removalObservers.compactMap(\.value)
+        lastCascade = Task {
+            await previous?.value
+            // Пользователя вернули в группу после этой метки — её данные уже новые, удалять нечего.
+            guard (rejoinVersions[info.conversationId] ?? .min) < info.changeVersion else { return }
+            for observer in observers {
+                await observer.conversationWasRemoved(info)
+            }
+        }
+    }
+
+    /// Запоминает повторное добавление в переписку: каскад удаления более старой метки её больше не трогает.
+    /// - Parameters:
+    ///   - conversationId: переписка.
+    ///   - changeVersion: версия добавления.
+    fileprivate func noteRejoin(conversationId: Int, changeVersion: Int) {
+        rejoinVersions[conversationId] = max(rejoinVersions[conversationId] ?? .min, changeVersion)
+    }
+
+    /// Версии, которые можно применить: полная версия с `changeVersion` не новее метки удаления отбрасывается,
+    /// более новая — снимает метку (пользователя добавили снова). Патчи и прочтение проходят: вставить переписку
+    /// они не могут.
+    /// - Parameter updates: пришедшие версии.
+    fileprivate func admitted(_ updates: [ConversationUpdate]) -> [ConversationUpdate] {
+        guard !listState.removedVersions.isEmpty else { return updates }
+        return updates.filter { update in
+            guard let conversation = update.fullConversation, let mark = listState.removedVersions[conversation.conversationId] else { return true }
+            guard conversation.readState.changeVersion > mark else { return false }
+            listState.removedVersions[conversation.conversationId] = nil
+            noteRejoin(conversationId: conversation.conversationId, changeVersion: conversation.readState.changeVersion)
+            return true
+        }
+    }
+}
+
+/// Слабая ссылка на наблюдателя удаления переписок.
+private struct WeakRemovalObserver {
+    weak var value: ConversationRemovalObserver?
 }
 
 extension Logger {

@@ -63,3 +63,13 @@
 
 /* Кнопка со стрелкой вниз над лентой (для VoiceOver) */
 "chat.scroll_to_bottom" = "Scroll to latest message";
+
+/* Кнопка-шестерёнка в навигационной панели группы (для VoiceOver) */
+"chat.group_options" = "Group options";
+
+/* Плавающая панель над лентой группы, в которой только создатель */
+"chat.empty_group.title" = "There are no other members in the group";
+"chat.empty_group.add" = "Add";
+
+/* Крестик плавающей панели (для VoiceOver) */
+"chat.empty_group.dismiss" = "Hide";

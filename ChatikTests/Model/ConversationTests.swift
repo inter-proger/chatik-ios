@@ -16,7 +16,7 @@ final class ConversationTests: XCTestCase {
         let json = """
         {
           "conversationId": 7, "type": "single", "memberIds": [1, 5], "name": null, "avatar": null, "opponentUserId": 5,
-          "lastMessage": { "messageId": 15, "type": "text", "text": "Привет!", "updatedAt": 1790846400123 },
+          "lastMessage": { "messageId": 15, "senderId": 1, "type": "text", "text": "Привет!", "updatedAt": 1790846400123 },
           "positionUpdatedAt": 1790846400123, "updatedInfoAt": 1790846000456,
           "unreadCount": 3, "lastReadMessageId": 12, "changeVersion": 118
         }
@@ -30,7 +30,7 @@ final class ConversationTests: XCTestCase {
         XCTAssertNil(conversation.name)
         XCTAssertNil(conversation.avatar)
         XCTAssertEqual(conversation.opponentUserId, 5)
-        XCTAssertEqual(conversation.lastMessage, LastMessage(messageId: 15, type: .text, text: "Привет!", updatedAt: ServerTime(milliseconds: 1_790_846_400_123)))
+        XCTAssertEqual(conversation.lastMessage, LastMessage(messageId: 15, senderId: 1, type: .text, text: "Привет!", updatedAt: ServerTime(milliseconds: 1_790_846_400_123)))
         XCTAssertEqual(conversation.positionUpdatedAt, ServerTime(milliseconds: 1_790_846_400_123))
         XCTAssertEqual(conversation.updatedInfoAt, ServerTime(milliseconds: 1_790_846_000_456))
         XCTAssertEqual(conversation.readState, ConversationReadState(unreadCount: 3, lastReadMessageId: 12, changeVersion: 118))
@@ -67,7 +67,7 @@ final class ConversationTests: XCTestCase {
         let json = """
         {
           "conversationId": 7, "type": "single", "memberIds": [1, 2], "name": null, "avatar": null, "opponentUserId": 2,
-          "lastMessage": { "messageId": 16, "type": "sticker", "text": null, "updatedAt": 1790846400000 },
+          "lastMessage": { "messageId": 16, "senderId": 1, "type": "sticker", "text": null, "updatedAt": 1790846400000 },
           "positionUpdatedAt": 1790846400000, "updatedInfoAt": 1790846400000,
           "unreadCount": 0, "lastReadMessageId": 0, "changeVersion": 1
         }
@@ -97,7 +97,27 @@ final class ConversationTests: XCTestCase {
         XCTAssertEqual(conversation.name, "Канал")
     }
 
-    /// Кейс: в JSON нет обязательного поля — `memberIds`, `positionUpdatedAt`, `updatedInfoAt` или полей прочтения;
+    /// Кейс: группа по новому API — `memberIds: null`, с описанием, у последнего сообщения есть отправитель.
+    /// Ожидание: переписка разобрана: участников нет (состав — в `GroupInfo`), описание и `senderId` прочитаны.
+    func test_decode_groupWithNullMembers_readsDescriptionAndSender() throws {
+        let json = """
+        {
+          "conversationId": 12, "type": "group", "memberIds": null, "name": "Команда", "description": "Рабочие вопросы",
+          "avatar": null, "opponentUserId": null,
+          "lastMessage": { "messageId": 3, "senderId": 5, "type": "text", "text": "Привет", "updatedAt": 1790846400000 },
+          "positionUpdatedAt": 1790846400000, "updatedInfoAt": 1790846400000,
+          "unreadCount": 0, "lastReadMessageId": 0, "changeVersion": 57
+        }
+        """
+
+        let conversation = try decoder.decode(Conversation.self, from: Data(json.utf8))
+
+        XCTAssertNil(conversation.memberIds)
+        XCTAssertEqual(conversation.description, "Рабочие вопросы")
+        XCTAssertEqual(conversation.lastMessage?.senderId, 5)
+    }
+
+    /// Кейс: в JSON нет обязательного поля — `positionUpdatedAt`, `updatedInfoAt` или полей прочтения;
     /// либо пришёл старый формат с `updatedAt` вместо новых полей.
     /// Ожидание: ошибка декодирования.
     func test_decode_missingRequiredField_throws() {
@@ -147,6 +167,6 @@ final class ConversationTests: XCTestCase {
 
         XCTAssertEqual(patch.conversationId, 3)
         XCTAssertEqual(patch.positionUpdatedAt, .stub(500))
-        XCTAssertEqual(patch.lastMessage, LastMessage(messageId: 20, type: .text, text: "Ок", updatedAt: .stub(500)))
+        XCTAssertEqual(patch.lastMessage, LastMessage(messageId: 20, senderId: 1, type: .text, text: "Ок", updatedAt: .stub(500)))
     }
 }

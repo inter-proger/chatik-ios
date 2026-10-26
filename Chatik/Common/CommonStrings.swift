@@ -29,6 +29,13 @@ enum CommonStrings {
     static var errorUserNotFound: String { localized("common.error.api.user_not_found") }
     static var errorConversationWithSelf: String { localized("common.error.api.conversation_with_self") }
     static var errorConversationNotFound: String { localized("common.error.api.conversation_not_found") }
+    static var errorInvalidDescription: String { localized("common.error.api.invalid_description") }
+    static var errorNotGroup: String { localized("common.error.api.not_group") }
+    static var errorGroupOwnerOnly: String { localized("common.error.api.group_owner_only") }
+    static var errorGroupMemberLimit: String { localized("common.error.api.group_member_limit") }
+    static var errorAlreadyGroupMember: String { localized("common.error.api.already_group_member") }
+    static var errorNotGroupMember: String { localized("common.error.api.not_group_member") }
+    static var errorGroupOwnerNotApplicable: String { localized("common.error.api.group_owner_not_applicable") }
     static var errorMessageNotFound: String { localized("common.error.api.message_not_found") }
     static var errorMessageBlockNotFound: String { localized("common.error.api.message_block_not_found") }
     static var errorMessageEditForbidden: String { localized("common.error.api.message_edit_forbidden") }

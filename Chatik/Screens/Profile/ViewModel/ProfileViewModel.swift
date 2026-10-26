@@ -16,9 +16,6 @@ import Foundation
 final class ProfileViewModel {
     /// `true`, пока выполняется запрос профиля.
     private(set) var isLoading = false
-    /// Прогресс установки аватара. `nil` — установка не идёт. Иначе доля отправленного изображения от 0 до 1:
-    /// 0 — файл готовится к отправке, 1 — файл отправлен и аватар назначается.
-    private(set) var avatarUploadProgress: Double?
     /// `true`, пока показан выбор источника аватара.
     var isAvatarSourcesPresented = false
     /// Источник, чей пикер сейчас на экране. `nil` — пикер скрыт.
@@ -32,9 +29,8 @@ final class ProfileViewModel {
     let avatarSources: [AvatarSource]
 
     private let profileService: ProfileServiceProtocol
-    private let filesService: FilesServiceProtocol
-    /// Временные файлы для загрузки; нужен и `ProfileViewModel+AvatarPicking`, поэтому не `private`.
-    let imageFileStore: ImageFileStoreProtocol
+    /// Подготовка и загрузка изображения; нужен и `ProfileViewModel+AvatarPicking`, поэтому не `private`.
+    let avatarUploader: AvatarUploader
     private let sessionService: SessionServiceProtocol
     private let authService: AuthServiceProtocol
     /// Показ ошибок; нужен и `ProfileViewModel+AvatarPicking`, поэтому не `private`.
@@ -58,8 +54,7 @@ final class ProfileViewModel {
         isCameraAvailable: Bool
     ) {
         self.profileService = profileService
-        self.filesService = filesService
-        self.imageFileStore = imageFileStore
+        avatarUploader = AvatarUploader(filesService: filesService, imageFileStore: imageFileStore)
         self.sessionService = sessionService
         self.authService = authService
         self.notifications = notifications
@@ -69,7 +64,13 @@ final class ProfileViewModel {
     /// Имя файла аватара при загрузке; сервер хранит его как имя файла.
     /// - Parameter type: формат загружаемого файла — задаёт расширение.
     static func avatarFilename(for type: ImageMIMEType) -> String {
-        "avatar.\(type.fileExtension)"
+        AvatarUploader.filename(for: type)
+    }
+
+    /// Прогресс установки аватара. `nil` — установка не идёт. Иначе доля отправленного изображения от 0 до 1:
+    /// 0 — файл готовится к отправке, 1 — файл отправлен и аватар назначается.
+    var avatarUploadProgress: Double? {
+        avatarUploader.progress
     }
 
     /// Профиль для отображения — из текущей сессии. `nil` — сессии нет.
@@ -106,17 +107,10 @@ final class ProfileViewModel {
     /// Ошибка подготовки файла — это проблема выбранного изображения, а не сети, поэтому текст у неё свой.
     /// - Parameter image: изображение для аватара.
     func uploadAvatar(_ image: PickedImage) async {
-        avatarUploadProgress = 0
-        defer { avatarUploadProgress = nil }
+        defer { avatarUploader.finish() }
 
         do {
-            let file = try await imageFileStore.storeForUpload(image)
-            // Удаляем сразу после подготовки, а не внутри отправки: файл не останется во временной
-            // директории, даже если задача будет отменена до начала загрузки.
-            defer { imageFileStore.remove(file) }
-            let remoteFile = try await upload(file)
-            // Отправка завершена независимо от того, какие значения успел доставить делегат сессии.
-            avatarUploadProgress = 1
+            let remoteFile = try await avatarUploader.upload(image)
             let user = try await profileService.setAvatar(fileId: remoteFile.fileId)
             await sessionService.update(user: user)
         } catch is ImageFileStoreError {
@@ -126,27 +120,10 @@ final class ProfileViewModel {
         }
     }
 
-    /// Отправляет временный файл на сервер, пробрасывая прогресс отправки в состояние.
-    /// Удаление файла — на вызывающей стороне (`uploadAvatar`).
-    /// - Parameter file: файл аватара во временной директории.
-    private func upload(_ file: ImageFile) async throws -> RemoteFile {
-        try await filesService.uploadImage(
-            file: file,
-            filename: Self.avatarFilename(for: file.type),
-            onProgress: { [weak self] progress in
-                // Колбэк приходит не на main: обновление состояния — отдельной задачей на main actor.
-                Task { @MainActor [weak self] in self?.didSendAvatarBytes(progress) }
-            }
-        )
-    }
-
-    /// Обновляет прогресс отправки. Значения приходят из фоновых задач, порядок их доставки на main не гарантирован,
-    /// поэтому прогресс только растёт — более раннее значение не откатит его назад. Вне загрузки игнорируется:
-    /// поздний колбэк уже завершённой отправки не должен показывать прогресс.
+    /// Обновляет прогресс отправки; только растёт, вне загрузки игнорируется (`AvatarUploader.didSendBytes`).
     /// - Parameter progress: доля отправленных данных от 0 до 1.
     func didSendAvatarBytes(_ progress: Double) {
-        guard let current = avatarUploadProgress else { return }
-        avatarUploadProgress = max(current, progress)
+        avatarUploader.didSendBytes(progress)
     }
 
     // MARK: - Выход

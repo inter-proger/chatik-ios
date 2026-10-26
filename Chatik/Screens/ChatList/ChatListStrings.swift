@@ -24,6 +24,14 @@ enum ChatListStrings {
     static var rowEditing: String { localized("chat_list.row.editing") }
     static var create: String { localized("chat_list.create") }
     static var createSingle: String { localized("chat_list.create.single") }
+    static var createGroup: String { localized("chat_list.create.group") }
+    static var rowYou: String { localized("chat_list.row.you") }
+
+    /// Подпись отправителя в превью группы: «Имя:».
+    /// - Parameter name: имя отправителя или «Вы».
+    static func rowSenderPrefix(name: String) -> String {
+        String(format: localized("chat_list.row.sender_prefix"), name)
+    }
 
     /// Возвращает локализованную строку по ключу из таблицы `ChatList`.
     /// - Parameter key: ключ в `ChatList.strings`.

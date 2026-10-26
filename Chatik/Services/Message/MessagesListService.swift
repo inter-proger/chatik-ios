@@ -70,6 +70,8 @@ actor MessagesListService: MessagesListServiceProtocol {
     private let messageService: MessageServiceProtocol
     private let eventQueue: RealtimeEventQueueProtocol
     private let messageSendQueue: MessageSendQueueProtocol
+    /// Проверка членства: `5002` / `6002` — возможно, пользователя удалили из группы.
+    private weak var membership: ConversationMembershipVerifying?
 
     /// Окно: сообщения по `messageId`.
     private var window: [Int: Message] = [:] {
@@ -111,13 +113,15 @@ actor MessagesListService: MessagesListServiceProtocol {
     ///   - messageService: `getList` и `getBlockBatch`.
     ///   - eventQueue: аренда на время синхронизации и событие `connected`.
     ///   - messageSendQueue: отправленные сообщения и подтверждение доставки по результатам синхронизации.
+    ///   - membership: проверка членства при ответе `5002` или `6002`.
     init(
         conversationId: Int,
         messageCache: MessageCacheServiceProtocol,
         storage: MessageStorageReading,
         messageService: MessageServiceProtocol,
         eventQueue: RealtimeEventQueueProtocol,
-        messageSendQueue: MessageSendQueueProtocol
+        messageSendQueue: MessageSendQueueProtocol,
+        membership: ConversationMembershipVerifying?
     ) {
         self.conversationId = conversationId
         self.messageCache = messageCache
@@ -125,6 +129,7 @@ actor MessagesListService: MessagesListServiceProtocol {
         self.messageService = messageService
         self.eventQueue = eventQueue
         self.messageSendQueue = messageSendQueue
+        self.membership = membership
     }
 
     // MARK: - Снимки
@@ -152,6 +157,10 @@ actor MessagesListService: MessagesListServiceProtocol {
     ///   - isUrgent: показать сразу, вне интервала обновления.
     ///   - failure: ошибка, которую нужно показать.
     private func emit(isUrgent: Bool = false, failure: Error? = nil) {
+        if let failure, failure.indicatesLostMembership, let membership {
+            let conversationId = conversationId
+            Task { @MainActor in membership.verifyMembership(conversationId: conversationId) }
+        }
         let snapshot = makeSnapshot(isUrgent: isUrgent, failure: failure)
         snapshotContinuations.values.forEach { $0.yield(snapshot) }
     }
@@ -377,7 +386,7 @@ actor MessagesListService: MessagesListServiceProtocol {
             guard isStarted, window.count < Self.initialWindowSize, serverHasOlder else { return }
             Task { await self.loadOlder() }
         case let .failure(error):
-            endSyncing(number: number, failure: Self.isCancellation(error) ? nil : error)
+            endSyncing(number: number, failure: error.isCancellation ? nil : error)
         }
     }
 
@@ -413,7 +422,7 @@ actor MessagesListService: MessagesListServiceProtocol {
             guard try await !loadOlderFromStorage() else { return }
             try await loadOlderFromServer()
         } catch {
-            guard !Self.isCancellation(error) else { return }
+            guard !error.isCancellation else { return }
             emit(failure: error)
         }
     }
@@ -572,16 +581,4 @@ actor MessagesListService: MessagesListServiceProtocol {
         merge(visible)
     }
 
-    /// `true`, если ошибка — отмена задачи или её сетевого запроса.
-    /// - Parameter error: ошибка.
-    private static func isCancellation(_ error: Error) -> Bool {
-        switch error {
-        case is CancellationError:
-            return true
-        case let NetworkError.transport(urlError):
-            return urlError.code == .cancelled
-        default:
-            return (error as? URLError)?.code == .cancelled
-        }
-    }
 }

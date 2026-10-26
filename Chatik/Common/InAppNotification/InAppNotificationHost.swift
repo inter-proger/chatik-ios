@@ -78,7 +78,7 @@ struct InAppNotificationHost: View {
     /// - Parameter content: содержимое уведомления.
     private static func announcement(for content: InAppNotification.Content) -> String {
         switch content {
-        case .error(let message):
+        case .error(let message), .info(let message), .warning(let message):
             message
         case .message(let model):
             InAppNotificationStrings.messageAnnouncement(title: model.title, text: String(model.text.characters))

@@ -13,6 +13,8 @@ final class MessageSendQueueTests: XCTestCase {
     private var outgoingStorage: OutgoingMessageStorageServiceMock!
     private var eventQueue: RealtimeEventQueueMock!
     private var positionUpdater: ConversationPositionUpdatingMock!
+    /// Проверка членства — мок списка переписок.
+    private var membership = ConversationListServiceMock()
 
     override func setUp() async throws {
         try await super.setUp()
@@ -798,6 +800,25 @@ final class MessageSendQueueTests: XCTestCase {
         XCTAssertTrue(sut.outgoingMessages.isEmpty)
     }
 
+
+    // MARK: - Удаление переписки
+
+    /// Кейс: в очереди неотправленные сообщения групп 7 и 8; пользователя удалили из группы 7.
+    /// Ожидание: сообщения группы 7 удалены из очереди и БД; сообщение группы 8 осталось.
+    func test_conversationWasRemoved_dropsOnlyItsMessages() async {
+        outgoingStorage.put([
+            .stub(clientId: "a", conversationId: 7, status: .failed),
+            .stub(clientId: "b", conversationId: 8, status: .failed),
+        ])
+        let sut = await makeActiveSUT()
+
+        await sut.conversationWasRemoved(RemovedConversationInfo(conversationId: 7, name: nil, type: .group, reason: .removed, changeVersion: 1))
+
+        XCTAssertEqual(sut.outgoingMessages.map(\.clientId), ["b"])
+        await yieldUntil { [unowned self] in outgoingStorage.messages["a"] == nil }
+        XCTAssertNotNil(outgoingStorage.messages["b"])
+    }
+
     // MARK: - Helpers
 
     private let now = Date(timeIntervalSince1970: 1_790_846_400)
@@ -821,6 +842,7 @@ final class MessageSendQueueTests: XCTestCase {
             outgoingMessageStorage: outgoingStorage,
             eventQueue: eventQueue,
             positionUpdater: positionUpdater,
+            membership: membership,
             now: { [now] in now },
             makeClientId: {
                 counter += 1

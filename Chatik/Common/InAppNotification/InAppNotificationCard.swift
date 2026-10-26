@@ -49,6 +49,15 @@ struct InAppNotificationCard: View {
             ErrorNotificationView(message: message)
         case .message(let model):
             MessageNotificationView(model: model)
+        case .info(let message):
+            TextNotificationView(systemImage: "checkmark.circle.fill", tint: .green, message: message)
+        case .warning(let message):
+            TextNotificationView(
+                systemImage: "exclamationmark.triangle.fill",
+                tint: .orange,
+                message: message,
+                showsChevron: notification.onTap != nil
+            )
         }
     }
 

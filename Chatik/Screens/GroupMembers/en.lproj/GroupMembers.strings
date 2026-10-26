@@ -1,0 +1,33 @@
+/*
+  GroupMembers.strings
+  Chatik
+
+  Строки экрана участников группы.
+*/
+
+"group_members.title" = "Members";
+
+/* Секции */
+"group_members.section.owner" = "Owner";
+"group_members.section.members" = "Members";
+
+/* Подпись текущего пользователя в списке */
+"group_members.you" = "You";
+
+/* Состав не загрузился */
+"group_members.load_failed" = "Couldn’t load members";
+"group_members.retry" = "Retry";
+
+/* Пункт меню по долгому нажатию на участника */
+"group_members.transfer" = "Transfer Ownership";
+
+/* Подтверждение передачи прав */
+"group_members.transfer.title" = "Transfer ownership?";
+
+/* Подстановка — имя будущего создателя */
+"group_members.transfer.message" = "“%@” will become the owner. You will lose the right to invite members to the group.";
+"group_members.transfer.confirm" = "OK";
+"group_members.transfer.cancel" = "Cancel";
+
+/* Уведомление после передачи прав */
+"group_members.transferred" = "Ownership transferred";

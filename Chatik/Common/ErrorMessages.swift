@@ -48,6 +48,13 @@ enum ErrorMessages {
         case NetworkError.Code.userNotFound: return CommonStrings.errorUserNotFound
         case NetworkError.Code.conversationWithSelf: return CommonStrings.errorConversationWithSelf
         case NetworkError.Code.conversationNotFound: return CommonStrings.errorConversationNotFound
+        case NetworkError.Code.invalidDescription: return CommonStrings.errorInvalidDescription
+        case NetworkError.Code.notGroup: return CommonStrings.errorNotGroup
+        case NetworkError.Code.groupOwnerOnly: return CommonStrings.errorGroupOwnerOnly
+        case NetworkError.Code.groupMemberLimitReached: return CommonStrings.errorGroupMemberLimit
+        case NetworkError.Code.alreadyGroupMember: return CommonStrings.errorAlreadyGroupMember
+        case NetworkError.Code.notGroupMember: return CommonStrings.errorNotGroupMember
+        case NetworkError.Code.groupOwnerNotApplicable: return CommonStrings.errorGroupOwnerNotApplicable
         case NetworkError.Code.messageNotFound: return CommonStrings.errorMessageNotFound
         case NetworkError.Code.messageBlockNotFound: return CommonStrings.errorMessageBlockNotFound
         case NetworkError.Code.messageEditForbidden: return CommonStrings.errorMessageEditForbidden

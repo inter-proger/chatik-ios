@@ -451,3 +451,18 @@ final class MessageDraftLogoutObserver: AuthServiceObserver {
         draftService.prepareForLogout()
     }
 }
+
+extension MessageDraftService: ConversationRemovalObserver {
+    /// Пользователь больше не участник переписки: её черновик и режим редактирования удаляются — открыть переписку
+    /// больше нельзя.
+    /// - Parameter info: удалённая переписка.
+    func conversationWasRemoved(_ info: RemovedConversationInfo) async {
+        guard let userId = ownerUserId else { return }
+        let conversationId = info.conversationId
+        if let messageId = editingMessageId(for: conversationId) {
+            endEditing(messageId: messageId, conversationId: conversationId, userId: userId)
+        }
+        guard hasDraft(for: conversationId) else { return }
+        remove(conversationId: conversationId, userId: userId)
+    }
+}

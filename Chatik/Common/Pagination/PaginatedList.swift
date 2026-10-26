@@ -34,7 +34,8 @@ final class PaginatedList<Item: Identifiable> where Item.ID: Hashable {
     /// За сколько элементов до конца списка начинает грузиться следующая страница.
     private let prefetchThreshold: Int
 
-    private var hasMorePages = true
+    /// Есть ли на сервере элементы после загруженных: подгрузка следующей страницы возможна.
+    private(set) var hasMorePages = true
     /// Сколько элементов получено с сервера — от этого числа отсчитывается следующая страница.
     private var loadedCount = 0
     /// Курсор из последней страницы — для API, которые продолжают выдачу не сдвигом, а идентификатором.
@@ -113,7 +114,7 @@ final class PaginatedList<Item: Identifiable> where Item.ID: Hashable {
             prepend(page)
             return .applied
         } catch {
-            guard generation == self.generation else { return .superseded }
+            guard generation == self.generation, !error.isCancellation else { return .superseded }
             return .failed(error)
         }
     }
@@ -153,7 +154,7 @@ final class PaginatedList<Item: Identifiable> where Item.ID: Hashable {
             apply(page)
             return .applied
         } catch {
-            guard generation == self.generation else { return .superseded }
+            guard generation == self.generation, !error.isCancellation else { return .superseded }
             // Повторять на каждом появлении строки не нужно: иначе при недоступном сервере скролл
             // превратится в поток запросов и сообщений. Следующая попытка — по обновлению списка.
             hasMorePages = false
@@ -177,7 +178,8 @@ final class PaginatedList<Item: Identifiable> where Item.ID: Hashable {
             apply(page)
             return .applied
         } catch {
-            guard generation == self.generation else { return .superseded }
+            // Отменённая загрузка (новый поисковый запрос отменил прежний) — не ошибка: список и пагинация не меняются.
+            guard generation == self.generation, !error.isCancellation else { return .superseded }
             // Список остаётся прежним, но пагинация к нему больше не относится: следующая страница
             // ушла бы со сдвигом от неактуальной выдачи.
             hasMorePages = false

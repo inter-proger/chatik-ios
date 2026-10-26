@@ -17,6 +17,8 @@ final class MessagesListServiceTests: XCTestCase {
     private var messageService: MessageServiceMock!
     private var eventQueue: RealtimeEventQueueMock!
     private var sendQueue: MessageSendQueueMock!
+    /// Проверка членства — мок списка переписок.
+    private var membership: ConversationListServiceMock!
     private var sut: MessagesListService!
     private var recorder: SnapshotRecorder!
 
@@ -30,13 +32,15 @@ final class MessagesListServiceTests: XCTestCase {
         messageService = MessageServiceMock()
         eventQueue = RealtimeEventQueueMock()
         sendQueue = MessageSendQueueMock()
+        membership = ConversationListServiceMock()
         sut = MessagesListService(
             conversationId: 1,
             messageCache: cache,
             storage: reader,
             messageService: messageService,
             eventQueue: eventQueue,
-            messageSendQueue: sendQueue
+            messageSendQueue: sendQueue,
+            membership: membership
         )
         recorder = SnapshotRecorder()
         await recorder.record(await sut.snapshots())

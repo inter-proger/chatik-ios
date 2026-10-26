@@ -108,9 +108,9 @@ struct MessageDisplayContext: Sendable {
     let dateHeaderFormatter: any MessageDateHeaderFormatting
     /// Тип переписки: «Кем прочитано» есть только в групповой.
     let conversationType: ConversationType
-    /// Порог прочтения другими участниками: свои сообщения с id не больше него прочитаны. `nil` — меты нет,
+    /// Сообщения, прочитанные хотя бы одним другим участником. `nil` — меты нет (а у группы — состава),
     /// две галочки не показываются.
-    let readUpTo: Int?
+    let readCoverage: MessageReadCoverage?
 }
 
 extension MessageDisplayModel {
@@ -137,14 +137,14 @@ extension MessageDisplayModel {
         )
     }
 
-    /// Состояние серверного сообщения: своё с id не больше порога прочтения — прочитано, остальные — доставлены.
-    /// Без меты (`readUpTo == nil`) две галочки не показываются.
+    /// Состояние серверного сообщения: своё, попавшее в покрытие прочтения, — прочитано, остальные — доставлены.
+    /// Без меты (`readCoverage == nil`) две галочки не показываются.
     /// - Parameters:
     ///   - message: сообщение с сервера.
     ///   - isOutgoing: сообщение текущего пользователя.
     ///   - context: общие параметры отображения.
     static func deliveryState(for message: Message, isOutgoing: Bool, context: MessageDisplayContext) -> MessageDeliveryState {
-        guard isOutgoing, let readUpTo = context.readUpTo, message.messageId <= readUpTo else { return .delivered }
+        guard isOutgoing, context.readCoverage?.contains(message.messageId) == true else { return .delivered }
         return .read
     }
 

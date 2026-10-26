@@ -55,6 +55,8 @@ struct MessageStorageChanges: Sendable {
     /// Переписка, кэш которой заменяется: её сообщения, которых нет в `upserts`, удаляются
     /// (кроме `protectedMessageIds`).
     var replacedConversationId: Int?
+    /// Переписка, в которой пользователь больше не состоит: её сообщения и состояние кэша удаляются целиком.
+    var removedConversationId: Int?
     /// Сообщения, которые нельзя удалять при замене блоков и переписки.
     var protectedMessageIds: Set<Int> = []
     /// Серверные сообщения, неотправленные копии которых удаляются из очереди отправки.
@@ -64,7 +66,7 @@ struct MessageStorageChanges: Sendable {
 
     var isEmpty: Bool {
         upserts.isEmpty && updatesOfExisting.isEmpty && replacedBlocks.isEmpty && replacedConversationId == nil
-            && confirmed.isEmpty && stateChanges.isEmpty
+            && removedConversationId == nil && confirmed.isEmpty && stateChanges.isEmpty
     }
 }
 
@@ -112,6 +114,10 @@ final class MessageStorageService: MessageStorageReading, MessageStorageWriting,
     ///   - changes: изменения.
     ///   - context: фоновый контекст записи.
     private static func deleteReplaced(_ changes: MessageStorageChanges, in context: NSManagedObjectContext) throws {
+        if let conversationId = changes.removedConversationId {
+            try deleteMessages(conversationId: conversationId, blockId: nil, keeping: [], in: context)
+            try context.fetch(MessageCacheStateEntity.makeFetchRequest(id: conversationId)).forEach(context.delete)
+        }
         if let conversationId = changes.replacedConversationId {
             let kept = changes.protectedMessageIds.union(changes.upserts.map(\.messageId))
             try deleteMessages(conversationId: conversationId, blockId: nil, keeping: kept, in: context)

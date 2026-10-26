@@ -60,6 +60,7 @@ extension NetworkError {
         static let invalidText = 1005
         /// `clientId` при отправке сообщения не передан или имеет недопустимый формат.
         static let invalidClientId = 1006
+        static let invalidDescription = 1007
         static let loginAlreadyTaken = 2001
         static let wrongCredentials = 2002
         static let unauthorized = 2003
@@ -74,6 +75,12 @@ extension NetworkError {
         static let userNotFound = 4001
         static let conversationWithSelf = 5001
         static let conversationNotFound = 5002
+        static let notGroup = 5003
+        static let groupOwnerOnly = 5004
+        static let groupMemberLimitReached = 5005
+        static let alreadyGroupMember = 5006
+        static let notGroupMember = 5007
+        static let groupOwnerNotApplicable = 5008
         static let messageNotFound = 6001
         static let messageBlockNotFound = 6002
         static let messageEditForbidden = 6003
@@ -81,5 +88,21 @@ extension NetworkError {
         static let clientIdConflict = 6004
         /// Внутренняя ошибка сервера; приходит с HTTP-статусом 500.
         static let internalServerError = 9001
+    }
+}
+
+extension Error {
+    /// `true`, если ошибка — отмена задачи или её сетевого запроса: например, новый поисковый запрос отменил
+    /// прежний. Пользователю такие ошибки не показываются.
+    var isCancellation: Bool {
+        let error: Error = self
+        switch error {
+        case is CancellationError:
+            return true
+        case let NetworkError.transport(urlError):
+            return urlError.code == .cancelled
+        default:
+            return (error as? URLError)?.code == .cancelled
+        }
     }
 }

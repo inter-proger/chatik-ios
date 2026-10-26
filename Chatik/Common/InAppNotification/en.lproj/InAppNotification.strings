@@ -21,3 +21,9 @@
 
 /* VoiceOver announcement of a new message: title and text */
 "in_app_notification.message.announcement" = "New message, %1$@: %2$@";
+
+/* Уведомление: пользователя удалили из открытой группы (или доступ пропал); подстановка — название группы */
+"in_app_notification.group.no_longer_member" = "You are no longer a member of “%@”";
+
+/* То же для группы без названия */
+"in_app_notification.group.no_longer_member_untitled" = "You are no longer a member of the group";

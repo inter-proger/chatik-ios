@@ -726,6 +726,22 @@ final class MessageDraftServiceTests: XCTestCase {
         return counter
     }
 
+    // MARK: - Удаление переписки
+
+    /// Кейс: у группы 7 черновик и режим редактирования, у переписки 8 — черновик; пользователя удалили из группы 7.
+    /// Ожидание: черновик и правка группы 7 удалены, черновик 8 остался.
+    func test_conversationWasRemoved_removesDraftAndEdit() async {
+        storage.drafts = [1: [7: "Привет", 8: "Как дела?"]]
+        await sut.load(userId: 1)
+        sut.beginEditing(messageId: 15, originalText: "Старый", conversationId: 7, userId: 1)
+
+        await sut.conversationWasRemoved(RemovedConversationInfo(conversationId: 7, name: nil, type: .group, reason: .removed, changeVersion: 1))
+
+        XCTAssertFalse(sut.hasDraft(for: 7))
+        XCTAssertNil(sut.edit(for: 7))
+        XCTAssertEqual(sut.draft(for: 8), "Как дела?")
+    }
+
     /// Ждёт, пока закончатся все записи в БД, запущенные сервисом.
     private func waitForWrites() async {
         await waitUntil { [unowned self] in backgroundTasks.runningCount == 0 }

@@ -30,6 +30,25 @@ final class PaginatedListTests: XCTestCase {
         assertApplied(outcome)
     }
 
+    /// Кейс: загрузка первой страницы отменена — задачей или отменой её сетевого запроса (новый поисковый запрос
+    /// отменил прежний).
+    /// Ожидание: это не ошибка — итог «устарел», прежний список и пагинация не меняются.
+    func test_refresh_cancelled_isSupersededNotFailure() async {
+        let errors: [Error] = [
+            CancellationError(),
+            NetworkError.transport(URLError(.cancelled)),
+        ]
+        await sut.refresh(load: page(ids: [1], hasNext: true))
+
+        for error in errors {
+            let outcome = await sut.refresh(load: { _ in throw error })
+
+            guard case .superseded = outcome else { return XCTFail("Ожидался superseded для \(error), получено \(outcome)") }
+            XCTAssertEqual(sut.items.map(\.id), [1])
+            XCTAssertTrue(sut.hasMorePages)
+        }
+    }
+
     /// Кейс: загрузка первой страницы завершилась ошибкой.
     /// Ожидание: наружу отдана ошибка, прежний список остаётся на экране.
     func test_refresh_failure_keepsItemsAndReportsError() async {

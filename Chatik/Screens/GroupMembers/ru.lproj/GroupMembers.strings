@@ -1,0 +1,33 @@
+/*
+  GroupMembers.strings
+  Chatik
+
+  Строки экрана участников группы.
+*/
+
+"group_members.title" = "Участники";
+
+/* Секции */
+"group_members.section.owner" = "Создатель";
+"group_members.section.members" = "Участники";
+
+/* Подпись текущего пользователя в списке */
+"group_members.you" = "Вы";
+
+/* Состав не загрузился */
+"group_members.load_failed" = "Не удалось загрузить участников";
+"group_members.retry" = "Повторить";
+
+/* Пункт меню по долгому нажатию на участника */
+"group_members.transfer" = "Передать права создателя";
+
+/* Подтверждение передачи прав */
+"group_members.transfer.title" = "Передать права создателя?";
+
+/* Подстановка — имя будущего создателя */
+"group_members.transfer.message" = "Создателем станет «%@». Вы потеряете право приглашать участников в группу.";
+"group_members.transfer.confirm" = "ОК";
+"group_members.transfer.cancel" = "Отмена";
+
+/* Уведомление после передачи прав */
+"group_members.transferred" = "Права создателя переданы";

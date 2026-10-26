@@ -47,14 +47,15 @@ final class ChatListViewModelTests: XCTestCase {
 
     // MARK: - Список
 
-    /// Кейс: в сервисе списка две переписки.
-    /// Ожидание: строки показаны в порядке сервиса, с превью и временем.
+    /// Кейс: в сервисе списка две переписки; последнее сообщение группы — своё.
+    /// Ожидание: строки показаны в порядке сервиса, с превью (у группы — с подписью «Вы:») и временем.
     func test_conversations_mapsListInOrder() async {
         conversationList.conversations = [.groupStub, .singleStub]
         await observeRows()
 
         XCTAssertEqual(sut.conversations.map(\.id), [Conversation.groupStub.id, Conversation.singleStub.id])
-        XCTAssertEqual(sut.conversations.first?.preview, .message("Привет!"))
+        guard case let .labeled(preview) = sut.conversations.first?.preview else { return XCTFail("Нет подписи отправителя") }
+        XCTAssertEqual(String(preview.characters), ChatListStrings.rowSenderPrefix(name: ChatListStrings.rowYou) + " Привет!")
         XCTAssertFalse(sut.conversations.first?.time.isEmpty ?? true)
     }
 
@@ -727,7 +728,7 @@ final class ChatListViewModelTests: XCTestCase {
             router: router,
             now: now,
             makeRow: makeRow ?? {
-                ChatRowDisplayModel(conversation: $0, opponent: $1, localPreview: $2, unreadCount: $3, timeFormatter: $4)
+                ChatRowDisplayModel(conversation: $0, opponent: $1, previewSender: $2, localPreview: $3, unreadCount: $4, timeFormatter: $5)
             },
             sleep: { [sleeper] in try await sleeper!.sleep($0) }
         )
@@ -796,6 +797,7 @@ private final class RowBuildRecorder {
     func build(
         _ conversation: Conversation,
         _ opponent: CachedUser?,
+        _ sender: ChatRowPreviewSender?,
         _ localPreview: ChatRowLocalPreview?,
         _ unreadCount: Int,
         _ timeFormatter: MessageTimeFormatter
@@ -804,7 +806,8 @@ private final class RowBuildRecorder {
         localPreviews.append(localPreview)
         unreadCounts.append(unreadCount)
         return ChatRowDisplayModel(
-            conversation: conversation, opponent: opponent, localPreview: localPreview, unreadCount: unreadCount, timeFormatter: timeFormatter
+            conversation: conversation, opponent: opponent, previewSender: sender, localPreview: localPreview, unreadCount: unreadCount,
+            timeFormatter: timeFormatter
         )
     }
 }

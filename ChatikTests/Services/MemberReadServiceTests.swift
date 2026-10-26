@@ -12,6 +12,8 @@ final class MemberReadServiceTests: XCTestCase {
     private var storage: MemberReadStorageServiceMock!
     private var eventQueue: RealtimeEventQueueMock!
     private var sut: MemberReadService!
+    /// Проверка членства — мок списка переписок.
+    private var membership = ConversationListServiceMock()
 
     override func setUp() async throws {
         try await super.setUp()
@@ -27,7 +29,9 @@ final class MemberReadServiceTests: XCTestCase {
             conversationService: conversationService,
             storage: storage,
             eventQueue: eventQueue,
-            sessionService: session
+            sessionService: session,
+            membership: membership,
+            groupInfo: nil
         )
     }
 
@@ -362,5 +366,162 @@ final class MemberReadServiceTests: XCTestCase {
         XCTAssertEqual(storage.applied.count, appliedBefore)
         XCTAssertNil(sut.pointers(conversationId: 7))
         XCTAssertEqual(storage.stored[7], [2: 5])
+    }
+
+    // MARK: - Удаление переписки
+
+    /// Кейс: у группы 7 сохранена мета и она наблюдается; пользователя удалили из группы.
+    /// Ожидание: мета удалена из памяти и БД.
+    func test_conversationWasRemoved_deletesMeta() async {
+        storage.stored = [7: [2: 10]]
+        sut.start()
+        sut.beginObserving(conversationId: 7)
+        await yieldUntil { [unowned self] in sut.pointers(conversationId: 7) != nil }
+
+        await sut.conversationWasRemoved(RemovedConversationInfo(conversationId: 7, name: nil, type: .group, reason: .removed, changeVersion: 1))
+
+        XCTAssertNil(sut.pointers(conversationId: 7))
+        XCTAssertEqual(storage.deletedConversationIds, [7])
+        XCTAssertNil(storage.stored[7])
+    }
+
+
+    // MARK: - Группы
+
+    /// Кейс: группа 7: участник 2 вступил до сообщения 0 и прочитал до 10, участник 3 вступил после 20 — его указатель
+    /// сервер поставил на последнее сообщение 25.
+    /// Ожидание: прочитаны сообщения 1–10 и 21–25; сообщения 11–20 — нет: новичок их не читал.
+    func test_group_coverageRespectsJoinTime() async {
+        let groupInfo = GroupInfoServiceMock()
+        groupInfo.infos[7] = GroupInfo(conversationId: 7, version: 2, members: [
+            GroupMember(userId: 1, role: .owner, joinedAfterMessageId: 0),
+            GroupMember(userId: 2, role: .member, joinedAfterMessageId: 0),
+            GroupMember(userId: 3, role: .member, joinedAfterMessageId: 20),
+        ])
+        let sut = await makeGroupSUT(groupInfo: groupInfo)
+        storage.stored = [7: [2: 10, 3: 25]]
+        sut.start()
+
+        sut.beginObserving(conversationId: 7, isGroup: true)
+
+        await yieldUntil { sut.coverage(conversationId: 7) != nil }
+        XCTAssertEqual(sut.coverage(conversationId: 7)?.ranges, [.init(after: 0, upTo: 10), .init(after: 20, upTo: 25)])
+    }
+
+    /// Кейс: у группы есть мета, но состав ещё неизвестен.
+    /// Ожидание: покрытия нет — две галочки без состава не показываются.
+    func test_group_withoutInfo_hasNoCoverage() async {
+        let sut = await makeGroupSUT(groupInfo: GroupInfoServiceMock())
+        storage.stored = [7: [2: 10]]
+        sut.start()
+
+        sut.beginObserving(conversationId: 7, isGroup: true)
+
+        await yieldUntil { sut.pointers(conversationId: 7) != nil }
+        XCTAssertNil(sut.coverage(conversationId: 7))
+    }
+
+    /// Кейс: участник 3 вышел — пришёл новый состав без него; у группы есть мета.
+    /// Ожидание: его указатель удалён из памяти и БД, покрытие пересчитано без него.
+    func test_group_newInfoDropsDepartedMember() async {
+        let groupInfo = GroupInfoServiceMock()
+        let members = [GroupMember(userId: 1, role: .owner, joinedAfterMessageId: 0), GroupMember(userId: 2, role: .member, joinedAfterMessageId: 0)]
+        groupInfo.infos[7] = GroupInfo(conversationId: 7, version: 1, members: members + [GroupMember(userId: 3, role: .member, joinedAfterMessageId: 0)])
+        let sut = await makeGroupSUT(groupInfo: groupInfo)
+        storage.stored = [7: [2: 5, 3: 12]]
+        sut.start()
+        sut.beginObserving(conversationId: 7, isGroup: true)
+        await yieldUntil { sut.coverage(conversationId: 7)?.ranges == [.init(after: 0, upTo: 12)] }
+
+        let info = GroupInfo(conversationId: 7, version: 2, members: members)
+        groupInfo.infos[7] = info
+        sut.groupInfoDidChange(info, isAuthoritative: true)
+
+        XCTAssertEqual(sut.pointers(conversationId: 7), [2: 5])
+        XCTAssertEqual(sut.coverage(conversationId: 7)?.ranges, [.init(after: 0, upTo: 5)])
+        await yieldUntil { [unowned self] in storage.stored[7] == [2: 5] }
+    }
+
+    /// Кейс: состав из БД (неавторитетный) без участника 3, у которого есть указатель.
+    /// Ожидание: указатель не удаляется ни из памяти, ни из БД — сохранённый состав мог устареть.
+    func test_group_storedInfoDoesNotDropMembers() async {
+        let groupInfo = GroupInfoServiceMock()
+        let members = [GroupMember(userId: 1, role: .owner, joinedAfterMessageId: 0), GroupMember(userId: 2, role: .member, joinedAfterMessageId: 0)]
+        groupInfo.infos[7] = GroupInfo(conversationId: 7, version: 1, members: members)
+        let sut = await makeGroupSUT(groupInfo: groupInfo)
+        storage.stored = [7: [2: 5, 3: 12]]
+        sut.start()
+        sut.beginObserving(conversationId: 7, isGroup: true)
+        await yieldUntil { sut.pointers(conversationId: 7) != nil }
+
+        sut.groupInfoDidChange(GroupInfo(conversationId: 7, version: 1, members: members), isAuthoritative: false)
+
+        XCTAssertEqual(sut.pointers(conversationId: 7), [2: 5, 3: 12])
+        await yieldTimes()
+        XCTAssertEqual(storage.stored[7], [2: 5, 3: 12])
+    }
+
+    /// Кейс: группа наблюдается, состав неизвестен; затем состав пришёл.
+    /// Ожидание: пока состава нет — «ждём состав» (лист «Кем прочитано» показывает загрузку), потом — нет.
+    func test_group_isAwaitingGroupInfo() async {
+        let groupInfo = GroupInfoServiceMock()
+        let sut = await makeGroupSUT(groupInfo: groupInfo)
+        sut.start()
+        sut.beginObserving(conversationId: 7, isGroup: true)
+
+        XCTAssertTrue(sut.isAwaitingGroupInfo(conversationId: 7))
+        groupInfo.infos[7] = GroupInfo(conversationId: 7, version: 1, members: [GroupMember(userId: 1, role: .owner, joinedAfterMessageId: 0)])
+        XCTAssertFalse(sut.isAwaitingGroupInfo(conversationId: 7))
+    }
+
+    /// Кейс: `memberRead` от пользователя 4, которого ещё нет в составе группы.
+    /// Ожидание: указатель сохранён, но в покрытии не учитывается.
+    func test_group_memberReadFromUnknownUser_isStoredButNotCounted() async {
+        let groupInfo = GroupInfoServiceMock()
+        groupInfo.infos[7] = GroupInfo(conversationId: 7, version: 1, members: [
+            GroupMember(userId: 1, role: .owner, joinedAfterMessageId: 0),
+            GroupMember(userId: 2, role: .member, joinedAfterMessageId: 0),
+        ])
+        let sut = await makeGroupSUT(groupInfo: groupInfo)
+        storage.stored = [7: [2: 5]]
+        sut.start()
+        sut.beginObserving(conversationId: 7, isGroup: true)
+        await yieldUntil { sut.coverage(conversationId: 7) != nil }
+
+        await eventQueue.send(.memberRead(conversationId: 7, userId: 4, lastReadMessageId: 30))
+
+        XCTAssertEqual(sut.pointers(conversationId: 7), [2: 5, 4: 30])
+        XCTAssertEqual(sut.coverage(conversationId: 7)?.ranges, [.init(after: 0, upTo: 5)])
+    }
+
+}
+
+
+extension MemberReadServiceTests {
+    /// Сервис над моками теста с составом групп.
+    /// - Parameter groupInfo: состав групп.
+    fileprivate func makeGroupSUT(groupInfo: GroupInfoServiceMock) async -> MemberReadService {
+        let session = SessionService(
+            userDefaultsService: UserDefaultsServiceMock(currentUser: User(userId: 1, login: "ivan", name: "Ivan", avatar: nil)),
+            localStorageCleaner: LocalStorageCleanerMock()
+        )
+        let service = MemberReadService(
+            conversationService: conversationService,
+            storage: storage,
+            eventQueue: eventQueue,
+            sessionService: session,
+            membership: membership,
+            groupInfo: groupInfo
+        )
+        await session.restore()
+        return service
+    }
+}
+
+private extension MemberReadService {
+    /// Верхняя граница покрытия личной переписки — прежний порог `readUpTo`.
+    /// - Parameter conversationId: наблюдаемая переписка.
+    func readUpTo(conversationId: Int) -> Int? {
+        coverage(conversationId: conversationId)?.ranges.last?.upTo
     }
 }

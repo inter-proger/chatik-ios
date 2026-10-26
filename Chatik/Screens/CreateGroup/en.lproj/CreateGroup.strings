@@ -1,0 +1,27 @@
+/*
+  CreateGroup.strings
+  Chatik
+
+  Строки экрана создания группы.
+*/
+
+"create_group.title" = "New group";
+"create_group.create" = "Create";
+"create_group.cancel" = "Cancel";
+"create_group.name_placeholder" = "Group name";
+"create_group.description_placeholder" = "Description (optional)";
+
+/* Диалог выбора аватара группы */
+"create_group.avatar.title" = "Group photo";
+"create_group.avatar.choose_from_gallery" = "Choose from library";
+"create_group.avatar.take_photo" = "Take photo";
+"create_group.avatar.remove" = "Remove";
+
+/* Подпись VoiceOver кнопки аватара */
+"create_group.avatar.accessibility_label" = "Group photo";
+
+/* Выбранное изображение не удалось подготовить или сервер его не принял */
+"create_group.avatar.load_failed" = "Couldn’t set the photo. Choose another image";
+
+/* Сервер отклонил название (1003) */
+"create_group.error.invalid_name" = "The name must be 1 to 128 characters";

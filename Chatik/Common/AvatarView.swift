@@ -10,12 +10,14 @@ import SwiftUI
 ///
 /// Загрузка двухступенчатая: пока грузится полноразмерное изображение `url`, на его месте показывается
 /// уменьшенная копия `thumbnailURL` (как правило, уже в кэше после списка), а пока нет и её — изображение
-/// по умолчанию, силуэт человека. Оно же показывается при `url == nil` и при ошибке загрузки.
+/// по умолчанию — силуэт человека или, у группы, двух людей. Оно же показывается при `url == nil` и при ошибке загрузки.
 /// Размер задаётся снаружи через `.frame`.
 struct AvatarView: View {
     let url: URL?
     /// Уменьшенная копия для показа на время загрузки `url`. `nil` — сразу изображение по умолчанию.
     var thumbnailURL: URL? = nil
+    /// Изображение по умолчанию: силуэт человека или группы.
+    var placeholder: AvatarPlaceholder = .person
 
     var body: some View {
         KFImage(url)
@@ -28,17 +30,31 @@ struct AvatarView: View {
     /// Уменьшенная копия; пока грузится она — изображение по умолчанию.
     private var thumbnail: some View {
         KFImage(thumbnailURL)
-            .placeholder { placeholder }
+            .placeholder { placeholderImage }
             .resizable()
             .scaledToFill()
     }
 
     /// Изображение по умолчанию для пустого аватара.
-    private var placeholder: some View {
-        Image(systemName: "person.crop.circle.fill")
+    private var placeholderImage: some View {
+        Image(systemName: placeholder.systemImage)
             .resizable()
             .scaledToFit()
             .foregroundStyle(.secondary)
+    }
+}
+
+/// Изображение по умолчанию для пустого аватара.
+enum AvatarPlaceholder {
+    case person
+    case group
+
+    /// SF Symbol изображения.
+    var systemImage: String {
+        switch self {
+        case .person: "person.crop.circle.fill"
+        case .group: "person.2.circle.fill"
+        }
     }
 }
 
@@ -48,5 +64,7 @@ struct AvatarView: View {
             .frame(width: 96, height: 96)
         AvatarView(url: nil)
             .frame(width: 32, height: 32)
+        AvatarView(url: nil, placeholder: .group)
+            .frame(width: 96, height: 96)
     }
 }
